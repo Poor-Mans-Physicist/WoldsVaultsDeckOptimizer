@@ -1,0 +1,1633 @@
+"""
+NDM (Net Deck Multiplier) Optimizer
+=====================================
+Simulates and optimizes deck configurations to maximise the Net Deck Multiplier.
+
+Usage:
+    python ndm_optimizer.py
+    Deck configs are defined in the DECKS list near the bottom of the file.
+
+Card-type key used in grid displays:
+    R = Row    C = Col    S = Surr
+    ^ = DirGreed(up)    v = DirGreed(down)
+    < = DirGreed(left)  > = DirGreed(right)
+    e = EvoGreed    o = SurrGreed    . = generic_greed
+"""
+
+from __future__ import annotations
+
+import math
+import time
+import os
+import random
+from collections import Counter
+from enum import Enum
+from itertools import combinations
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+import multiprocessing
+
+try:
+    import ndm_core as _ndm_core
+    _RUST_AVAILABLE = True
+except ImportError:
+    _ndm_core = None
+    _RUST_AVAILABLE = False
+    print("[ndm] Rust extension not found — using pure Python SA (run "
+          "'maturin develop --release' in ndm_core/ to enable Rust).")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Aliases
+# ──────────────────────────────────────────────────────────────────────────────
+
+Position = Tuple[int, int]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Enumerations
+# ──────────────────────────────────────────────────────────────────────────────
+
+class CardType(Enum):
+    ROW             = "row"
+    COL             = "col"
+    SURR            = "surr"
+    DIAG            = "diag"
+    DELUXE          = "deluxe"
+    TYPELESS        = "typeless"
+    DIR_GREED_UP    = "dir_greed_up"
+    DIR_GREED_DOWN  = "dir_greed_down"
+    DIR_GREED_LEFT  = "dir_greed_left"
+    DIR_GREED_RIGHT = "dir_greed_right"
+    DIR_GREED_NE = "dir_greed_ne"
+    DIR_GREED_NW = "dir_greed_nw"
+    DIR_GREED_SE = "dir_greed_se"
+    DIR_GREED_SW = "dir_greed_sw"
+    EVO_GREED       = "evo_greed"
+    SURR_GREED      = "surr_greed"
+    FILLER_GREED    = "filler_greed"
+    EMPTY           = "empty"
+
+
+GREED_TYPES    = frozenset({
+    CardType.DIR_GREED_UP,    CardType.DIR_GREED_DOWN,
+    CardType.DIR_GREED_LEFT,  CardType.DIR_GREED_RIGHT,
+    CardType.DIR_GREED_NE,    CardType.DIR_GREED_NW,
+    CardType.DIR_GREED_SE,    CardType.DIR_GREED_SW,
+    CardType.EVO_GREED,       CardType.SURR_GREED,
+    CardType.FILLER_GREED,
+})
+REGULAR_TYPES  = frozenset({CardType.ROW, CardType.COL, CardType.SURR, CardType.DIAG})
+DELUXE_TYPES   = frozenset({CardType.DELUXE})
+TYPELESS_TYPES = frozenset({CardType.TYPELESS})
+
+PLACEABLE: List[CardType] = [
+    CardType.ROW,             CardType.COL,            CardType.SURR,
+    CardType.DIAG,
+    CardType.DIR_GREED_UP,    CardType.DIR_GREED_DOWN,
+    CardType.DIR_GREED_LEFT,  CardType.DIR_GREED_RIGHT,
+    CardType.DIR_GREED_NE,    CardType.DIR_GREED_NW,
+    CardType.DIR_GREED_SE,    CardType.DIR_GREED_SW,
+    CardType.EVO_GREED,       CardType.SURR_GREED,
+]
+
+
+class CardClass(Enum):
+    EVO   = "evo"
+    SHINY = "shiny"
+
+
+class CoreType(Enum):
+    PURE        = "pure"
+    EQUILIBRIUM = "equilibrium"
+    STEADFAST   = "steadfast"
+    COLOR       = "color"
+    FOIL        = "foil"
+    DELUXE_CORE = "deluxe_core"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tunable multiplier constants
+# ──────────────────────────────────────────────────────────────────────────────
+
+DECKMOD:       int = 0
+
+MULT_DIR_GREED_VERT:  float = 5
+MULT_DIR_GREED_HORIZ: float = 5
+MULT_EVO_GREED:       float = 1
+MULT_SURR_GREED:      float = 1
+MULT_DIR_GREED_DIAG_UP:   float = 1   # NE / NW diagonal greed
+MULT_DIR_GREED_DIAG_DOWN: float = 1   # SE / SW diagonal greed
+
+MULT_PURE_BASE:   float = 1.0
+MULT_PURE_SCALE:  float = 0.1
+MULT_EQUILIBRIUM: float = 3.0
+MULT_FOIL:        float = 2.8   
+MULT_STEADFAST:   float = 2.2
+MULT_COLOR:       float = 1.75
+
+ALLOW_DELUXE:            bool  = True
+MULT_DELUXE_FLAT:        float = 2   # flat NDM contribution per deluxe card
+MULT_DELUXE_CORE_BASE:   float = 1.0   # deluxe core intercept
+MULT_DELUXE_CORE_SCALE:  float = 0.2   # deluxe core multiplier per deluxe card
+
+# True → greed multipliers on the same card are summed; False → multiplied
+GREED_ADDITIVE: bool = False
+ADDITIVE_CORES: bool = False  # True → core multipliers sum together; False → multiply
+
+SHINY_POSITIONAL: bool  = True    # False → shiny decks use flat T cards (pos=1) instead of R/C/S
+
+ENABLE_EXPERIMENTAL_EXPONENT: bool  = True
+EXPERIMENTAL_EXPONENT:        float = 0.65   # 1.0 = no change; <1 penalises dominance; >1 rewards it
+EXPERIMENTAL_BOOST:           float = 0.4
+
+DELUXE_COUNTED_AS_REGULAR: bool = False  # False → deluxe cards don't count toward min_regular constraint
+
+# Display options
+BALANCE_DISPLAY:    bool = True
+HEATMAP_DISPLAY:    bool = True
+
+HNS_Q: float = 1.5   # Hill Number Score exponent; q=2 → EDP (Simpson reciprocal × NDM)
+                      # q→1 → Shannon-weighted NDM;  q=0 → NDM × card count
+SPREAD_METRIC: bool = False   # False → skip all HNS computation and display
+
+# Spreadsheet export
+EXPORT_SPREADSHEET: bool  = True
+SPREADSHEET_PREFIX: str   = "Panel_WV_lesserBalance_"   # output: {PREFIX}ndm_simulation.xlsx
+
+# Full test panel: runs 4 constraint configs per deck/class instead of the
+# deck's own min_regular / max_greed settings.
+#   Config 1 — no greed cards    (max_greed=0,  min_regular=-1)
+#   Config 2 — min 14 regular    (min_regular=14, max_greed=-1)
+#   Config 3 — min 8 regular     (min_regular=8,  max_greed=-1)
+#   Config 4 — unconstrained     (min_regular=-1, max_greed=-1)
+# If min_regular > deck slot count, that config collapses to max_greed=0.
+FULL_TEST_PANEL: bool = True
+
+if ALLOW_DELUXE:
+    PLACEABLE.append(CardType.DELUXE)
+
+def _get_placeable(card_class: CardClass) -> List[CardType]:
+    """Return the list of placeable card types for a given class and settings."""
+    if card_class == CardClass.SHINY and not SHINY_POSITIONAL:
+        result = [t for t in PLACEABLE if t not in REGULAR_TYPES]
+        return [CardType.TYPELESS] + result
+    return list(PLACEABLE)
+# ──────────────────────────────────────────────────────────────────────────────
+# Deck
+# ──────────────────────────────────────────────────────────────────────────────
+
+class Deck:
+    def __init__(
+        self,
+        slots:       Set[Position],
+        core_slots:  int,
+        n_arcane:    int = 0,
+        min_regular: int = -1,
+        max_greed:   int = -1,
+        name:        str = "Unnamed Deck",
+    ) -> None:
+        self.slots       = frozenset(slots)
+        self.core_slots  = core_slots
+        self.n_arcane    = n_arcane
+        self.min_regular = min_regular
+        self.max_greed   = max_greed
+        self.name        = name
+
+        self._row_peers:  Dict[Position, FrozenSet[Position]] = {}
+        self._col_peers:  Dict[Position, FrozenSet[Position]] = {}
+        self._surr_peers: Dict[Position, FrozenSet[Position]] = {}
+        self._diag_peers: Dict[Position, FrozenSet[Position]] = {}
+
+        for p in self.slots:
+            r, c = p
+            self._row_peers[p]  = frozenset(q for q in self.slots if q[0] == r and q != p)
+            self._col_peers[p]  = frozenset(q for q in self.slots if q[1] == c and q != p)
+            self._surr_peers[p] = frozenset(
+                q for q in self.slots if q != p and max(abs(q[0]-r), abs(q[1]-c)) <= 1)
+            for p in self.slots:
+                r, c = p
+                self._diag_peers[p] = frozenset(
+                    q for q in self.slots
+                    if q != p and (
+                        (q[0] - q[1] == r - c) or   # NW-SE diagonal
+                        (q[0] + q[1] == r + c)       # NE-SW diagonal
+                    )
+                )
+
+    _CHAR: Dict[CardType, str] = {
+        CardType.ROW:             "R",
+        CardType.COL:             "C",
+        CardType.SURR:            "S",
+        CardType.DIAG:            "X",
+        CardType.DELUXE:          "D",
+        CardType.TYPELESS:        "T",
+        CardType.DIR_GREED_UP:    "^",
+        CardType.DIR_GREED_DOWN:  "v",
+        CardType.DIR_GREED_LEFT:  "<",
+        CardType.DIR_GREED_RIGHT: ">",
+        CardType.DIR_GREED_NE:    "↗",
+        CardType.DIR_GREED_NW:    "↖",
+        CardType.DIR_GREED_SE:    "↘",
+        CardType.DIR_GREED_SW:    "↙",
+        CardType.EVO_GREED:       "e",
+        CardType.SURR_GREED:      "o",
+        CardType.FILLER_GREED:    ".",
+        CardType.EMPTY:           "·",
+    }
+
+    def display(self, assignment: Optional[Dict[Position, CardType]] = None) -> str:
+        if not self.slots:
+            return "(empty deck)"
+        min_r = min(r for r, _ in self.slots); max_r = max(r for r, _ in self.slots)
+        min_c = min(c for _, c in self.slots); max_c = max(c for _, c in self.slots)
+        lines = []
+        for r in range(min_r, max_r + 1):
+            cells = []
+            for c in range(min_c, max_c + 1):
+                p = (r, c)
+                if   p not in self.slots:              cells.append(" ")
+                elif assignment and p in assignment:   cells.append(self._CHAR[assignment[p]])
+                else:                                  cells.append("□")
+            lines.append(" ".join(cells))
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return f"Deck({len(self.slots)} slots, {self.core_slots} core slots)"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test-config helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Each config is (label, min_regular, max_greed)
+_FULL_TEST_CONFIGS: List[Tuple[str, int, int]] = [
+    ("no greed",     -1,  0),
+    ("min 14 reg",   14, -1),
+    ("min 8 reg",     8, -1),
+    ("unconstrained",-1, -1),
+]
+
+
+def _get_test_configs(deck: Deck) -> List[Tuple[str, int, int]]:
+    """Return the list of (label, min_regular, max_greed) to run for this deck."""
+    if not FULL_TEST_PANEL:
+        return [("default", deck.min_regular, deck.max_greed)]
+
+    n = len(deck.slots)
+    configs = []
+    for label, min_reg, max_greed in _FULL_TEST_CONFIGS:
+        if min_reg > n:          # collapse: min_reg exceeds capacity
+            min_reg   = -1
+            max_greed = 0
+        configs.append((label, min_reg, max_greed))
+    return configs
+
+
+def _deck_with_constraints(deck: Deck, min_regular: int, max_greed: int) -> Deck:
+    """Return a shallow copy of deck with overridden constraints (slots unchanged)."""
+    return Deck(deck.slots, deck.core_slots, deck.n_arcane, min_regular, max_greed, deck.name)
+
+
+def _constraint_str(deck: Deck) -> str:
+    n = len(deck.slots)
+    min_reg_overridden = (
+        deck.min_regular >= 0
+        and deck.max_greed  >= 0
+        and deck.min_regular + deck.max_greed > n
+    )
+    parts = []
+    if deck.min_regular >= 0:
+        note = " (overridden)" if min_reg_overridden else ""
+        parts.append(f"min {deck.min_regular} regular{note}")
+    if deck.max_greed >= 0:
+        parts.append(f"max {deck.max_greed} greed")
+    return "  |  ".join(parts) if parts else "unconstrained"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Simulation
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _apply_greed(boost: Dict[Position, float], pos: Position, amount: float) -> None:
+    if pos in boost:
+        if GREED_ADDITIVE: boost[pos] += amount - 1
+        else:              boost[pos] *= amount
+
+
+def simulate(
+    deck:       Deck,
+    assignment: Dict[Position, CardType],
+    card_class: CardClass,
+    cores:      FrozenSet[CoreType],
+) -> float:
+    greed:    Dict[Position, CardType] = {}
+    regular:  Dict[Position, CardType] = {}
+    deluxe:   Dict[Position, CardType] = {}
+    typeless: Dict[Position, CardType] = {}
+
+    for p, t in assignment.items():
+        if   t in GREED_TYPES:    greed[p]    = t
+        elif t in REGULAR_TYPES:  regular[p]  = t
+        elif t in DELUXE_TYPES:   deluxe[p]   = t
+        elif t in TYPELESS_TYPES: typeless[p] = t
+
+    filled   = frozenset(greed) | frozenset(regular) | frozenset(deluxe) | frozenset(typeless)
+    scorable = {**regular, **deluxe, **typeless}
+
+    # TYPELESS cards are always shiny-classed — never count toward n_ns
+    foil_active = CoreType.FOIL in cores
+    if card_class == CardClass.EVO:
+        n_ns = len(greed) if foil_active else (len(regular) + len(greed))
+    else:
+        n_ns = len(greed)
+    n_deluxe = len(deluxe)
+
+    core_contributions        = []
+    deluxe_core_contributions = []
+    for core in cores:
+        if   core == CoreType.PURE:
+            core_contributions.append(MULT_PURE_BASE + MULT_PURE_SCALE * (n_ns + deck.n_arcane))
+        elif core == CoreType.EQUILIBRIUM and card_class == CardClass.SHINY:
+            core_contributions.append(MULT_EQUILIBRIUM)
+        elif core == CoreType.STEADFAST   and card_class == CardClass.SHINY:
+            core_contributions.append(MULT_STEADFAST)
+        elif core == CoreType.COLOR:
+            core_contributions.append(MULT_COLOR)
+        elif core == CoreType.FOIL:
+            core_contributions.append(MULT_FOIL)
+        elif core == CoreType.DELUXE_CORE:
+            deluxe_core_contributions.append(
+                MULT_DELUXE_CORE_BASE + MULT_DELUXE_CORE_SCALE * n_deluxe)
+
+    if ADDITIVE_CORES:
+        core_mult        = 1.0 + sum(v - 1.0 for v in core_contributions)        if core_contributions        else 1.0
+        deluxe_core_mult = 1.0 + sum(v - 1.0 for v in deluxe_core_contributions) if deluxe_core_contributions else 1.0
+    else:
+        core_mult        = math.prod(core_contributions)        if core_contributions        else 1.0
+        deluxe_core_mult = math.prod(deluxe_core_contributions) if deluxe_core_contributions else 1.0
+
+    row_count: Dict[int, int] = {}
+    col_count: Dict[int, int] = {}
+    for r, c in filled:
+        row_count[r] = row_count.get(r, 0) + 1
+        col_count[c] = col_count.get(c, 0) + 1
+
+    init  = 1.0
+    boost = {p: init for p in scorable}
+
+    for g, gt in greed.items():
+        gr, gc = g
+        if   gt == CardType.DIR_GREED_UP:
+            t = (gr - 1, gc)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_VERT)
+        elif gt == CardType.DIR_GREED_DOWN:
+            t = (gr + 1, gc)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_VERT)
+        elif gt == CardType.DIR_GREED_LEFT:
+            t = (gr, gc - 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_HORIZ)
+        elif gt == CardType.DIR_GREED_RIGHT:
+            t = (gr, gc + 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_HORIZ)
+        elif gt == CardType.DIR_GREED_NE:
+            t = (gr - 1, gc + 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_DIAG_UP)
+        elif gt == CardType.DIR_GREED_NW:
+            t = (gr - 1, gc - 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_DIAG_UP)
+        elif gt == CardType.DIR_GREED_SE:
+            t = (gr + 1, gc + 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_DIAG_DOWN)
+        elif gt == CardType.DIR_GREED_SW:
+            t = (gr + 1, gc - 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_DIAG_DOWN)
+        elif gt == CardType.EVO_GREED:
+            if card_class == CardClass.EVO:
+                t = (gr + 1, gc)
+                if t in regular:   # only buffs EVO regular cards; not typeless or deluxe
+                    _apply_greed(boost, t, MULT_EVO_GREED)
+        elif gt == CardType.SURR_GREED:
+            for t in deck._surr_peers[g]:
+                if t in scorable:  _apply_greed(boost, t, MULT_SURR_GREED)
+
+    ndm = 0.0
+    def _contrib(val: float) -> float:
+        return (val * EXPERIMENTAL_BOOST) ** EXPERIMENTAL_EXPONENT if ENABLE_EXPERIMENTAL_EXPONENT else val
+
+    for p, t in regular.items():
+        r, c = p
+        if   t == CardType.ROW:  pos = row_count.get(r, 0)
+        elif t == CardType.COL:  pos = col_count.get(c, 0)
+        elif t == CardType.DIAG: pos = sum(1 for q in deck._diag_peers[p] if q in filled) + 1
+        else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
+        b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
+        ndm += _contrib(pos * core_mult * deluxe_core_mult * b)
+
+    for p in deluxe:
+        b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
+        ndm += _contrib(MULT_DELUXE_FLAT * core_mult * b)
+
+    for p in typeless:
+        b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
+        ndm += _contrib(1.0 * core_mult * deluxe_core_mult * b)
+
+    return ndm
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Core selection
+# ──────────────────────────────────────────────────────────────────────────────
+
+def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreType]]:
+    k = deck.core_slots
+
+    # ── Shared helper ─────────────────────────────────────────────────────────
+    def add_candidate(candidates, seen, combo):
+        fs = frozenset(combo)
+        if fs not in seen:
+            seen.add(fs); candidates.append(fs)
+
+    # ── SHINY ─────────────────────────────────────────────────────────────────
+    # FOIL is now just another fixed multiplier for shiny — no mutual exclusion
+    # with PURE. PURE remains the only variable core (n_ns = greed count unknown).
+    if card_class == CardClass.SHINY:
+        non_var_shiny = [CoreType.EQUILIBRIUM, CoreType.STEADFAST,
+                         CoreType.COLOR,       CoreType.FOIL]
+
+        def shiny_static(combo) -> float:
+            m = 1.0
+            for core in combo:
+                if   core == CoreType.EQUILIBRIUM: m *= MULT_EQUILIBRIUM
+                elif core == CoreType.STEADFAST:   m *= MULT_STEADFAST
+                elif core == CoreType.COLOR:       m *= MULT_COLOR
+                elif core == CoreType.FOIL:        m *= MULT_FOIL
+            return m
+
+        def best_non_var_shiny(slots: int) -> FrozenSet[CoreType]:
+            cap    = min(slots, len(non_var_shiny))
+            best_m = 0.0
+            best_c: FrozenSet[CoreType] = frozenset()
+            for size in range(0, cap + 1):
+                for combo in (combinations(non_var_shiny, size) if size > 0 else [()]):
+                    m = shiny_static(combo)
+                    if m > best_m:
+                        best_m = m; best_c = frozenset(combo)
+            return best_c
+
+        var_pool = [CoreType.PURE]
+        if ALLOW_DELUXE:
+            var_pool.append(CoreType.DELUXE_CORE)
+
+        candidates: List[FrozenSet[CoreType]] = []
+        seen: set = set()
+        for size in range(0, len(var_pool) + 1):
+            for var_combo in (combinations(var_pool, size) if size > 0 else [()]):
+                var = frozenset(var_combo) if size > 0 else frozenset()
+                if len(var) > k: continue
+                filler = best_non_var_shiny(k - len(var))
+                add_candidate(candidates, seen, var | filler)
+        return candidates
+
+    # ── EVO ───────────────────────────────────────────────────────────────────
+    # Two groups based on whether FOIL is present:
+    #
+    # Group A (no FOIL): n_ns = all filled cards ≈ deck size → PURE analytically known.
+    #   Variable cores: DELUXE_CORE only.
+    #   Fixed filler: best from {PURE, COLOR}.
+    #
+    # Group B (with FOIL): n_ns = greed only → PURE is now unknown pre-SA.
+    #   Variable cores: PURE + DELUXE_CORE.
+    #   Fixed filler: best from {COLOR} only (PURE is variable, FOIL already included).
+
+    n_ns_full = len(deck.slots) + deck.n_arcane   # EVO estimate without FOIL
+
+    def evo_no_foil_mult(combo) -> float:
+        m = 1.0
+        for core in combo:
+            if   core == CoreType.PURE:  m *= MULT_PURE_BASE + MULT_PURE_SCALE * n_ns_full
+            elif core == CoreType.COLOR: m *= MULT_COLOR
+        return m
+
+    def best_fixed_evo_no_foil(slots: int) -> FrozenSet[CoreType]:
+        pool   = [CoreType.PURE, CoreType.COLOR]
+        cap    = min(slots, len(pool))
+        best_m = -1.0
+        best_c: FrozenSet[CoreType] = frozenset({CoreType.PURE})
+        for size in range(1, cap + 1):
+            for combo in combinations(pool, size):
+                m = evo_no_foil_mult(frozenset(combo))
+                if m > best_m:
+                    best_m = m; best_c = frozenset(combo)
+        return best_c
+
+    def best_fixed_evo_with_foil(slots: int) -> FrozenSet[CoreType]:
+        # PURE is variable here; only COLOR is analytically evaluable filler
+        if slots >= 1 and MULT_COLOR > 1.0:
+            return frozenset({CoreType.COLOR})
+        return frozenset()
+
+    deluxe_var = [CoreType.DELUXE_CORE] if ALLOW_DELUXE else []
+    candidates = []
+    seen       = set()
+
+    # Group A: no FOIL
+    var_pool_a = list(deluxe_var)
+    for size in range(0, len(var_pool_a) + 1):
+        for var_combo in (combinations(var_pool_a, size) if size > 0 else [()]):
+            var = frozenset(var_combo) if size > 0 else frozenset()
+            if len(var) > k: continue
+            filler = best_fixed_evo_no_foil(k - len(var))
+            add_candidate(candidates, seen, var | filler)
+
+    # Group B: with FOIL — PURE is variable
+    var_pool_b = [CoreType.PURE] + deluxe_var
+    for size in range(0, len(var_pool_b) + 1):
+        for var_combo in (combinations(var_pool_b, size) if size > 0 else [()]):
+            var   = frozenset(var_combo) if size > 0 else frozenset()
+            total = var | {CoreType.FOIL}
+            if len(total) > k: continue
+            filler = best_fixed_evo_with_foil(k - len(total))
+            add_candidate(candidates, seen, total | filler)
+
+    return candidates
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Simulated annealing
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _precompute_best_positional(deck: Deck) -> Dict[Position, CardType]:
+    """
+    For each slot, determine which positional card type yields the highest
+    multiplier based purely on deck geometry (peer set sizes).
+    This is fixed for a given deck shape and never needs recomputing.
+    DIAG counts self (+1); ROW/COL count all filled including self via row_count;
+    SURR does not count self. For a fair comparison we use maximum possible peer
+    counts (i.e. assume all slots filled), since relative ordering is geometry-only.
+    """
+    result: Dict[Position, CardType] = {}
+    for p in deck.slots:
+        r, c   = p
+        counts = {
+            CardType.ROW:  len(deck._row_peers[p]) + 1,   # +1 for self
+            CardType.COL:  len(deck._col_peers[p]) + 1,   # +1 for self
+            CardType.SURR: len(deck._surr_peers[p]),       # does not count self
+            CardType.DIAG: len(deck._diag_peers[p]) + 1,  # +1 for self
+        }
+        result[p] = max(counts, key=counts.__getitem__)
+    return result
+
+# ── Peer-set converter: frozenset of (row,col) → list of slot indices ─────────
+def _peers_as_indices(
+    slot_order: Dict[Position, int],
+    peer_sets: Dict[Position, FrozenSet[Position]],
+    slots_list: List[Position],
+) -> List[List[int]]:
+    return [
+        [slot_order[q] for q in peer_sets[p]]
+        for p in slots_list
+    ]
+
+
+# ── Pure-Python SA (renamed from old sa_optimize) ─────────────────────────────
+def _sa_optimize_python(
+    deck:       Deck,
+    card_class: CardClass,
+    cores:      FrozenSet[CoreType],
+    n_iter:     int,
+    T_start:    float = 100.0,
+    T_end:      float = 0.5,
+) -> Tuple[Dict[Position, CardType], float]:
+    slots     = list(deck.slots)
+    placeable = _get_placeable(card_class)
+    default_t = (CardType.TYPELESS
+                 if card_class == CardClass.SHINY and not SHINY_POSITIONAL
+                 else CardType.SURR)
+
+    best_positional = _precompute_best_positional(deck)
+
+    if deck.min_regular > 0 and deck.min_regular < len(slots):
+        shuffled = list(slots)
+        random.shuffle(shuffled)
+        asgn = {p: (default_t if i < deck.min_regular else CardType.SURR_GREED)
+                for i, p in enumerate(shuffled)}
+    else:
+        asgn = {p: default_t for p in slots}
+
+    score      = simulate(deck, asgn, card_class, cores)
+    best_score = score
+    best_asgn  = dict(asgn)
+    log_cool   = math.log(T_end / T_start)
+
+    SCORING_TYPES = REGULAR_TYPES | TYPELESS_TYPES
+    if DELUXE_COUNTED_AS_REGULAR:
+        SCORING_TYPES = SCORING_TYPES | DELUXE_TYPES
+
+    n_greed_cur = sum(1 for t in asgn.values() if t in GREED_TYPES)
+    n_reg_cur   = sum(1 for t in asgn.values() if t in SCORING_TYPES)
+
+    min_reg_active = (
+        deck.min_regular >= 0
+        and not (deck.max_greed >= 0
+                 and deck.min_regular + deck.max_greed > len(deck.slots))
+    )
+
+    def _valid() -> bool:
+        if deck.max_greed >= 0 and n_greed_cur > deck.max_greed:
+            return False
+        if min_reg_active and n_reg_cur < deck.min_regular:
+            return False
+        return True
+
+    def _counter_update(old: CardType, new: CardType) -> None:
+        nonlocal n_greed_cur, n_reg_cur
+        if old in GREED_TYPES:   n_greed_cur -= 1
+        if old in SCORING_TYPES: n_reg_cur   -= 1
+        if new in GREED_TYPES:   n_greed_cur += 1
+        if new in SCORING_TYPES: n_reg_cur   += 1
+
+    def _resolve(p: Position, t: CardType) -> CardType:
+        return best_positional[p] if t in REGULAR_TYPES else t
+
+    for i in range(n_iter):
+        T = T_start * math.exp(log_cool * i / n_iter)
+
+        if len(slots) < 2 or random.random() < 0.80:
+            p   = random.choice(slots)
+            old = asgn[p]
+            new = _resolve(p, random.choice(placeable))
+            if new == old:
+                continue
+            _counter_update(old, new)
+            asgn[p] = new
+            if not _valid():
+                _counter_update(new, old)
+                asgn[p] = old
+                continue
+            new_score = simulate(deck, asgn, card_class, cores)
+            delta     = new_score - score
+            if delta >= 0 or random.random() < math.exp(delta / T):
+                score = new_score
+                if score > best_score:
+                    best_score = score; best_asgn = dict(asgn)
+            else:
+                _counter_update(new, old)
+                asgn[p] = old
+        else:
+            p1, p2 = random.sample(slots, 2)
+            if asgn[p1] == asgn[p2]:
+                continue
+            old1, old2 = asgn[p1], asgn[p2]
+            _counter_update(old1, old2)
+            _counter_update(old2, old1)
+            asgn[p1], asgn[p2] = old2, old1
+            if not _valid():
+                _counter_update(old2, old1)
+                _counter_update(old1, old2)
+                asgn[p1], asgn[p2] = old1, old2
+                continue
+            new_score = simulate(deck, asgn, card_class, cores)
+            delta     = new_score - score
+            if delta >= 0 or random.random() < math.exp(delta / T):
+                score = new_score
+                if score > best_score:
+                    best_score = score; best_asgn = dict(asgn)
+            else:
+                _counter_update(old2, old1)
+                _counter_update(old1, old2)
+                asgn[p1], asgn[p2] = old1, old2
+
+    return best_asgn, best_score
+
+
+# ── Public sa_optimize: tries Rust, falls back to Python ──────────────────────
+def sa_optimize(
+    deck:       Deck,
+    card_class: CardClass,
+    cores:      FrozenSet[CoreType],
+    n_iter:     int,
+    T_start:    float = 100.0,
+    T_end:      float = 0.5,
+) -> Tuple[Dict[Position, CardType], float]:
+
+    if not _RUST_AVAILABLE:
+        return _sa_optimize_python(deck, card_class, cores, n_iter, T_start, T_end)
+
+    # ── Convert inputs for Rust ───────────────────────────────────────────────
+    slots_list = list(deck.slots)                        # consistent ordering
+    slot_order = {p: i for i, p in enumerate(slots_list)}
+
+    row_peers_idx  = _peers_as_indices(slot_order, deck._row_peers,  slots_list)
+    col_peers_idx  = _peers_as_indices(slot_order, deck._col_peers,  slots_list)
+    surr_peers_idx = _peers_as_indices(slot_order, deck._surr_peers, slots_list)
+    diag_peers_idx = _peers_as_indices(slot_order, deck._diag_peers, slots_list)
+
+    cores_str    = [c.value for c in cores]
+    placeable_str = [t.value for t in _get_placeable(card_class)]
+
+    # ── Call Rust ─────────────────────────────────────────────────────────────
+    asgn_strs, best_score = _ndm_core.run_sa_optimize(
+        slots      = slots_list,
+        row_peers  = row_peers_idx,
+        col_peers  = col_peers_idx,
+        surr_peers = surr_peers_idx,
+        diag_peers = diag_peers_idx,
+        n_arcane   = deck.n_arcane,
+        min_regular= deck.min_regular,
+        max_greed  = deck.max_greed,
+        is_shiny   = (card_class == CardClass.SHINY),
+        cores      = cores_str,
+        placeable  = placeable_str,
+        n_iter     = n_iter,
+        t_start    = T_start,
+        t_end      = T_end,
+        # Multiplier constants
+        mult_dir_vert          = MULT_DIR_GREED_VERT,
+        mult_dir_horiz         = MULT_DIR_GREED_HORIZ,
+        mult_evo_greed         = MULT_EVO_GREED,
+        mult_surr_greed        = MULT_SURR_GREED,
+        mult_dir_diag_up       = MULT_DIR_GREED_DIAG_UP,
+        mult_dir_diag_down     = MULT_DIR_GREED_DIAG_DOWN,
+        mult_pure_base         = MULT_PURE_BASE,
+        mult_pure_scale        = MULT_PURE_SCALE,
+        mult_equilibrium       = MULT_EQUILIBRIUM,
+        mult_foil              = MULT_FOIL,
+        mult_steadfast         = MULT_STEADFAST,
+        mult_color             = MULT_COLOR,
+        mult_deluxe_flat       = MULT_DELUXE_FLAT,
+        mult_deluxe_core_base  = MULT_DELUXE_CORE_BASE,
+        mult_deluxe_core_scale = MULT_DELUXE_CORE_SCALE,
+        # Flags
+        greed_additive            = GREED_ADDITIVE,
+        additive_cores            = ADDITIVE_CORES,
+        shiny_positional          = SHINY_POSITIONAL,
+        enable_experimental       = ENABLE_EXPERIMENTAL_EXPONENT,
+        experimental_exponent     = EXPERIMENTAL_EXPONENT,
+        experimental_boost        = EXPERIMENTAL_BOOST,
+        deluxe_counted_as_regular = DELUXE_COUNTED_AS_REGULAR,
+    )
+
+    # ── Convert result back to Python format ──────────────────────────────────
+    best_asgn = {
+        slots_list[i]: CardType(asgn_strs[i])
+        for i in range(len(slots_list))
+    }
+    return best_asgn, best_score
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Optimizer
+# ──────────────────────────────────────────────────────────────────────────────
+
+def optimize(
+    deck:     Deck,
+    n_iter:   int,
+    restarts: int,
+    verbose:  bool = True,
+) -> Dict[CardClass, dict]:
+    results: Dict[CardClass, dict] = {}
+
+    for card_class in CardClass:
+        candidates = candidate_cores(card_class, deck)
+        best: dict = {"score": -1.0}
+        run        = 0
+        total_runs = len(candidates) * restarts
+
+        if verbose:
+            print(f"\n{'═'*66}")
+            print(f"  Class : {card_class.value.upper()}   Deck : {deck.name}"
+                  f"   Constraint : {_constraint_str(deck)}")
+            print(f"  Runs  : {len(candidates)} candidate(s) × {restarts} restarts = {total_runs}")
+            print(f"{'═'*66}")
+
+        for cores in candidates:
+            cores_str = "+".join(ct.value[:4].upper() for ct in sorted(cores, key=lambda x: x.value))
+            if verbose:
+                print(f"\n  Candidate cores: {cores_str}")
+            for _ in range(restarts):
+                run += 1
+                asgn, score = sa_optimize(deck, card_class, cores, n_iter=n_iter)
+                improved = score > best["score"]
+                if improved:
+                    best = {"score": score, "cores": cores, "assignment": dict(asgn)}
+                if verbose:
+                    flag = "★" if improved else " "
+                    print(f"  {flag}[{run:3d}/{total_runs}]  score={score:10.3f}  best={best['score']:10.3f}")
+
+        results[card_class] = best
+        if verbose:
+            _report(card_class, best, deck)
+
+    return results
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Post-processing helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def mark_filler_greed(
+    deck: Deck, assignment: Dict[Position, CardType], card_class: CardClass,
+) -> Dict[Position, CardType]:
+    regular = frozenset(p for p, t in assignment.items()
+                        if t in REGULAR_TYPES | DELUXE_TYPES | TYPELESS_TYPES)
+    result  = dict(assignment)
+    for p, t in assignment.items():
+        if t not in GREED_TYPES or t == CardType.FILLER_GREED:
+            continue
+        gr, gc  = p
+        buffing = False
+        if   t == CardType.DIR_GREED_UP:    buffing = (gr-1, gc) in regular
+        elif t == CardType.DIR_GREED_DOWN:   buffing = (gr+1, gc) in regular
+        elif t == CardType.DIR_GREED_LEFT:   buffing = (gr, gc-1) in regular
+        elif t == CardType.DIR_GREED_RIGHT:  buffing = (gr, gc+1) in regular
+        elif t == CardType.DIR_GREED_NE:  buffing = (gr - 1, gc + 1) in regular
+        elif t == CardType.DIR_GREED_NW:  buffing = (gr - 1, gc - 1) in regular
+        elif t == CardType.DIR_GREED_SE:  buffing = (gr + 1, gc + 1) in regular
+        elif t == CardType.DIR_GREED_SW:  buffing = (gr + 1, gc - 1) in regular
+        elif t == CardType.EVO_GREED:        buffing = card_class == CardClass.EVO and (gr+1, gc) in regular
+        elif t == CardType.SURR_GREED:       buffing = any(q in regular for q in deck._surr_peers[p])
+        if not buffing:
+            result[p] = CardType.FILLER_GREED
+    return result
+
+
+def compute_heatmap(
+    deck:       Deck,
+    assignment: Dict[Position, CardType],
+    card_class: CardClass,
+    cores:      FrozenSet[CoreType],
+) -> Dict[Position, float]:
+    greed:    Dict[Position, CardType] = {}
+    regular:  Dict[Position, CardType] = {}
+    deluxe:   Dict[Position, CardType] = {}
+    typeless: Dict[Position, CardType] = {}
+
+    for p, t in assignment.items():
+        if   t in GREED_TYPES:    greed[p]    = t
+        elif t in REGULAR_TYPES:  regular[p]  = t
+        elif t in DELUXE_TYPES:   deluxe[p]   = t
+        elif t in TYPELESS_TYPES: typeless[p] = t
+
+    filled   = frozenset(greed) | frozenset(regular) | frozenset(deluxe) | frozenset(typeless)
+    scorable = {**regular, **deluxe, **typeless}
+
+    foil_active = CoreType.FOIL in cores
+    if card_class == CardClass.EVO:
+        n_ns = len(greed) if foil_active else (len(regular) + len(greed))
+    else:
+        n_ns = len(greed)
+    n_deluxe = len(deluxe)
+
+    core_contributions        = []
+    deluxe_core_contributions = []
+    for core in cores:
+        if   core == CoreType.PURE:
+            core_contributions.append(MULT_PURE_BASE + MULT_PURE_SCALE * (n_ns + deck.n_arcane))
+        elif core == CoreType.EQUILIBRIUM and card_class == CardClass.SHINY:
+            core_contributions.append(MULT_EQUILIBRIUM)
+        elif core == CoreType.STEADFAST   and card_class == CardClass.SHINY:
+            core_contributions.append(MULT_STEADFAST)
+        elif core == CoreType.COLOR:
+            core_contributions.append(MULT_COLOR)
+        elif core == CoreType.FOIL:
+            core_contributions.append(MULT_FOIL)
+        elif core == CoreType.DELUXE_CORE:
+            deluxe_core_contributions.append(
+                MULT_DELUXE_CORE_BASE + MULT_DELUXE_CORE_SCALE * n_deluxe)
+
+    if ADDITIVE_CORES:
+        core_mult        = 1.0 + sum(v - 1.0 for v in core_contributions)        if core_contributions        else 1.0
+        deluxe_core_mult = 1.0 + sum(v - 1.0 for v in deluxe_core_contributions) if deluxe_core_contributions else 1.0
+    else:
+        core_mult        = math.prod(core_contributions)        if core_contributions        else 1.0
+        deluxe_core_mult = math.prod(deluxe_core_contributions) if deluxe_core_contributions else 1.0
+
+    row_count: Dict[int, int] = {}
+    col_count: Dict[int, int] = {}
+    for r, c in filled:
+        row_count[r] = row_count.get(r, 0) + 1
+        col_count[c] = col_count.get(c, 0) + 1
+
+    init  = 1.0
+    boost = {p: init for p in scorable}
+
+    for g, gt in greed.items():
+        gr, gc = g
+        if   gt == CardType.DIR_GREED_UP:
+            t = (gr - 1, gc)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_VERT)
+        elif gt == CardType.DIR_GREED_DOWN:
+            t = (gr + 1, gc)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_VERT)
+        elif gt == CardType.DIR_GREED_LEFT:
+            t = (gr, gc - 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_HORIZ)
+        elif gt == CardType.DIR_GREED_RIGHT:
+            t = (gr, gc + 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_HORIZ)
+        elif gt == CardType.DIR_GREED_NE:
+            t = (gr - 1, gc + 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_DIAG_UP)
+        elif gt == CardType.DIR_GREED_NW:
+            t = (gr - 1, gc - 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_DIAG_UP)
+        elif gt == CardType.DIR_GREED_SE:
+            t = (gr + 1, gc + 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_DIAG_DOWN)
+        elif gt == CardType.DIR_GREED_SW:
+            t = (gr + 1, gc - 1)
+            if t in scorable:  _apply_greed(boost, t, MULT_DIR_GREED_DIAG_DOWN)
+        elif gt == CardType.EVO_GREED:
+            if card_class == CardClass.EVO:
+                t = (gr + 1, gc)
+                if t in regular:
+                    _apply_greed(boost, t, MULT_EVO_GREED)
+        elif gt == CardType.SURR_GREED:
+            for t in deck._surr_peers[g]:
+                if t in scorable:  _apply_greed(boost, t, MULT_SURR_GREED)
+
+    heatmap: Dict[Position, float] = {p: 0.0 for p in deck.slots}
+
+    def _contrib(val: float) -> float:
+        return (val * EXPERIMENTAL_BOOST) ** EXPERIMENTAL_EXPONENT if ENABLE_EXPERIMENTAL_EXPONENT else val
+
+    for p, t in regular.items():
+        r, c = p
+        if   t == CardType.ROW:  pos = row_count.get(r, 0)
+        elif t == CardType.COL:  pos = col_count.get(c, 0)
+        elif t == CardType.DIAG: pos = sum(1 for q in deck._diag_peers[p]
+                                           if q in filled) + 1
+        else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
+        b          = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
+        heatmap[p] = _contrib(pos * core_mult * deluxe_core_mult * b)
+
+    for p in deluxe:
+        b          = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
+        heatmap[p] = _contrib(MULT_DELUXE_FLAT * core_mult * b)
+
+    for p in typeless:
+        b          = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
+        heatmap[p] = _contrib(1.0 * core_mult * deluxe_core_mult * b)
+
+    return heatmap
+
+
+def compute_hns(heatmap: Dict[Position, float], q: float) -> float:
+    """
+    Hill Number Score = N · (Σ pᵢ^q)^(1/(1-q))
+    where pᵢ = hᵢ / N are the fractional NDM contributions of regular cards.
+    At q=1 (limit): N · exp(-Σ pᵢ ln pᵢ)  (Shannon-weighted NDM).
+    At q=2:         N² / Σ hᵢ²             (Effective Deck Power / Simpson reciprocal).
+    Only positive heatmap values are included (greed/empty slots excluded).
+    """
+    vals = [v for v in heatmap.values() if v > 0]
+    if not vals:
+        return 0.0
+    N = sum(vals)
+    if N == 0:
+        return 0.0
+    ps = [v / N for v in vals]
+    if abs(q - 1.0) < 1e-9:   # limit: Shannon
+        return N * math.exp(-sum(p * math.log(p) for p in ps))
+    return N * (sum(p ** q for p in ps)) ** (1.0 / (1.0 - q))
+
+
+def compute_hns_from_result(deck: Deck, result: dict, card_class: CardClass) -> float:
+    heatmap = compute_heatmap(deck, result["assignment"], card_class, result["cores"])
+    return compute_hns(heatmap, HNS_Q)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Terminal report
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _report(card_class: CardClass, best: dict, deck: Deck) -> None:
+    if best["score"] < 0:
+        print("  (no valid configuration found)"); return
+
+    asgn  = best["assignment"]
+    cores = best["cores"]
+
+    display_asgn = mark_filler_greed(deck, asgn, card_class)
+    counts       = Counter(display_asgn.values())
+    n_reg        = sum(counts[t] for t in REGULAR_TYPES)
+    n_grd        = sum(counts[t] for t in GREED_TYPES)
+
+    dashes = '─' * max(0, 44 - len(deck.name))
+    print(f"\n  ── Best for {card_class.value.upper()}: {deck.name} {dashes}")
+    print(f"  NDM           : {best['score']:.4f}")
+    print(f"  Cores         : {sorted(c.value for c in cores)}")
+    print(f"  Regular cards : {n_reg}   Greed cards : {n_grd}")
+    print(f"  Constraint    : {_constraint_str(deck)}")
+    breakdown = "  ".join(
+        f"{t.value}={counts[t]}" for t in PLACEABLE + [CardType.FILLER_GREED] if counts[t] > 0)
+    print(f"  Breakdown     : {breakdown}")
+
+    if BALANCE_DISPLAY:
+        print(f"\n  ── Balance info {'─'*51}")
+        print(f"  Greed stacking  : {'additive' if GREED_ADDITIVE else 'multiplicative'}")
+        print(f"  surr_greed      : {MULT_SURR_GREED}x")
+        print(f"  dir_greed_vert  : {MULT_DIR_GREED_VERT}x")
+        print(f"  dir_greed_horiz : {MULT_DIR_GREED_HORIZ}x")
+        print(f"  evo_greed       : {MULT_EVO_GREED}x")
+        print(f"  pure_core       : {MULT_PURE_BASE} + {MULT_PURE_SCALE} × n_ns")
+        print(f"  equilibrium     : {MULT_EQUILIBRIUM}x  (shiny only)")
+        print(f"  steadfast       : {MULT_STEADFAST}x  (shiny only)")
+        print(f"  color           : {MULT_COLOR}x")
+
+    legend = ("R=row  C=col  S=surr  X=diag  ^=up  v=down  <=left  >=right  "
+              "↗=NE  ↖=NW  ↘=SE  ↙=SW  "
+              "e=evo_greed  o=surr_greed  .=generic_greed")
+    print(f"\n  Layout ({legend}):")
+    for line in deck.display(display_asgn).splitlines():
+        print(f"    {line}")
+
+    if HEATMAP_DISPLAY:
+        heatmap = compute_heatmap(deck, asgn, card_class, cores)
+        min_r   = min(r for r, _ in deck.slots); max_r = max(r for r, _ in deck.slots)
+        min_c   = min(c for _, c in deck.slots); max_c = max(c for _, c in deck.slots)
+        cell_w  = max(len(f"{v:.1f}") for v in heatmap.values()) + 1
+        print(f"\n  Heatmap (NDM contribution per card):")
+        for r in range(min_r, max_r + 1):
+            cells = []
+            for c in range(min_c, max_c + 1):
+                p = (r, c)
+                cells.append(f"{heatmap[p]:{cell_w}.1f}" if p in deck.slots else " " * cell_w)
+            print(f"    {''.join(cells)}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Spreadsheet helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _lerp_color(
+    lo: Tuple[int,int,int], hi: Tuple[int,int,int], t: float,
+) -> str:
+    r = int(lo[0] + (hi[0]-lo[0]) * t)
+    g = int(lo[1] + (hi[1]-lo[1]) * t)
+    b = int(lo[2] + (hi[2]-lo[2]) * t)
+    return f"{r:02X}{g:02X}{b:02X}"
+
+
+def _write_balance_block(ws, start_row: int) -> int:
+    from openpyxl.styles import Font, PatternFill, Alignment
+    HF = PatternFill("solid", fgColor="2C3E50")
+    HFo = Font(bold=True, color="FFFFFF", name="Arial", size=11)
+    LF = Font(bold=True,  name="Arial", size=10)
+    VF = Font(name="Arial", size=10)
+
+    r = start_row
+    c = ws.cell(row=r, column=1, value="BALANCE SETTINGS")
+    c.font = HFo; c.fill = HF; c.alignment = Alignment(horizontal="center")
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
+    r += 1
+
+    rows = [
+        ("Greed stacking",   "additive" if GREED_ADDITIVE else "multiplicative"),
+        ("Core stacking",    "additive" if ADDITIVE_CORES else "multiplicative"),  # ← add this
+        ("Exponent active",   "yes" if ENABLE_EXPERIMENTAL_EXPONENT else "no"),
+        ("Card exponent",     str(EXPERIMENTAL_EXPONENT) if ENABLE_EXPERIMENTAL_EXPONENT else "n/a"),
+        ("Card boost",        str(EXPERIMENTAL_BOOST)    if ENABLE_EXPERIMENTAL_EXPONENT else "n/a"),
+        ("foil_core",        f"{MULT_FOIL}x"),
+        ("shiny_positional",  "yes" if SHINY_POSITIONAL else "no (T cards, flat 1×)"),
+        ("surr_greed",       f"{MULT_SURR_GREED}x"),
+        ("dir_greed_vert",   f"{MULT_DIR_GREED_VERT}x"),
+        ("dir_greed_horiz",  f"{MULT_DIR_GREED_HORIZ}x"),
+        ("dir_greed_diag_up",   f"{MULT_DIR_GREED_DIAG_UP}x   (NE / NW)"),
+        ("dir_greed_diag_down", f"{MULT_DIR_GREED_DIAG_DOWN}x   (SE / SW)"),
+        ("evo_greed",        f"{MULT_EVO_GREED}x"),
+        ("pure_core",        f"{MULT_PURE_BASE} + {MULT_PURE_SCALE} × n_ns"),
+        ("equilibrium",      f"{MULT_EQUILIBRIUM}x  (shiny only)"),
+        ("steadfast",        f"{MULT_STEADFAST}x  (shiny only)"),
+        ("color",            f"{MULT_COLOR}x"),
+    ]
+    if SPREAD_METRIC:
+        rows += [
+            ("── Spread metric", ""),
+            ("HNS q value",      str(HNS_Q)),
+            ("HNS formula",      "N · (Σpᵢ^q)^(1/(1-q));  q=2 → N²/Σhᵢ²"),
+        ]
+    if ALLOW_DELUXE:
+        rows += [
+            ("── Deluxe core",    ""),
+            ("deluxe_core_base",  f"{MULT_DELUXE_CORE_BASE}"),
+            ("deluxe_core_scale", f"+{MULT_DELUXE_CORE_SCALE} per deluxe card"),
+            ("deluxe_flat",       f"{MULT_DELUXE_FLAT}x  (flat card multiplier)"),
+        ]
+    for label, value in rows:
+        ws.cell(row=r, column=1, value=label).font = LF
+        ws.cell(row=r, column=2, value=value).font = VF
+        r += 1
+    return r + 1
+
+
+def _write_overview_block(
+    ws,
+    all_results: Dict[str, Dict[str, Dict[CardClass, dict]]],
+    decks:       List[Deck],
+    start_row:   int,
+) -> int:
+    from openpyxl.styles import Font, PatternFill, Alignment
+    HF        = PatternFill("solid", fgColor="2C3E50")
+    HFo       = Font(bold=True, color="FFFFFF", name="Arial", size=11)
+    SubF      = Font(bold=True, color="FFFFFF", name="Arial", size=10)
+    SubFill_E = PatternFill("solid", fgColor="1E8449")
+    SubFill_S = PatternFill("solid", fgColor="1A5276")
+    NF        = Font(bold=True, name="Arial", size=10)
+    VF        = Font(name="Arial", size=10)
+
+    sample_configs = _get_test_configs(decks[0]) if decks else []
+    labels         = [cfg[0] for cfg in sample_configs]
+    n_tests        = len(labels)
+
+    evo_start   = 2
+    shiny_start = 2 + n_tests
+    total_cols  = 1 + 2 * n_tests
+
+    r = start_row
+
+    # Main header
+    c = ws.cell(row=r, column=1, value="OVERVIEW — BEST NDM PER DECK")
+    c.font = HFo; c.fill = HF; c.alignment = Alignment(horizontal="center")
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=total_cols)
+    r += 1
+
+    # Class sub-headers
+    ws.cell(row=r, column=1, value="").fill = HF
+    for label, fill, start_c in [("EVO", SubFill_E, evo_start), ("SHINY", SubFill_S, shiny_start)]:
+        end_c = start_c + n_tests - 1
+        c = ws.cell(row=r, column=start_c, value=label)
+        c.font = SubF; c.fill = fill; c.alignment = Alignment(horizontal="center")
+        if n_tests > 1:
+            ws.merge_cells(start_row=r, start_column=start_c, end_row=r, end_column=end_c)
+    r += 1
+
+    # Test-label row
+    ws.cell(row=r, column=1, value="Deck").font = Font(bold=True, name="Arial", size=10)
+    for i, lbl in enumerate(labels):
+        for offset, fill in [(evo_start, SubFill_E), (shiny_start, SubFill_S)]:
+            c = ws.cell(row=r, column=offset + i, value=lbl)
+            c.font = Font(bold=True, color="FFFFFF", name="Arial", size=9)
+            c.fill = fill
+            c.alignment = Alignment(horizontal="center")
+    r += 1
+
+    # Data rows
+    for deck in decks:
+        deck_results = all_results.get(deck.name, {})
+        ws.cell(row=r, column=1, value=deck.name).font = NF
+        for i, (lbl, min_reg, max_greed) in enumerate(_get_test_configs(deck)):
+            test_res = deck_results.get(lbl, {})
+            cdeck    = _deck_with_constraints(deck, min_reg, max_greed)
+            for card_class, offset in [(CardClass.EVO, evo_start), (CardClass.SHINY, shiny_start)]:
+                if card_class in test_res:
+                    ndm = test_res[card_class]["score"]
+                    if SPREAD_METRIC:
+                        hns = compute_hns_from_result(cdeck, test_res[card_class], card_class)
+                        val = f"{ndm:.1f} ({hns:.1f})"
+                    else:
+                        val = f"{ndm:.1f}"
+                else:
+                    val = "—"
+                c = ws.cell(row=r, column=offset + i, value=val)
+                c.font = VF
+                c.alignment = Alignment(horizontal="center")
+        r += 1
+
+    return r + 1
+
+
+def _write_class_panel(
+    ws,
+    deck:       Deck,
+    result:     dict,
+    card_class: CardClass,
+    start_row:  int,
+    start_col:  int,
+    label:      str = "",
+) -> Tuple[int, int]:
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    hdr_color   = "1E8449" if card_class == CardClass.EVO else "1A5276"
+    HEADER_FILL = PatternFill("solid", fgColor=hdr_color)
+    HEADER_FONT = Font(bold=True, color="FFFFFF", name="Arial", size=11)
+    SECT_FILL   = PatternFill("solid", fgColor="5D6D7E")
+    SECT_FONT   = Font(bold=True, color="FFFFFF", name="Arial", size=10)
+    LABEL_FONT  = Font(bold=True, name="Arial", size=10)
+    VALUE_FONT  = Font(name="Arial", size=10)
+    GREY_FILL   = PatternFill("solid", fgColor="BDC3C7")
+    OUT_FILL    = PatternFill("solid", fgColor="F2F3F4")
+
+    CARD_COLORS = {
+        CardType.ROW:             "A9CCE3", CardType.COL:  "A9CCE3", CardType.SURR: "A9CCE3",
+        CardType.DIAG: "A9CCE3",
+        CardType.DELUXE:          "D7BDE2",   # purple
+        CardType.DIR_GREED_UP:    "F9E79F", CardType.DIR_GREED_DOWN:  "F9E79F",
+        CardType.DIR_GREED_LEFT:  "F9E79F", CardType.DIR_GREED_RIGHT: "F9E79F",
+        CardType.DIR_GREED_NE:    "F9E79F",
+        CardType.DIR_GREED_NW:    "F9E79F",
+        CardType.DIR_GREED_SE:    "F9E79F",
+        CardType.DIR_GREED_SW:    "F9E79F",
+        CardType.EVO_GREED:       "FDEBD0", CardType.SURR_GREED:      "FDEBD0",
+        CardType.FILLER_GREED:    "D5D8DC",
+        CardType.TYPELESS:        "A8D5A2",   # soft green, distinct from blue regular cards
+    }
+
+    asgn         = result["assignment"]
+    cores        = result["cores"]
+    display_asgn = mark_filler_greed(deck, asgn, card_class)
+    counts       = Counter(display_asgn.values())
+    heatmap      = compute_heatmap(deck, asgn, card_class, cores)
+
+    min_r   = min(r for r, _ in deck.slots); max_r = max(r for r, _ in deck.slots)
+    min_c   = min(c for _, c in deck.slots); max_c = max(c for _, c in deck.slots)
+    grid_w  = max_c - min_c + 1
+    panel_w = max(grid_w, 2)
+
+    def wr(row, col, val=None, *, font=None, fill=None, align=None, nfmt=None):
+        c = ws.cell(row=row, column=col, value=val)
+        if font:  c.font          = font
+        if fill:  c.fill          = fill
+        if align: c.alignment     = align
+        if nfmt:  c.number_format = nfmt
+        return c
+
+    def merge_header(row, val, fill, font):
+        wr(row, start_col, val, font=font, fill=fill, align=Alignment(horizontal="center"))
+        if panel_w > 1:
+            ws.merge_cells(start_row=row, start_column=start_col,
+                           end_row=row, end_column=start_col + panel_w - 1)
+
+    r = start_row
+
+    # Class + test-label header
+    header_text = card_class.value.upper()
+    if label:
+        header_text += f" — {label}"
+    merge_header(r, header_text, HEADER_FILL, HEADER_FONT)
+    r += 1
+
+    # Info rows
+    n_reg     = sum(counts[t] for t in REGULAR_TYPES)
+    n_grd     = sum(counts[t] for t in GREED_TYPES)
+    breakdown = "  ".join(
+        f"{t.value}={counts[t]}" for t in PLACEABLE + [CardType.FILLER_GREED] if counts[t] > 0)
+
+    if SPREAD_METRIC:
+        hns       = compute_hns_from_result(deck, result, card_class)
+        ndm_label = "NDM  (HNS)"
+        ndm_value = f"{result['score']:.4f}  ({hns:.2f})"
+    else:
+        ndm_label = "NDM"
+        ndm_value = f"{result['score']:.4f}"
+
+    for lbl, val in [
+        (ndm_label,    ndm_value),
+        ("Cores",      ", ".join(sorted(c.value for c in cores))),
+        ("Cards",      f"regular={n_reg}  greed={n_grd}"),
+        ("Breakdown",  breakdown),
+        ("Constraint", _constraint_str(deck)),
+    ]:
+        wr(r, start_col,     lbl, font=LABEL_FONT)
+        wr(r, start_col + 1, val, font=VALUE_FONT)
+        r += 1
+
+    r += 1  # blank
+
+    # Layout grid
+    merge_header(r, "Layout", SECT_FILL, SECT_FONT); r += 1
+    for gr in range(min_r, max_r + 1):
+        for gc in range(min_c, max_c + 1):
+            p       = (gr, gc)
+            col_idx = start_col + (gc - min_c)
+            if p not in deck.slots:
+                wr(r, col_idx, fill=OUT_FILL)
+            else:
+                ct = display_asgn.get(p, CardType.EMPTY)
+                wr(r, col_idx, Deck._CHAR.get(ct, "?"),
+                   font=Font(name="Courier New", size=10, bold=ct in REGULAR_TYPES),
+                   fill=PatternFill("solid", fgColor=CARD_COLORS.get(ct, "FFFFFF")),
+                   align=Alignment(horizontal="center"))
+        r += 1
+
+    r += 1  # blank
+
+    # Heatmap grid
+    merge_header(r, "Heatmap", SECT_FILL, SECT_FONT); r += 1
+    nonzero = [v for v in heatmap.values() if v > 0]
+    max_val = max(nonzero) if nonzero else 1.0
+    LO = (255, 255, 255); HI = (39, 174, 96)
+
+    for gr in range(min_r, max_r + 1):
+        for gc in range(min_c, max_c + 1):
+            p       = (gr, gc)
+            col_idx = start_col + (gc - min_c)
+            if p not in deck.slots:
+                wr(r, col_idx, fill=OUT_FILL)
+            else:
+                val = heatmap[p]
+                if val <= 0:
+                    wr(r, col_idx, 0, fill=GREY_FILL,
+                       font=Font(name="Arial", size=9, color="888888"),
+                       align=Alignment(horizontal="center"))
+                else:
+                    t_val   = val / max_val
+                    txt_col = "FFFFFF" if t_val > 0.6 else "000000"
+                    wr(r, col_idx, round(val, 1),
+                       fill=PatternFill("solid", fgColor=_lerp_color(LO, HI, t_val)),
+                       font=Font(name="Arial", size=9, color=txt_col),
+                       align=Alignment(horizontal="center"), nfmt="0.0")
+        r += 1
+
+    return r - start_row, panel_w
+
+
+def generate_spreadsheet(
+    all_results: Dict[str, Dict[str, Dict[CardClass, dict]]],
+    decks:       List[Deck],
+    filepath:    str,
+) -> None:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "NDM Results"
+
+    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["B"].width = 36
+    for i in range(3, 120):
+        ws.column_dimensions[get_column_letter(i)].width = 5
+
+    current_row = 1
+    current_row = _write_balance_block(ws, current_row)
+    current_row = _write_overview_block(ws, all_results, decks, current_row)
+
+    DECK_FILL = PatternFill("solid", fgColor="1C2833")
+    DECK_FONT = Font(bold=True, color="FFFFFF", name="Arial", size=12)
+    GAP       = 2   # blank columns between panels
+
+    for deck in decks:
+        deck_results = all_results.get(deck.name, {})
+        test_configs = _get_test_configs(deck)
+
+        # Deck header
+        ws.cell(row=current_row, column=1,
+                value=f"DECK: {deck.name}  ({len(deck.slots)} slots · "
+                      f"{deck.core_slots} cores · {deck.n_arcane} arcane)"
+                ).font = DECK_FONT
+        ws.cell(row=current_row, column=1).fill = DECK_FILL
+        ws.merge_cells(start_row=current_row, start_column=1,
+                       end_row=current_row, end_column=40)
+        current_row += 1
+
+        # Compute panel width once (same for all configs since slots are identical)
+        min_c  = min(c for _, c in deck.slots); max_c = max(c for _, c in deck.slots)
+        grid_w = max_c - min_c + 1
+        panel_w = max(grid_w, 2)
+
+        # One row-group per class
+        for card_class in CardClass:
+            panel_col = 1
+            max_rows  = 0
+
+            for label, min_reg, max_greed in test_configs:
+                test_result = deck_results.get(label, {})
+                if card_class not in test_result:
+                    panel_col += panel_w + GAP
+                    continue
+                cdeck = _deck_with_constraints(deck, min_reg, max_greed)
+                rows, _ = _write_class_panel(
+                    ws, cdeck, test_result[card_class], card_class,
+                    current_row, panel_col, label=label)
+                max_rows  = max(max_rows, rows)
+                panel_col += panel_w + GAP
+
+            current_row += max_rows
+
+        current_row += 2   # blank rows between decks
+
+    wb.save(filepath)
+    print(f"\n  Spreadsheet saved → {filepath}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Deck configurations  ← edit here
+# ──────────────────────────────────────────────────────────────────────────────
+
+DECKS: List[Deck] = [
+    Deck(
+        slots = {
+            (1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),
+            (2,1),(2,2),(2,3),(2,4),(2,5),(2,6),(2,7),
+            (3,0),(3,1),(3,2),(3,3),(3,4),(3,5),(3,6),(3,7),(3,8),
+        },
+        core_slots  = 2 + DECKMOD,
+        n_arcane    = 3,
+        min_regular = -1,
+        max_greed   = -1,
+        name        = "Cake Deck",
+    ),
+
+    Deck(
+        slots = {
+           (0,0),(0,1),(0,2),(0,3),(0,4),(0,5),(0,6),(0,7),(0,8),
+            (1,2),(1,3),(1,4),(1,5),(1,6),
+            (2,3),(2,4),(2,5),
+            (3,1),(3,2),(3,3),(3,4),(3,5),(3,6),(3,7),
+        },
+        core_slots  = 3 + DECKMOD,
+        n_arcane    = 0,
+        min_regular = -1,
+        name        = "Anvil Deck",
+    ),
+
+    Deck(
+        slots = {
+           (0,3),
+            (1,1),(1,2),(1,3),(1,4),(1,5),
+            (2,1),(2,2),(2,3),(2,4),(2,5),
+            (3,0),(3,1),(3,2),(3,3),(3,4),
+            (4,1),(4,2),(4,3),(4,4),(4,5),
+            (5,1),(5,2),(5,4),(5,5),
+        },
+        core_slots  = 2 + DECKMOD,
+        n_arcane    = 0,
+        min_regular = -1,
+        name        = "Puzzle Deck",
+    ),
+
+    Deck(
+        slots = {
+           (0,0),(0,1),(0,2),(0,3),(0,4),(0,5),
+            (1,1),(1,2),(1,3),(1,4),
+            (2,1),(2,2),(2,3),(2,4),
+            (3,1),(3,2),(3,3),(3,4),
+            (4,1),(4,2),(4,4),
+        },
+        core_slots  = 3 + DECKMOD,
+        n_arcane    = 2,
+        min_regular = -1,
+        name        = "Tenos Deck",
+    ),
+
+    Deck(
+        slots = {
+           (0,0),(0,2),(0,3),(0,5),(0,6),
+            (1,0),(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),
+            (2,0),(2,1),(2,3),(2,5),(2,6),
+            (3,0),(3,1),(3,2),(3,4),(3,5),(3,6),
+            (4,0),(4,4),(4,5),(4,6),
+            (5,1),(5,2),(5,3),
+        },
+        core_slots  = 2 + DECKMOD,
+        n_arcane    = 0,
+        min_regular = -1,
+        name        = "Velara Deck",
+    ),
+
+    Deck(
+        slots = {
+           (0,0),(0,1),(0,2),(0,3),(0,4),(0,5),(0,6),
+    (1,1),(1,2),(1,4),(1,5),
+    (2,0),(2,1),(2,5),(2,6),
+    (3,1),(3,2),(3,4),(3,5),
+    (4,0),(4,1),(4,2),(4,3),(4,4),(4,5),(4,6),
+        },
+        core_slots  = 2 + DECKMOD,
+        n_arcane    = 1,
+        min_regular = -1,
+        name        = "Mystery Deck",
+    ),
+
+    Deck(
+        slots = {
+           (0,1),(0,2),(0,3),(0,4),(0,5),
+           (1,0),(1,1),(1,3),(1,5),(1,6),
+           (2,0),(2,1),(2,2),(2,3),(2,4),(2,5),(2,6),
+           (3,1),(3,2),(3,3),(3,4),(3,5),
+           (4,2),(4,4),
+        },
+        core_slots  = 3 + DECKMOD,
+        n_arcane    = 0,
+        min_regular = -1,
+        name        = "Skull Deck",
+    ),
+
+    Deck(
+        slots = {
+           (0,0),(0,1),(0,6),(0,7),
+           (1,1),(1,2),(1,5),(1,6),
+           (2,2),(2,3),(2,4),(2,5),
+           (3,2),(3,3),(3,4),(3,5),
+           (4,2),(4,3),(4,4),(4,5),
+           (5,1),(5,2),(5,5),(5,6),
+        },
+        core_slots  = 3 + DECKMOD,
+        n_arcane    = 0,
+        min_regular = -1,
+        name        = "Fred Deck",
+    ),
+
+    Deck(
+        slots = {
+           (0,0),(0,4),
+           (1,1),(1,2),(1,3),
+           (2,1),(2,2),(2,3),(2,6),
+           (3,1),(3,2),(3,3),(3,4),(3,5),
+           (4,0),(4,3),(4,4),(4,5),
+           (5,3),(5,4),(5,5),
+           (6,2),(6,6),
+        },
+        core_slots  = 3 + DECKMOD,
+        n_arcane    = 2,
+        min_regular = -1,
+        name        = "Shard Deck",
+    ),
+
+    Deck(
+        slots = {
+           (0,0),(0,1),(0,2),(0,3),(0,4),
+    (1,1),(1,3),
+    (2,1),(2,2),(2,3),
+        },
+        core_slots  = 1 + DECKMOD,
+        n_arcane    = 1,
+        min_regular = -1,
+        name        = "Starter Deck",
+    ),
+
+    Deck(
+        slots = {
+           (0,0),(0,1),(0,2),(0,3),(0,4),
+    (1,0),(1,1),(1,3),(1,4),
+    (2,0),(2,1),(2,2),(2,3),(2,4),
+        },
+        core_slots  = 1 + DECKMOD,
+        n_arcane    = 0,
+        min_regular = -1,
+        name        = "Large Deck",
+    ),
+
+    Deck(
+        slots = {
+           (0,0),(0,1),(0,5),(0,6),
+    (1,0),(1,1),(1,5),(1,6),
+    (2,0),(2,1),(2,5),(2,6),
+        },
+        core_slots  = 2 + DECKMOD,
+        n_arcane    = 1,
+        min_regular = -1,
+        name        = "Double Deck",
+    ),
+
+
+
+]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Entry point
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _run_deck_worker(args):
+    deck, n_iter, restarts = args
+    random.seed()
+    t_start = time.perf_counter()
+    result  = {}
+    for label, min_reg, max_greed in _get_test_configs(deck):
+        cdeck         = _deck_with_constraints(deck, min_reg, max_greed)
+        result[label] = optimize(cdeck, n_iter=n_iter, restarts=restarts, verbose=False)
+    elapsed = time.perf_counter() - t_start
+    print(f"  ✓ Done: {deck.name}  ({elapsed:.1f}s)", flush=True)
+    return deck.name, result
+
+if __name__ == "__main__":
+    n_iter   = 60_000
+    restarts = 12
+    n_cores  = min(len(DECKS), multiprocessing.cpu_count())
+
+    print(f"Running {len(DECKS)} deck(s) across {n_cores} process(es)...")
+
+    args = [(deck, n_iter, restarts) for deck in DECKS]
+    with multiprocessing.Pool(processes=n_cores) as pool:
+        raw = pool.map(_run_deck_worker, args)
+
+    all_results = {name: result for name, result in raw}
+
+    print("\n" + "█" * 66)
+    print("  FINAL SUMMARY — ALL DECKS")
+    print("█" * 66)
+    for deck in DECKS:
+        print(f"\n  {deck.name}")
+        for label, _, __ in _get_test_configs(deck):
+            test_res = all_results[deck.name].get(label, {})
+            parts    = []
+            for card_class in CardClass:
+                ndm = test_res[card_class]["score"] if card_class in test_res else float("nan")
+                parts.append(f"{card_class.value.upper()}={ndm:.2f}")
+            print(f"    [{label:>13s}]  {'   '.join(parts)}")
+
+    if EXPORT_SPREADSHEET:
+        filename = f"{SPREADSHEET_PREFIX}ndm_simulation.xlsx"
+        if os.path.exists(filename):
+            print(f"\n  Spreadsheet '{filename}' already exists — skipping export.")
+        else:
+            generate_spreadsheet(all_results, DECKS, filename)
