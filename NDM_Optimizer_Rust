@@ -6,6 +6,9 @@ Simulates and optimizes deck configurations to maximise the Net Deck Multiplier.
 Usage:
     python ndm_optimizer.py
     Deck configs are defined in the DECKS list near the bottom of the file.
+    Parameters for cores can be altered around line 100.
+    Please see https://docs.google.com/spreadsheets/d/1S98nbzfAVJpu0KNjJQQRH6br63SWRXJEoDGO_6JUnu8/edit?usp=drivesdk 
+    for (probably) accurate data on the latest deck balance numbers for Wold's.
 
 Card-type key used in grid displays:
     R = Row    C = Col    S = Surr
@@ -107,50 +110,55 @@ class CoreType(Enum):
 # Tunable multiplier constants
 # ──────────────────────────────────────────────────────────────────────────────
 
-DECKMOD:       int = 0
-
+# Use this for "extra" core slots you can add to a deck. By default, deckmod = 1 because
+# you can use the core expertise in wold's to add a free core when crafting, and then
+# remove it using a table you find in dungeons, letting you apply a bonus core of whatever 
+# you want. It's a hastle, but possible, and optimal. For experimental cores like the balance
+# core, reduce deckmod to simulate every deck being forced to have the balance core, while 
+# leaving the rest of the slots free for the script to optimize. 
+DECKMOD:       int = 1 
+                       
 MULT_DIR_GREED_VERT:  float = 5
 MULT_DIR_GREED_HORIZ: float = 5
-MULT_EVO_GREED:       float = 1
-MULT_SURR_GREED:      float = 1
-MULT_DIR_GREED_DIAG_UP:   float = 1   # NE / NW diagonal greed
-MULT_DIR_GREED_DIAG_DOWN: float = 1   # SE / SW diagonal greed
+MULT_EVO_GREED:       float = 0 # turning these to "0" disables them.
+MULT_SURR_GREED:      float = 0
+MULT_DIR_GREED_DIAG_UP:   float = 0   # NE / NW diagonal greed
+MULT_DIR_GREED_DIAG_DOWN: float = 0   # SE / SW diagonal greed
 
 MULT_PURE_BASE:   float = 1.0
 MULT_PURE_SCALE:  float = 0.1
 MULT_EQUILIBRIUM: float = 3.0
-MULT_FOIL:        float = 2.8   
+MULT_FOIL:        float = 2.8  # this is the shiny core
 MULT_STEADFAST:   float = 2.2
 MULT_COLOR:       float = 1.75
 
 ALLOW_DELUXE:            bool  = True
 MULT_DELUXE_FLAT:        float = 2   # flat NDM contribution per deluxe card
-MULT_DELUXE_CORE_BASE:   float = 1.0   # deluxe core intercept
+MULT_DELUXE_CORE_BASE:   float = 1.0   # deluxe core intercept (fancy core)
 MULT_DELUXE_CORE_SCALE:  float = 0.2   # deluxe core multiplier per deluxe card
 
-# True → greed multipliers on the same card are summed; False → multiplied
-GREED_ADDITIVE: bool = False
-ADDITIVE_CORES: bool = False  # True → core multipliers sum together; False → multiply
+GREED_ADDITIVE: bool = True  # True → greed multipliers on the same card are summed; False → multiplied
+ADDITIVE_CORES: bool = True  # True → core multipliers sum together; False → multiply
 
 SHINY_POSITIONAL: bool  = True    # False → shiny decks use flat T cards (pos=1) instead of R/C/S
 
-ENABLE_EXPERIMENTAL_EXPONENT: bool  = True
+ENABLE_EXPERIMENTAL_EXPONENT: bool  = False # Experimental behavior for the balance core
 EXPERIMENTAL_EXPONENT:        float = 0.65   # 1.0 = no change; <1 penalises dominance; >1 rewards it
 EXPERIMENTAL_BOOST:           float = 0.4
 
 DELUXE_COUNTED_AS_REGULAR: bool = False  # False → deluxe cards don't count toward min_regular constraint
 
 # Display options
-BALANCE_DISPLAY:    bool = True
+BALANCE_DISPLAY:    bool = True 
 HEATMAP_DISPLAY:    bool = True
 
 HNS_Q: float = 1.5   # Hill Number Score exponent; q=2 → EDP (Simpson reciprocal × NDM)
                       # q→1 → Shannon-weighted NDM;  q=0 → NDM × card count
-SPREAD_METRIC: bool = False   # False → skip all HNS computation and display
+SPREAD_METRIC: bool = False   # enables a metric to measure deck spread, but it kind of sucks
 
 # Spreadsheet export
 EXPORT_SPREADSHEET: bool  = True
-SPREADSHEET_PREFIX: str   = "Panel_WV_lesserBalance_"   # output: {PREFIX}ndm_simulation.xlsx
+SPREADSHEET_PREFIX: str   = "Panel_WV_Decks_"   # output: {PREFIX}ndm_simulation.xlsx
 
 # Full test panel: runs 4 constraint configs per deck/class instead of the
 # deck's own min_regular / max_greed settings.
@@ -1409,8 +1417,13 @@ def generate_spreadsheet(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Deck configurations  ← edit here
+# Deck configurations  (you can add more)
 # ──────────────────────────────────────────────────────────────────────────────
+
+# You can add more decks at the bottom of this list. They are pretty self explanatory.
+# Importantly, the "slots" field takes all the points in a grid where slots would be in 
+# the deck. It's not the best system, but you get the idea. Arcane slots are not included
+# in the slots list.
 
 DECKS: List[Deck] = [
     Deck(
