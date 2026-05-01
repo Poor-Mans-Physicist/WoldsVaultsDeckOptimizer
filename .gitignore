@@ -1,0 +1,15 @@
+# Rust build artifacts
+ndm_core/target/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Compiled extension (users build this themselves)
+*.pyd
+*.so
+*.whl
+
+# Spreadsheet outputs
+*.xlsx
