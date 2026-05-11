@@ -28,6 +28,7 @@ from enum import Enum
 from itertools import combinations
 from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 import multiprocessing
+import json
 
 try:
     import ndm_core as _ndm_core
@@ -124,7 +125,23 @@ _mode_parser.add_argument(
     default="wolds",
     help="Optimizer preset: 'wolds' (default) or 'vanilla'.",
 )
+
+_mode_parser.add_argument(
+    "--whitelist",
+    nargs="*",
+    default=[],
+    help="Optimizer preset: 'wolds' (default) or 'vanilla'.",
+)
+
+_mode_parser.add_argument(
+    "--blacklist",
+    nargs="*",
+    default=["odungeon"],
+    help="Optimizer preset: 'wolds' (default) or 'vanilla'.",
+)
 MODE: str = _mode_parser.parse_known_args()[0].mode
+BLACKLIST: list[str] = _mode_parser.parse_known_args()[0].blacklist
+WHITELIST: list[str] = _mode_parser.parse_known_args()[0].whitelist
 _VANILLA: bool = MODE == "vanilla"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1446,176 +1463,50 @@ def generate_spreadsheet(
 # the deck. It's not the best system, but you get the idea. Arcane slots are not included
 # in the slots list.
 
-DECKS: List[Deck] = [
-    Deck(
-        slots = {
-            (1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),
-            (2,1),(2,2),(2,3),(2,4),(2,5),(2,6),(2,7),
-            (3,0),(3,1),(3,2),(3,3),(3,4),(3,5),(3,6),(3,7),(3,8),
-        },
-        core_slots  = 2 + DECKMOD,
-        n_arcane    = 3,
-        min_regular = -1,
-        max_greed   = -1,
-        name        = "Cake Deck",
-    ),
+def deck_from_dict(d: dict) -> Deck:
+    
+    if len(d["layout"]) != 1:
+        raise ValueError(f"Only one layout per deck is supported in this config format, but got {len(d['layout'])} for deck '{d['name']}'")
+    
+    slots = set()
+    n_arcane = 0
+    for row_i, row in enumerate(d["layout"][0]["value"]):
+        for col_i, ch in enumerate(row):
+            if ch == 'A': 
+                n_arcane +=1
+            if ch == 'O': 
+                slots.add((row_i, col_i))
+    
+    return Deck(
+        slots = slots,
+        core_slots  = d["socketCount"]["max"] if "socketCount" in d else 0,
+        n_arcane    = n_arcane,
+        name        = d["name"],
+    )
 
-    Deck(
-        slots = {
-           (0,0),(0,1),(0,2),(0,3),(0,4),(0,5),(0,6),(0,7),(0,8),
-            (1,2),(1,3),(1,4),(1,5),(1,6),
-            (2,3),(2,4),(2,5),
-            (3,1),(3,2),(3,3),(3,4),(3,5),(3,6),(3,7),
-        },
-        core_slots  = 3 + DECKMOD,
-        n_arcane    = 0,
-        min_regular = -1,
-        name        = "Anvil Deck",
-    ),
+def config_from_dict(d: dict) -> Dict[str, Deck]:
+    values = {}
+    for deck_id, deck_dict in d["values"].items():
+        values[deck_id] = deck_from_dict(deck_dict)
+    return values
 
-    Deck(
-        slots = {
-           (0,3),
-            (1,1),(1,2),(1,3),(1,4),(1,5),
-            (2,1),(2,2),(2,3),(2,4),(2,5),
-            (3,0),(3,1),(3,2),(3,3),(3,4),
-            (4,1),(4,2),(4,3),(4,4),(4,5),
-            (5,1),(5,2),(5,4),(5,5),
-        },
-        core_slots  = 2 + DECKMOD,
-        n_arcane    = 0,
-        min_regular = -1,
-        name        = "Puzzle Deck",
-    ),
-
-    Deck(
-        slots = {
-           (0,0),(0,1),(0,2),(0,3),(0,4),(0,5),
-            (1,1),(1,2),(1,3),(1,4),
-            (2,1),(2,2),(2,3),(2,4),
-            (3,1),(3,2),(3,3),(3,4),
-            (4,1),(4,2),(4,4),
-        },
-        core_slots  = 3 + DECKMOD,
-        n_arcane    = 2,
-        min_regular = -1,
-        name        = "Tenos Deck",
-    ),
-
-    Deck(
-        slots = {
-           (0,0),(0,2),(0,3),(0,5),(0,6),
-            (1,0),(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),
-            (2,0),(2,1),(2,3),(2,5),(2,6),
-            (3,0),(3,1),(3,2),(3,4),(3,5),(3,6),
-            (4,0),(4,4),(4,5),(4,6),
-            (5,1),(5,2),(5,3),
-        },
-        core_slots  = 2 + DECKMOD,
-        n_arcane    = 0,
-        min_regular = -1,
-        name        = "Velara Deck",
-    ),
-
-    Deck(
-        slots = {
-           (0,0),(0,1),(0,2),(0,3),(0,4),(0,5),(0,6),
-    (1,1),(1,2),(1,4),(1,5),
-    (2,0),(2,1),(2,5),(2,6),
-    (3,1),(3,2),(3,4),(3,5),
-    (4,0),(4,1),(4,2),(4,3),(4,4),(4,5),(4,6),
-        },
-        core_slots  = 2 + DECKMOD,
-        n_arcane    = 1,
-        min_regular = -1,
-        name        = "Mystery Deck",
-    ),
-
-    Deck(
-        slots = {
-           (0,1),(0,2),(0,3),(0,4),(0,5),
-           (1,0),(1,1),(1,3),(1,5),(1,6),
-           (2,0),(2,1),(2,2),(2,3),(2,4),(2,5),(2,6),
-           (3,1),(3,2),(3,3),(3,4),(3,5),
-           (4,2),(4,4),
-        },
-        core_slots  = 3 + DECKMOD,
-        n_arcane    = 0,
-        min_regular = -1,
-        name        = "Skull Deck",
-    ),
-
-    Deck(
-        slots = {
-           (0,0),(0,1),(0,6),(0,7),
-           (1,1),(1,2),(1,5),(1,6),
-           (2,2),(2,3),(2,4),(2,5),
-           (3,2),(3,3),(3,4),(3,5),
-           (4,2),(4,3),(4,4),(4,5),
-           (5,1),(5,2),(5,5),(5,6),
-        },
-        core_slots  = 3 + DECKMOD,
-        n_arcane    = 0,
-        min_regular = -1,
-        name        = "Fred Deck",
-    ),
-
-    Deck(
-        slots = {
-           (0,0),(0,4),
-           (1,1),(1,2),(1,3),
-           (2,1),(2,2),(2,3),(2,6),
-           (3,1),(3,2),(3,3),(3,4),(3,5),
-           (4,0),(4,3),(4,4),(4,5),
-           (5,3),(5,4),(5,5),
-           (6,2),(6,6),
-        },
-        core_slots  = 3 + DECKMOD,
-        n_arcane    = 2,
-        min_regular = -1,
-        name        = "Shard Deck",
-    ),
-
-    Deck(
-        slots = {
-           (0,0),(0,1),(0,2),(0,3),(0,4),
-    (1,1),(1,3),
-    (2,1),(2,2),(2,3),
-        },
-        core_slots  = 1 + DECKMOD,
-        n_arcane    = 1,
-        min_regular = -1,
-        name        = "Starter Deck",
-    ),
-
-    Deck(
-        slots = {
-           (0,0),(0,1),(0,2),(0,3),(0,4),
-    (1,0),(1,1),(1,3),(1,4),
-    (2,0),(2,1),(2,2),(2,3),(2,4),
-        },
-        core_slots  = 1 + DECKMOD,
-        n_arcane    = 0,
-        min_regular = -1,
-        name        = "Large Deck",
-    ),
-
-    Deck(
-        slots = {
-           (0,0),(0,1),(0,5),(0,6),
-    (1,0),(1,1),(1,5),(1,6),
-    (2,0),(2,1),(2,5),(2,6),
-        },
-        core_slots  = 2 + DECKMOD,
-        n_arcane    = 1,
-        min_regular = -1,
-        name        = "Double Deck",
-    ),
-
-
-
-]
-
+def print_slots(slots: frozenset[Position]):
+    rows = []
+    for r in range(10):
+        row = ""
+        for c in range(10):
+            if ((r,c) in slots):
+                row += "■"
+            else:
+                row += " "
+        rows.append(row)
+    max_row = len(rows) - 1
+    while (max_row):
+        if (rows[max_row] != " " * 10):
+            break
+        max_row -= 1
+    for i in range(max_row + 1):
+        print(rows[i])
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Entry point
@@ -1634,13 +1525,22 @@ def _run_deck_worker(args):
     return deck.name, result
 
 if __name__ == "__main__":
+    print("whitelist: ", WHITELIST)
+    print("blacklist: ", BLACKLIST)
     n_iter   = 60_000
     restarts = 12
-    n_cores  = min(len(DECKS), multiprocessing.cpu_count())
+    cfg = config_from_dict(json.load(open("configs/decks.json" if _VANILLA else "configs/wolds_decks.json")))
+    cfg = {deck_id: deck for deck_id, deck in cfg.items() if deck_id in WHITELIST} if WHITELIST else cfg
+    cfg = {deck_id: deck for deck_id, deck in cfg.items() if deck_id not in BLACKLIST} if BLACKLIST else cfg
+    decks = list(cfg.values())
+    
+    
+    n_cores  = min(len(decks), multiprocessing.cpu_count())
 
-    print(f"Running {len(DECKS)} deck(s) across {n_cores} process(es)...")
+    print(f"Running with {len(cfg)} deck{'s' if len(cfg) != 1 else ''}: {', '.join(cfg.keys())}")
+    print(f"across {n_cores} process(es) for {n_iter} iterations...")
 
-    args = [(deck, n_iter, restarts) for deck in DECKS]
+    args = [(deck, n_iter, restarts) for deck in decks]
     with multiprocessing.Pool(processes=n_cores) as pool:
         raw = pool.map(_run_deck_worker, args)
 
@@ -1649,8 +1549,9 @@ if __name__ == "__main__":
     print("\n" + "█" * 66)
     print("  FINAL SUMMARY — ALL DECKS")
     print("█" * 66)
-    for deck in DECKS:
-        print(f"\n  {deck.name}")
+    for deck in decks:
+        print(f"\n  {deck.name}{deck.core_slots * ' ⬤'}")
+        # print_slots(deck.slots)
         for label, _, __ in _get_test_configs(deck):
             test_res = all_results[deck.name].get(label, {})
             parts    = []
@@ -1664,4 +1565,4 @@ if __name__ == "__main__":
         if os.path.exists(filename):
             print(f"\n  Spreadsheet '{filename}' already exists — skipping export.")
         else:
-            generate_spreadsheet(all_results, DECKS, filename)
+            generate_spreadsheet(all_results, decks, filename)
