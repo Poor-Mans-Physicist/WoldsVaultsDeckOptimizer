@@ -127,21 +127,53 @@ _mode_parser.add_argument(
 )
 
 _mode_parser.add_argument(
+    "--iterations",
+    type=int,
+    default=60000,
+    help="iterations (default 60000)",
+)
+
+_mode_parser.add_argument(
+    "--restarts",
+    type=int,
+    default=12,
+    help="restarts (default 12)",
+)
+
+_mode_parser.add_argument(
     "--whitelist",
     nargs="*",
     default=[],
-    help="Optimizer preset: 'wolds' (default) or 'vanilla'.",
+    help="deck whitelist",
 )
 
 _mode_parser.add_argument(
     "--blacklist",
     nargs="*",
-    default=["odungeon"],
-    help="Optimizer preset: 'wolds' (default) or 'vanilla'.",
+    default=["odungeon"], # it's also called anvil deck and this script assumes all names are unique
+    help="deck blacklist",
 )
-MODE: str = _mode_parser.parse_known_args()[0].mode
-BLACKLIST: list[str] = _mode_parser.parse_known_args()[0].blacklist
-WHITELIST: list[str] = _mode_parser.parse_known_args()[0].whitelist
+
+_mode_parser.add_argument(
+    "--list-decks",
+    action='store_true',
+    help="Lists available decks (output changes based on mode and print-slots args), optimizer won't run.",
+)
+
+_mode_parser.add_argument(
+    "--print-slots",
+    action='store_true',
+    help="Prints deck shape when listing decks or printing results",
+)
+
+args = _mode_parser.parse_known_args()
+MODE: str = args[0].mode
+BLACKLIST: list[str] = args[0].blacklist
+WHITELIST: list[str] = args[0].whitelist
+PRINT_SLOTS: bool = args[0].print_slots
+LIST_DECKS: bool = args[0].list_decks
+ITERATIONS: int = args[0].iterations
+RESTARTS: int = args[0].restarts
 _VANILLA: bool = MODE == "vanilla"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -154,7 +186,7 @@ _VANILLA: bool = MODE == "vanilla"
 # you want. It's a hastle, but possible, and optimal. For experimental cores like the balance
 # core, reduce deckmod to simulate every deck being forced to have the balance core, while 
 # leaving the rest of the slots free for the script to optimize. 
-DECKMOD:       int = 1 
+DECKMOD:       int = 0 if _VANILLA else 1 
                        
 MULT_DIR_GREED_VERT:  float = 5
 MULT_DIR_GREED_HORIZ: float = 5
@@ -196,7 +228,7 @@ SPREAD_METRIC: bool = False   # enables a metric to measure deck spread, but it 
 
 # Spreadsheet export
 EXPORT_SPREADSHEET: bool  = True
-SPREADSHEET_PREFIX: str   = "Panel_WV_Decks_"   # output: {PREFIX}ndm_simulation.xlsx
+SPREADSHEET_PREFIX: str   = "Panel_Decks_"   # output: {PREFIX}{VH|WV}_ndm_simulation.xlsx
 
 # Full test panel: runs 4 constraint configs per deck/class instead of the
 # deck's own min_regular / max_greed settings.
@@ -1508,6 +1540,25 @@ def print_slots(slots: frozenset[Position]):
     for i in range(max_row + 1):
         print(rows[i])
 
+def list_decks(cfg: dict[str, Deck]): 
+    max_id = max((len(id) for id in cfg.keys()), default=0)
+    max_name = max((len(deck.name) for deck in cfg.values()), default=0)
+    max_cores = max((deck.core_slots for deck in cfg.values()), default=0)
+    if not PRINT_SLOTS:
+        print(f"{'id':<{max_id + 1}} {'cores':<{(max_cores + DECKMOD) * 2 - 1}} {'name':<{max_name}}")
+    
+    for id, deck in cfg.items():
+        id_fmt = f"{id:<{max_id}}"
+        core_fmt = f"{deck.core_slots * ' ⬤' + DECKMOD * ' ⭘':<{(max_cores + DECKMOD)*2}}"
+        name_fmt = f"{deck.name:<{max_name}}"
+        
+        if PRINT_SLOTS:
+            print(f"{deck.name} {deck.core_slots * ' ⬤' + DECKMOD * ' ⭘'}")
+            print_slots(deck.slots)
+            print()
+        else:
+            print(f"{id_fmt} {core_fmt} {name_fmt}")
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1525,22 +1576,31 @@ def _run_deck_worker(args):
     return deck.name, result
 
 if __name__ == "__main__":
-    print("whitelist: ", WHITELIST)
-    print("blacklist: ", BLACKLIST)
-    n_iter   = 60_000
-    restarts = 12
     cfg = config_from_dict(json.load(open("configs/decks.json" if _VANILLA else "configs/wolds_decks.json")))
+    
+    if LIST_DECKS :
+        list_decks(cfg)
+        os._exit(0)
+    
+    if EXPORT_SPREADSHEET:
+        filename = f"{SPREADSHEET_PREFIX}{'VH' if _VANILLA else 'WV'}_ndm_simulation.xlsx"
+        if os.path.exists(filename):
+            print(f"\n  Spreadsheet '{filename}' already exists - stopping.")
+            os._exit(1)
+
     cfg = {deck_id: deck for deck_id, deck in cfg.items() if deck_id in WHITELIST} if WHITELIST else cfg
     cfg = {deck_id: deck for deck_id, deck in cfg.items() if deck_id not in BLACKLIST} if BLACKLIST else cfg
     decks = list(cfg.values())
     
-    
     n_cores  = min(len(decks), multiprocessing.cpu_count())
 
+    print("mode: ", MODE)
+    print("whitelist: ", WHITELIST)
+    print("blacklist: ", BLACKLIST)
     print(f"Running with {len(cfg)} deck{'s' if len(cfg) != 1 else ''}: {', '.join(cfg.keys())}")
-    print(f"across {n_cores} process(es) for {n_iter} iterations...")
+    print(f"across {n_cores} process(es) for {ITERATIONS} iterations...")
 
-    args = [(deck, n_iter, restarts) for deck in decks]
+    args = [(deck, ITERATIONS, RESTARTS) for deck in decks]
     with multiprocessing.Pool(processes=n_cores) as pool:
         raw = pool.map(_run_deck_worker, args)
 
@@ -1550,8 +1610,9 @@ if __name__ == "__main__":
     print("  FINAL SUMMARY — ALL DECKS")
     print("█" * 66)
     for deck in decks:
-        print(f"\n  {deck.name}{deck.core_slots * ' ⬤'}")
-        # print_slots(deck.slots)
+        print(f"\n  {deck.name}{deck.core_slots * ' ⬤'}{DECKMOD * ' ⭘'}")
+        if PRINT_SLOTS:
+            print_slots(deck.slots)
         for label, _, __ in _get_test_configs(deck):
             test_res = all_results[deck.name].get(label, {})
             parts    = []
@@ -1561,7 +1622,7 @@ if __name__ == "__main__":
             print(f"    [{label:>13s}]  {'   '.join(parts)}")
 
     if EXPORT_SPREADSHEET:
-        filename = f"{SPREADSHEET_PREFIX}ndm_simulation.xlsx"
+        filename = f"{SPREADSHEET_PREFIX}{'VH' if _VANILLA else 'WV'}_ndm_simulation.xlsx"
         if os.path.exists(filename):
             print(f"\n  Spreadsheet '{filename}' already exists — skipping export.")
         else:

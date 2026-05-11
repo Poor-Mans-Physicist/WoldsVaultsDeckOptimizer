@@ -114,3 +114,12 @@ The script's tunable constants live near the top of `NDM_Optimizer_Rust.py`. Aft
 |-----------|--------------------------|-------------------------------------------------------------------------------------------------------|
 | `wolds`   | Default. Wold's Vaults.  | Additive core stacking, positional shiny enabled, deluxe card system enabled.                         |
 | `vanilla` | Vanilla VH cards.        | Multiplicative core scaling, positional shiny disabled (Shiny becomes a pure stat deck), no deluxe.   |
+
+## More examples
+uv run optimize --mode=vanilla --list-decks
+uv run optimize --mode=wolds --list-decks
+uv run optimize --mode=vanilla --list-decks --print-slots
+uv run optimize --mode=wolds --list-decks --print-slots
+uv run --extra rust optimize --mode=vanilla --whitelist starter anvil skull
+uv run --extra rust optimize --mode=vanilla --blacklist starter large odungeon
+uv run --extra rust optimize --mode=vanilla --iterations 1000 --restarts 12
