@@ -66,6 +66,7 @@ _deep_merge(_CFG, _mode_overrides)
 DECKMOD: int = _CFG["deckmod"]
 
 EXCLUDED_DECKS: FrozenSet[str] = frozenset(_CFG.get("excluded_decks") or ())
+ALLOWED_CONFIGS: FrozenSet[str] = frozenset(_CFG.get("configs") or ())
 
 MULT_DIR_GREED_VERT:      float = _CFG["greed"]["dir_vert"]
 MULT_DIR_GREED_HORIZ:     float = _CFG["greed"]["dir_horiz"]
@@ -326,6 +327,9 @@ def _load_json_decks(seen_keys: Set[str]) -> List[Deck]:
     """
     decks: List[Deck] = []
     for path in sorted(_DECKS_DIR.glob("*.json")):
+        if (len(ALLOWED_CONFIGS) > 0 and path.name not in ALLOWED_CONFIGS):
+            continue
+
         with path.open("r", encoding="utf-8") as fh:
             data = json.load(fh) or {}
 
@@ -404,7 +408,7 @@ def set_mode(name: str) -> None:
         raise ValueError(f"unknown mode: {name!r}")
 
     global MODE, _CFG
-    global DECKMOD, EXCLUDED_DECKS
+    global DECKMOD, EXCLUDED_DECKS, ALLOWED_CONFIGS
     global MULT_DIR_GREED_VERT, MULT_DIR_GREED_HORIZ, MULT_EVO_GREED, MULT_SURR_GREED
     global MULT_DIR_GREED_DIAG_UP, MULT_DIR_GREED_DIAG_DOWN
     global MULT_PURE_BASE, MULT_PURE_SCALE, MULT_EQUILIBRIUM, MULT_FOIL, MULT_STEADFAST, MULT_COLOR
@@ -425,6 +429,7 @@ def set_mode(name: str) -> None:
 
     DECKMOD                  = _CFG["deckmod"]
     EXCLUDED_DECKS           = frozenset(_CFG.get("excluded_decks") or ())
+    ALLOWED_CONFIGS          = frozenset(_CFG.get("configs") or ())
     MULT_DIR_GREED_VERT      = _CFG["greed"]["dir_vert"]
     MULT_DIR_GREED_HORIZ     = _CFG["greed"]["dir_horiz"]
     MULT_EVO_GREED           = _CFG["greed"]["evo"]

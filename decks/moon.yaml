@@ -1,5 +1,5 @@
 name: Moon Deck
-enabled: true
+enabled: false
 
 core_slots: 2
 min_regular: -1

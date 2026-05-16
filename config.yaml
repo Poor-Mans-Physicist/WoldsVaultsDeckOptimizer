@@ -77,6 +77,9 @@ testing:
     - { label: "unconstrained", min_regular: -1, max_greed: -1 }
   n_iter:   60000
   restarts: 12
+configs: 
+    - wolds_decks.json
+    # - none # uncomment this and comment out the json if you only want to use yaml files
 
 # Mode-specific overrides. Selected via the --mode CLI flag.
 modes:
@@ -92,3 +95,5 @@ modes:
       additive_cores: false
     shiny:
       positional: false
+    configs: 
+      - vh_decks.json

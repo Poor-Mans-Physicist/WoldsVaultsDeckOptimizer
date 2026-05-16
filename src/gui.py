@@ -532,7 +532,7 @@ def _build_page() -> None:
                                         if state.view == "preview":
                                             _preview.build_stats_panel(preview_panel, state)
                                         return
-                            ui.select(
+                            deck_select = ui.select(
                                 options=[d.name for d in _cfg.DECKS],
                                 value=state.deck.name,
                                 label="Deck",
@@ -570,6 +570,10 @@ def _build_page() -> None:
                                     f"switched to '{state.deck.name}'.",
                                     color="warning",
                                 )
+                            
+                            deck_select.options = [d.name for d in _cfg.DECKS]
+                            deck_select.value = state.deck.name
+                            deck_select.update()
                             total_label.text = "NDM  —"
                             cores_label.text = ""
                             verify_label.text = ""
