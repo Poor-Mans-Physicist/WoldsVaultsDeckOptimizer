@@ -18,12 +18,38 @@ Both formats use the same 3-character grid:
 
 | Char  | Meaning                                                            |
 | :---: | ------------------------------------------------------------------ |
-| `O`   | Regular slot — the optimizer places a card here.                   |
-| `A`   | Arcane slot — counted toward `n_arcane`, but never placed on.      |
+| `O`   | Regular slot — accepts any non-arcane card (positional / deluxe / typeless / greed / dead). |
+| `A`   | Arcane slot — accepts only `ARCANE` or `DEAD`. See "Arcane behavior" below. |
 | `X`   | Empty / wall (any other character is also treated as empty).       |
 
 Absolute row/column indices are arbitrary; only the relative shape matters.
 Trailing blank lines are stripped, and rows can be different widths.
+
+### Arcane behavior
+
+`A` slots are treated as **real placeable slots**, distinct from regular `O`
+slots in two ways:
+
+* Only `ARCANE` cards (or `DEAD` cards) may be placed there.
+* `ARCANE` cards may **only** go in `A` slots — they are forbidden in `O` slots.
+
+`ARCANE` cards contribute **0 NDM** directly, but they:
+
+* count toward `n_ns` for Pure-core scaling (the same "treat like regulars"
+  rule applies — included under EVO without FOIL),
+* count for same-color row/col/peer counts in the inventory optimizer (so
+  neighboring positional cards see arcanes in their peer counts),
+* receive no greed boost and no core multiplier.
+
+The `arcane.auto_place` knob in `config.yaml` controls SA behavior:
+
+* `true` (default) — every `A` slot is pre-filled with `ARCANE` and SA cannot
+  swap it to `DEAD`. (Inventory optimizer: SA may still swap arcane *colors*
+  among `A` slots when multiple arcane colors are available.)
+* `false` — SA may swap `A` slots to `DEAD` to fuel void core when that's a
+  better trade.
+
+The GUI exposes a per-session toggle that shadows the config value.
 
 ## YAML schema
 

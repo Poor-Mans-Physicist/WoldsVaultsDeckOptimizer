@@ -197,13 +197,13 @@ def _render_card_row(
 
     with ui.element("div").style(
         f"display:flex; align-items:center; gap:8px; padding:6px 8px;"
-        f"border-bottom:1px solid #F1F3F5;"
-        f"{'background:#EEF2FF;' if is_selected_card else ''}"
+        f"border-bottom:1px solid #334155;"
+        f"{'background:#312E81;' if is_selected_card else ''}"
     ):
         with ui.column().classes("gap-0").style("flex: 1 1 auto; min-width: 0;"):
             with ui.row().classes("items-center gap-2 no-wrap"):
                 ui.label(card.name).style(
-                    "font-size: 13px; font-weight: 500; color: #1F2937;"
+                    "font-size: 13px; font-weight: 500; color: #F1F5F9;"
                 )
                 if card.is_percent:
                     ui.label("%").style(
@@ -211,7 +211,7 @@ def _render_card_row(
                         "border-radius: 4px; padding: 0 5px;"
                     )
             ui.label(card.display_attribute).style(
-                "font-size: 11px; color: #6B7280;"
+                "font-size: 11px; color: #94A3B8;"
             )
 
         # Tier buttons
@@ -290,10 +290,11 @@ def _stat_line(attribute: str, value: float, *, is_percent: bool) -> None:
     else:
         rhs = f"+{value:.2f}"
     with ui.row().classes("w-full items-center justify-between"):
-        ui.label(label).style("font-size: 13px; color: #1F2937;")
+        ui.label(label).style("font-size: 13px; color: #F1F5F9;")
         ui.label(rhs).style(
             "font-size: 13px; font-weight: 600; font-family: 'JetBrains Mono', monospace;"
-            f"color: {'#15803D' if value > 0 else '#6B7280'};"
+            # Bright green for positives (visible on dark), muted slate for zero.
+            f"color: {'#4ADE80' if value > 0 else '#94A3B8'};"
         )
 
 

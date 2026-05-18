@@ -17,6 +17,13 @@ deckmod: 1
 # `values.arcane`, plus `<n>_wold.yaml` and `values.wold`.
 excluded_decks: []
 
+# Which JSON deck file under decks/ to load (relative path). Each mode has its
+# own roster + per-deck stats — wolds and vanilla don't share files. YAML decks
+# next to it (e.g. moon.yaml) are still loaded mode-agnostically.
+# Set to an empty string to load no JSON at all (YAML-only setups).
+decks:
+  json_file: wolds_decks.json
+
 greed:
   dir_vert:      5
   dir_horiz:     5
@@ -32,12 +39,39 @@ cores:
   foil:        2.8    # the shiny core
   steadfast:   2.2
   color:       1.75
+  # Void core (variable, like pure/deluxe-core): scales with dead-card count.
+  # When `allow: true` the candidate enumerator considers it; when false it's
+  # never permuted into a candidate set (matches vanilla, which has no void core).
+  void_allow:  true
+  void_base:   1.0
+  void_scale:  0.3
 
 deluxe:
   allow:      true
   flat:       2       # flat NDM contribution per deluxe card
   core_base:  1.0     # deluxe (fancy) core intercept
   core_scale: 0.2     # deluxe core multiplier per deluxe card
+
+# Pluto core (EVO-only, Wold's-exclusive). Flat 3x multiplier that targets only
+# the less-common of {evolution regulars, deluxe cards} in the deck — both groups
+# if equal. Never appears in normal candidate enumeration: instead, every
+# DELUXE_CORE-containing EVO permutation is duplicated with deluxe→pluto, and
+# every deluxe-free EVO permutation gets a post-SA cheap-check that swaps the
+# weakest core for pluto if it improves NDM.
+pluto:
+  allow:      true
+  multiplier: 3.0
+
+# Arcane behavior.
+#  auto_place: true  → every arcane (`A`) slot is filled with an ARCANE card
+#                      before SA. Classic optimizer locks them; GUI optimizer
+#                      lets SA swap *colors* within arcane-locked slots (subject
+#                      to per-color inventory) but never swap ARCANE ↔ DEAD.
+#  auto_place: false → initial fill is still ARCANE, but SA may swap each arcane
+#                      slot to DEAD (fueling void core) when that's a better
+#                      trade. GUI optimizer also obeys the per-color inventory.
+arcane:
+  auto_place: true
 
 stacking:
   greed_additive: true   # true → greed multipliers on the same card sum;     false → multiply
@@ -64,7 +98,7 @@ metrics:
 
 output:
   export_spreadsheet: true
-  spreadsheet_prefix: "Panel_WV_Decks_"   # produces "{prefix}ndm_simulation.xlsx"
+  spreadsheet_prefix: "Panel_WV_Decks_void_"   # produces "{prefix}ndm_simulation.xlsx"
 
 testing:
   # When true, every deck/class is run through all of `panel_configs`.
@@ -84,11 +118,18 @@ modes:
 
   vanilla:
     # Vanilla preset: multiplicative core scaling, positional shiny off,
-    # deluxe card system disabled.
+    # deluxe card system disabled, void + pluto cores unavailable. Vanilla also
+    # ships its own deck roster (different layouts, different socket counts).
     deckmod: 0
     deluxe:
+      allow: false
+    cores:
+      void_allow: false
+    pluto:
       allow: false
     stacking:
       additive_cores: false
     shiny:
       positional: false
+    decks:
+      json_file: vh_decks.json

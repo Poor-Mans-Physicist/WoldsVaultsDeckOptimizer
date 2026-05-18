@@ -67,6 +67,9 @@ DECKMOD: int = _CFG["deckmod"]
 
 EXCLUDED_DECKS: FrozenSet[str] = frozenset(_CFG.get("excluded_decks") or ())
 
+# Mode-specific JSON deck file. Empty string → no JSON file loaded (YAML only).
+DECKS_JSON_FILE: str = (_CFG.get("decks") or {}).get("json_file", "") or ""
+
 MULT_DIR_GREED_VERT:      float = _CFG["greed"]["dir_vert"]
 MULT_DIR_GREED_HORIZ:     float = _CFG["greed"]["dir_horiz"]
 MULT_EVO_GREED:           float = _CFG["greed"]["evo"]
@@ -80,11 +83,24 @@ MULT_EQUILIBRIUM: float = _CFG["cores"]["equilibrium"]
 MULT_FOIL:        float = _CFG["cores"]["foil"]
 MULT_STEADFAST:   float = _CFG["cores"]["steadfast"]
 MULT_COLOR:       float = _CFG["cores"]["color"]
+ALLOW_VOID:           bool  = _CFG["cores"]["void_allow"]
+MULT_VOID_CORE_BASE:  float = _CFG["cores"]["void_base"]
+MULT_VOID_CORE_SCALE: float = _CFG["cores"]["void_scale"]
 
 ALLOW_DELUXE:           bool  = _CFG["deluxe"]["allow"]
 MULT_DELUXE_FLAT:       float = _CFG["deluxe"]["flat"]
 MULT_DELUXE_CORE_BASE:  float = _CFG["deluxe"]["core_base"]
 MULT_DELUXE_CORE_SCALE: float = _CFG["deluxe"]["core_scale"]
+
+ALLOW_PLUTO:            bool  = _CFG["pluto"]["allow"]
+MULT_PLUTO:             float = _CFG["pluto"]["multiplier"]
+
+# Arcane behavior. When True (the historical default), every arcane (`A`)
+# slot is pre-filled with an ARCANE card before SA runs — preserving the
+# original "arcane slots always count toward Pure" behavior, now via a real
+# placement instead of the old n_arcane fudge. When False, SA may swap
+# ARCANE ↔ DEAD (classic) or ARCANE / DEAD / EMPTY (GUI inventory).
+AUTO_PLACE_ARCANE:      bool  = bool((_CFG.get("arcane") or {}).get("auto_place", True))
 
 GREED_ADDITIVE: bool = _CFG["stacking"]["greed_additive"]
 ADDITIVE_CORES: bool = _CFG["stacking"]["additive_cores"]
@@ -119,19 +135,27 @@ if ALLOW_DELUXE:
 class Deck:
     def __init__(
         self,
-        slots:       Set[Position],
-        core_slots:  int,
-        n_arcane:    int = 0,
-        min_regular: int = -1,
-        max_greed:   int = -1,
-        name:        str = "Unnamed Deck",
+        slots:        Set[Position],
+        core_slots:   int,
+        arcane_slots: Optional[Set[Position]] = None,
+        min_regular:  int = -1,
+        max_greed:    int = -1,
+        name:         str = "Unnamed Deck",
     ) -> None:
-        self.slots       = frozenset(slots)
-        self.core_slots  = core_slots
-        self.n_arcane    = n_arcane
-        self.min_regular = min_regular
-        self.max_greed   = max_greed
-        self.name        = name
+        # ``slots`` is the FULL slot set (regular ∪ arcane). ``arcane_slots`` is
+        # the subset that holds the ARCANE/DEAD-only restriction. Geometry
+        # (row/col/surr/diag peers) is computed on the full slot set so neighbor
+        # counts include arcane neighbors automatically.
+        self.slots        = frozenset(slots)
+        self.arcane_slots = frozenset(arcane_slots or ())
+        self.core_slots   = core_slots
+        self.min_regular  = min_regular
+        self.max_greed    = max_greed
+        self.name         = name
+
+        # Convenience: the complement of arcane_slots, where any non-ARCANE
+        # placement is legal.
+        self.regular_slots: FrozenSet[Position] = self.slots - self.arcane_slots
 
         self._row_peers:  Dict[Position, FrozenSet[Position]] = {}
         self._col_peers:  Dict[Position, FrozenSet[Position]] = {}
@@ -172,7 +196,9 @@ class Deck:
         CardType.EVO_GREED:       "e",
         CardType.SURR_GREED:      "o",
         CardType.FILLER_GREED:    ".",
-        CardType.EMPTY:           "·",
+        CardType.EMPTY:           "·",   # UI placeholder only — never produced by SA
+        CardType.DEAD:            "_",   # placed by void-core decks; counts toward n_dead
+        CardType.ARCANE:          "a",   # placeable only in arcane (`A`) slots; 0 NDM
     }
 
     def display(self, assignment: Optional[Dict[Position, CardType]] = None) -> str:
@@ -194,8 +220,12 @@ class Deck:
     def with_constraints(self, min_regular: int, max_greed: int) -> "Deck":
         """Return a shallow copy of this deck with overridden constraints."""
         return Deck(
-            self.slots, self.core_slots, self.n_arcane,
-            min_regular, max_greed, self.name,
+            slots        = self.slots,
+            core_slots   = self.core_slots,
+            arcane_slots = self.arcane_slots,
+            min_regular  = min_regular,
+            max_greed    = max_greed,
+            name         = self.name,
         )
 
     def constraint_str(self) -> str:
@@ -256,24 +286,29 @@ def _get_test_configs(deck: Deck) -> List[Tuple[str, int, int]]:
 #                   ({"values": {key: {name, layout, socketCount, …}}}).
 #
 # Layout grid characters (both formats):
-#     O → regular slot (placeable)
-#     A → arcane slot  (counted toward n_arcane; never placed on)
-#     X → empty / wall (any other character is also treated as empty)
+#     O → regular slot   (placeable by any non-arcane type)
+#     A → arcane slot    (placeable only by ARCANE or DEAD)
+#     X → empty / wall   (any other character is also treated as empty)
 
 
-def _parse_layout(layout: str) -> Tuple[Set[Tuple[int, int]], int]:
-    """Convert a layout grid into ``(regular slot positions, arcane count)``.
+def _parse_layout(layout: str) -> Tuple[Set[Tuple[int, int]], Set[Tuple[int, int]]]:
+    """Convert a layout grid into ``(all_slot_positions, arcane_slot_positions)``.
 
-    Arcane slot positions are counted but not returned — the optimizer only
-    needs the total count for PURE-core scaling, not the geometry.
+    ``all_slot_positions`` is the FULL slot set (regular ∪ arcane). The Deck
+    geometry is computed over this union so neighbor counts naturally include
+    arcane neighbors. ``arcane_slot_positions`` is the subset that holds the
+    ARCANE/DEAD-only restriction.
     """
     slots: Set[Tuple[int, int]] = set()
-    n_arcane = 0
+    arcane_slots: Set[Tuple[int, int]] = set()
     for r, line in enumerate(layout.rstrip("\n").splitlines()):
         for c, ch in enumerate(line):
-            if   ch == "O": slots.add((r, c))
-            elif ch == "A": n_arcane += 1
-    return slots, n_arcane
+            if   ch == "O":
+                slots.add((r, c))
+            elif ch == "A":
+                slots.add((r, c))
+                arcane_slots.add((r, c))
+    return slots, arcane_slots
 
 
 def _yaml_key(path: Path) -> str:
@@ -298,62 +333,79 @@ def _load_yaml_decks(seen_keys: Set[str]) -> List[Deck]:
         if not data.get("enabled", True):
             continue
 
-        slots, n_arcane = _parse_layout(data["layout"])
+        slots, arcane_slots = _parse_layout(data["layout"])
         if not slots:
             raise ValueError(
                 f"Deck file {path.name} has no slots — check the layout grid."
             )
 
         decks.append(Deck(
-            slots       = slots,
-            core_slots  = int(data["core_slots"]) + DECKMOD,
-            n_arcane    = n_arcane,
-            min_regular = int(data.get("min_regular", -1)),
-            max_greed   = int(data.get("max_greed", -1)),
-            name        = str(data["name"]),
+            slots        = slots,
+            core_slots   = int(data["core_slots"]) + DECKMOD,
+            arcane_slots = arcane_slots,
+            min_regular  = int(data.get("min_regular", -1)),
+            max_greed    = int(data.get("max_greed", -1)),
+            name         = str(data["name"]),
         ))
         seen_keys.add(key)
     return decks
 
 
 def _load_json_decks(seen_keys: Set[str]) -> List[Deck]:
-    """Batch import from Wold's Vaults game-data JSON files.
+    """Batch import from a single game-data JSON deck file.
+
+    The exact file is chosen by ``DECKS_JSON_FILE`` (e.g. ``wolds_decks.json``
+    in wolds mode, ``vh_decks.json`` in vanilla). An empty string skips the
+    JSON pass entirely (YAML-only setups).
 
     Schema: ``{"values": {<key>: {"name", "layout": [{"value": [<rows>]}],
     "socketCount": {"max"}}}}``. Entries with a null ``socketCount`` (dungeon-
     only variants) are skipped. JSON entries whose ``<key>`` matches a YAML
     filename (stripped of any ``NN_`` prefix) are skipped — the YAML wins.
     """
-    decks: List[Deck] = []
-    for path in sorted(_DECKS_DIR.glob("*.json")):
-        with path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh) or {}
+    if not DECKS_JSON_FILE:
+        return []
+    path = _DECKS_DIR / DECKS_JSON_FILE
+    if not path.is_file():
+        # Don't crash — surface a clear warning and let the rest of the loader
+        # carry on with whatever YAML files exist.
+        import sys as _sys
+        print(
+            f"[ndm] WARN: configured deck file {path} not found — "
+            f"loading only YAML decks for this run.",
+            file=_sys.stderr,
+        )
+        return []
 
-        for key, entry in (data.get("values") or {}).items():
-            if key in EXCLUDED_DECKS:
-                continue
-            if key in seen_keys:                  # YAML override
-                continue
-            sockets     = entry.get("socketCount") or {}
-            max_sockets = sockets.get("max")
-            if max_sockets is None:               # dungeon-only variant
-                continue
-            layouts = entry.get("layout") or []
-            if not layouts:
-                continue
-            layout_str = "\n".join(layouts[0]["value"])
-            slots, n_arcane = _parse_layout(layout_str)
-            if not slots:
-                continue
-            decks.append(Deck(
-                slots       = slots,
-                core_slots  = int(max_sockets) + DECKMOD,
-                n_arcane    = n_arcane,
-                min_regular = -1,
-                max_greed   = -1,
-                name        = str(entry.get("name") or key),
-            ))
-            seen_keys.add(key)
+    decks: List[Deck] = []
+    with path.open("r", encoding="utf-8") as fh:
+        data = json.load(fh) or {}
+
+    for key, entry in (data.get("values") or {}).items():
+        if key in EXCLUDED_DECKS:
+            continue
+        if key in seen_keys:                  # YAML override
+            continue
+        sockets     = entry.get("socketCount") or {}
+        max_sockets = sockets.get("max")
+        if max_sockets is None:               # dungeon-only variant
+            continue
+        layouts = entry.get("layout") or []
+        if not layouts:
+            continue
+        layout_str = "\n".join(layouts[0]["value"])
+        slots, arcane_slots = _parse_layout(layout_str)
+        if not slots:
+            continue
+        decks.append(Deck(
+            slots        = slots,
+            core_slots   = int(max_sockets) + DECKMOD,
+            arcane_slots = arcane_slots,
+            min_regular  = -1,
+            max_greed    = -1,
+            name         = str(entry.get("name") or key),
+        ))
+        seen_keys.add(key)
     return decks
 
 
@@ -404,11 +456,14 @@ def set_mode(name: str) -> None:
         raise ValueError(f"unknown mode: {name!r}")
 
     global MODE, _CFG
-    global DECKMOD, EXCLUDED_DECKS
+    global DECKMOD, EXCLUDED_DECKS, DECKS_JSON_FILE
     global MULT_DIR_GREED_VERT, MULT_DIR_GREED_HORIZ, MULT_EVO_GREED, MULT_SURR_GREED
     global MULT_DIR_GREED_DIAG_UP, MULT_DIR_GREED_DIAG_DOWN
     global MULT_PURE_BASE, MULT_PURE_SCALE, MULT_EQUILIBRIUM, MULT_FOIL, MULT_STEADFAST, MULT_COLOR
+    global ALLOW_VOID, MULT_VOID_CORE_BASE, MULT_VOID_CORE_SCALE
     global ALLOW_DELUXE, MULT_DELUXE_FLAT, MULT_DELUXE_CORE_BASE, MULT_DELUXE_CORE_SCALE
+    global ALLOW_PLUTO, MULT_PLUTO
+    global AUTO_PLACE_ARCANE
     global GREED_ADDITIVE, ADDITIVE_CORES, SHINY_POSITIONAL
     global ENABLE_EXPERIMENTAL_EXPONENT, EXPERIMENTAL_EXPONENT, EXPERIMENTAL_BOOST
     global DELUXE_COUNTED_AS_REGULAR
@@ -425,6 +480,7 @@ def set_mode(name: str) -> None:
 
     DECKMOD                  = _CFG["deckmod"]
     EXCLUDED_DECKS           = frozenset(_CFG.get("excluded_decks") or ())
+    DECKS_JSON_FILE          = (_CFG.get("decks") or {}).get("json_file", "") or ""
     MULT_DIR_GREED_VERT      = _CFG["greed"]["dir_vert"]
     MULT_DIR_GREED_HORIZ     = _CFG["greed"]["dir_horiz"]
     MULT_EVO_GREED           = _CFG["greed"]["evo"]
@@ -437,10 +493,16 @@ def set_mode(name: str) -> None:
     MULT_FOIL                = _CFG["cores"]["foil"]
     MULT_STEADFAST           = _CFG["cores"]["steadfast"]
     MULT_COLOR               = _CFG["cores"]["color"]
+    ALLOW_VOID               = _CFG["cores"]["void_allow"]
+    MULT_VOID_CORE_BASE      = _CFG["cores"]["void_base"]
+    MULT_VOID_CORE_SCALE     = _CFG["cores"]["void_scale"]
     ALLOW_DELUXE             = _CFG["deluxe"]["allow"]
     MULT_DELUXE_FLAT         = _CFG["deluxe"]["flat"]
     MULT_DELUXE_CORE_BASE    = _CFG["deluxe"]["core_base"]
     MULT_DELUXE_CORE_SCALE   = _CFG["deluxe"]["core_scale"]
+    ALLOW_PLUTO              = _CFG["pluto"]["allow"]
+    MULT_PLUTO               = _CFG["pluto"]["multiplier"]
+    AUTO_PLACE_ARCANE        = bool((_CFG.get("arcane") or {}).get("auto_place", True))
     GREED_ADDITIVE           = _CFG["stacking"]["greed_additive"]
     ADDITIVE_CORES           = _CFG["stacking"]["additive_cores"]
     SHINY_POSITIONAL         = _CFG["shiny"]["positional"]

@@ -82,19 +82,24 @@ def compute_heatmap(
     regular:  Dict[Position, CardType] = {}
     deluxe:   Dict[Position, CardType] = {}
     typeless: Dict[Position, CardType] = {}
+    arcane:   Dict[Position, CardType] = {}
 
     for p, t in assignment.items():
         if   t in GREED_TYPES:    greed[p]    = t
         elif t in REGULAR_TYPES:  regular[p]  = t
         elif t in DELUXE_TYPES:   deluxe[p]   = t
         elif t in TYPELESS_TYPES: typeless[p] = t
+        elif t == CardType.ARCANE: arcane[p]  = t
 
-    filled   = frozenset(greed) | frozenset(regular) | frozenset(deluxe) | frozenset(typeless)
+    # ARCANE counts as "filled" for row/col peer counts but is not scorable
+    # (0 NDM, no cores apply).
+    filled   = (frozenset(greed) | frozenset(regular) | frozenset(deluxe)
+                | frozenset(typeless) | frozenset(arcane))
     scorable = {**regular, **deluxe, **typeless}
 
     foil_active = CoreType.FOIL in cores
     if card_class == CardClass.EVO:
-        n_ns = len(greed) if foil_active else (len(regular) + len(greed))
+        n_ns = len(greed) if foil_active else (len(regular) + len(arcane) + len(greed))
     else:
         n_ns = len(greed)
     n_deluxe = len(deluxe)
@@ -103,7 +108,9 @@ def compute_heatmap(
     deluxe_core_contributions = []
     for core in cores:
         if   core == CoreType.PURE:
-            core_contributions.append(MULT_PURE_BASE + MULT_PURE_SCALE * (n_ns + deck.n_arcane))
+            # n_ns now includes placed arcane cards directly (old `+ deck.n_arcane`
+            # fudge is gone).
+            core_contributions.append(MULT_PURE_BASE + MULT_PURE_SCALE * n_ns)
         elif core == CoreType.EQUILIBRIUM and card_class == CardClass.SHINY:
             core_contributions.append(MULT_EQUILIBRIUM)
         elif core == CoreType.STEADFAST   and card_class == CardClass.SHINY:
@@ -453,6 +460,8 @@ def _write_class_panel(
         CardType.EVO_GREED:       "FDEBD0", CardType.SURR_GREED:      "FDEBD0",
         CardType.FILLER_GREED:    "D5D8DC",
         CardType.TYPELESS:        "A8D5A2",   # soft green, distinct from blue regular cards
+        CardType.DEAD:            "ECECEC",   # neutral gray — empty slot for void core
+        CardType.ARCANE:          "E5DEFF",   # light purple — arcane placement
     }
 
     asgn         = result["assignment"]
@@ -597,7 +606,7 @@ def generate_spreadsheet(
         # Deck header
         ws.cell(row=current_row, column=1,
                 value=f"DECK: {deck.name}  ({len(deck.slots)} slots · "
-                      f"{deck.core_slots} cores · {deck.n_arcane} arcane)"
+                      f"{deck.core_slots} cores · {len(deck.arcane_slots)} arcane)"
                 ).font = DECK_FONT
         ws.cell(row=current_row, column=1).fill = DECK_FILL
         ws.merge_cells(start_row=current_row, start_column=1,

@@ -35,8 +35,9 @@ const DIR_GREED_SW:    u8 = 13;
 const EVO_GREED:       u8 = 14;
 const SURR_GREED:      u8 = 15;
 const DEAD:            u8 = 16;
+const ARCANE:          u8 = 17;
 
-const N_TYPES: usize = 17;
+const N_TYPES: usize = 18;
 
 // Colors
 const RED:    u8 = 0;
@@ -55,6 +56,8 @@ const CORE_STEADFAST:   u8 = 2;
 const CORE_COLOR:       u8 = 3;
 const CORE_FOIL:        u8 = 4;
 const CORE_DELUXE:      u8 = 5;
+const CORE_VOID:        u8 = 6;
+const CORE_PLUTO:       u8 = 7;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String ↔ u8 conversions (Python boundary only — never on the hot path)
@@ -79,6 +82,7 @@ fn card_type_from_str(s: &str) -> u8 {
         "evo_greed"       => EVO_GREED,
         "surr_greed"      => SURR_GREED,
         "dead"            => DEAD,
+        "arcane"          => ARCANE,
         other             => panic!("Unknown card type: {}", other),
     }
 }
@@ -102,6 +106,7 @@ fn card_type_to_str(t: u8) -> &'static str {
         EVO_GREED       => "evo_greed",
         SURR_GREED      => "surr_greed",
         DEAD            => "dead",
+        ARCANE          => "arcane",
         other           => panic!("Unknown card type u8: {}", other),
     }
 }
@@ -136,6 +141,8 @@ fn core_from_str(s: &str) -> u8 {
         "color"       => CORE_COLOR,
         "foil"        => CORE_FOIL,
         "deluxe_core" => CORE_DELUXE,
+        "void_core"   => CORE_VOID,
+        "pluto_core"  => CORE_PLUTO,
         other         => panic!("Unknown core type: {}", other),
     }
 }
@@ -179,7 +186,8 @@ struct DeckGeom {
     dir_nw:    Vec<Option<usize>>,
     dir_se:    Vec<Option<usize>>,
     dir_sw:    Vec<Option<usize>>,
-    n_arcane:  usize,
+    // Per-slot arcane flag. Arcane slots accept only ARCANE or DEAD.
+    is_arcane_slot: Vec<bool>,
     // Row/col offset machinery for dense per-color counters.
     row_min: i32,
     row_span: usize,
@@ -203,9 +211,16 @@ struct SimConfig {
     mult_deluxe_flat: f64,
     mult_deluxe_core_base: f64,
     mult_deluxe_core_scale: f64,
+    mult_void_core_base: f64,
+    mult_void_core_scale: f64,
+    mult_pluto: f64,
     greed_additive: bool,
     additive_cores: bool,
     is_shiny: bool,
+    // Arcane behaviour. true → arcane slots locked to their initial fill (color
+    // swaps within ARCANE-locked slots still allowed). false → SA may swap
+    // ARCANE ↔ DEAD per arcane slot.
+    auto_place_arcane: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -267,15 +282,22 @@ fn simulate(
     for v in row_color.iter_mut() { *v = 0; }
     for v in col_color.iter_mut() { *v = 0; }
 
-    // Same-color counts per row / col (all non-DEAD colored cards count regardless of type).
+    // Same-color counts per row / col (all non-DEAD colored cards count
+    // regardless of type — ARCANE counts here too so it boosts neighbors).
     let mut n_positional = 0usize;
     let mut n_deluxe     = 0usize;
     let mut n_typeless   = 0usize;
     let mut n_greed      = 0usize;
+    let mut n_arcane     = 0usize;
+    let mut n_dead       = 0usize;
 
     for i in 0..n {
         let (t, c) = asgn[i];
-        if t == DEAD || c == COLOR_NONE { continue; }
+        if t == DEAD {
+            n_dead += 1;
+            continue;
+        }
+        if c == COLOR_NONE { continue; }
         let r = (geom.row_of[i] - geom.row_min) as usize;
         let cc = (geom.col_of[i] - geom.col_min) as usize;
         row_color[r * N_COLORS + c as usize] += 1;
@@ -283,22 +305,25 @@ fn simulate(
         if is_positional(t)         { n_positional += 1; }
         else if t == DELUXE         { n_deluxe     += 1; }
         else if t == TYPELESS       { n_typeless   += 1; }
+        else if t == ARCANE         { n_arcane     += 1; }
         else if is_greed(t)         { n_greed      += 1; }
     }
 
-    // n_ns for PURE — matches src.simulate semantics.
+    // n_ns for PURE — matches src.inventory_optimize semantics (which already
+    // included deluxe/typeless under EVO-no-FOIL). ARCANE placements add too
+    // ("treat like regulars"); the old fudge `+ geom.n_arcane` is gone.
     let n_ns = if cfg.is_shiny {
         n_greed
     } else if cores.foil_active {
         n_greed
     } else {
-        n_positional + n_deluxe + n_typeless + n_greed
+        n_positional + n_deluxe + n_typeless + n_arcane + n_greed
     };
 
     // All cores fold into a single per-card core_mult. Precompute the baseline
     // (cores that apply to every non-greed card regardless of color), plus the
-    // color- and deluxe-core gated addends, so the per-card combination at
-    // accumulation time is constant-time.
+    // color-, deluxe-, void-, and pluto-core gated addends, so the per-card
+    // combination at accumulation time is constant-time.
     let mut baseline_sum  = 0.0f64;
     let mut baseline_prod = 1.0f64;
     let mut color_addend  = 0.0f64;
@@ -306,13 +331,20 @@ fn simulate(
     let mut deluxe_addend = 0.0f64;
     let mut deluxe_factor = 1.0f64;
     let mut deluxe_present = false;
+    let mut void_addend   = 0.0f64;
+    let mut void_factor   = 1.0f64;
+    let mut void_present  = false;
+    let mut pluto_addend  = 0.0f64;
+    let mut pluto_factor  = 1.0f64;
+    let mut pluto_present = false;
     let color_core_color = cores.color_core_color;
 
     for s in &cores.list {
         match s.core_type {
             CORE_PURE => {
                 let scale = if s.has_override() { s.override_ } else { cfg.mult_pure_scale };
-                let v = cfg.mult_pure_base + scale * (n_ns + geom.n_arcane) as f64;
+                // n_ns already includes placed ARCANE cards; no fudge addend.
+                let v = cfg.mult_pure_base + scale * n_ns as f64;
                 baseline_sum  += v - 1.0;
                 baseline_prod *= v;
             }
@@ -343,23 +375,61 @@ fn simulate(
                 deluxe_factor  = v;
                 deluxe_present = true;
             }
+            CORE_VOID => {
+                let scale = if s.has_override() { s.override_ } else { cfg.mult_void_core_scale };
+                let v = cfg.mult_void_core_base + scale * n_dead as f64;
+                void_addend   = v - 1.0;
+                void_factor   = v;
+                void_present  = true;
+            }
+            CORE_PLUTO if !cfg.is_shiny => {
+                let v = if s.has_override() { s.override_ } else { cfg.mult_pluto };
+                pluto_addend  = v - 1.0;
+                pluto_factor  = v;
+                pluto_present = true;
+            }
             _ => {}
         }
     }
 
-    // Per-card core multiplier — picks color/deluxe addends per applicability.
+    // Pluto's target groups (EVO-only). Less-common wins; if one is 0, the
+    // other gets the boost; tie with both > 0 boosts both.
+    let (pluto_target_reg, pluto_target_dlx) = if pluto_present {
+        if n_positional == 0 && n_deluxe == 0   { (false, false) }
+        else if n_positional == 0               { (false, true)  }
+        else if n_deluxe == 0                   { (true,  false) }
+        else if n_positional < n_deluxe         { (true,  false) }
+        else if n_deluxe < n_positional         { (false, true)  }
+        else                                    { (true,  true)  }
+    } else {
+        (false, false)
+    };
+
+    // Per-card core multiplier — picks color/deluxe/void/pluto addends per
+    // applicability. (Dead cards are skipped before this is called; gating is
+    // left here for symmetry and breakdown correctness.)
     let card_core_mult = |t: u8, c: u8| -> f64 {
         let color_applies  =
             color_core_color != COLOR_NONE && c != COLOR_NONE && c == color_core_color;
         let deluxe_applies = deluxe_present && t != DELUXE;
+        let void_applies   = void_present   && t != DEAD;
+        // Pluto targets ONLY the resolved less-common group.
+        let pluto_applies = pluto_present && (
+            (pluto_target_reg && is_positional(t))
+            || (pluto_target_dlx && t == DELUXE)
+        );
         if cfg.additive_cores {
             1.0 + baseline_sum
                 + if color_applies  { color_addend  } else { 0.0 }
                 + if deluxe_applies { deluxe_addend } else { 0.0 }
+                + if void_applies   { void_addend   } else { 0.0 }
+                + if pluto_applies  { pluto_addend  } else { 0.0 }
         } else {
             let mut m = baseline_prod;
             if color_applies  { m *= color_factor_val; }
             if deluxe_applies { m *= deluxe_factor; }
+            if void_applies   { m *= void_factor; }
+            if pluto_applies  { m *= pluto_factor; }
             m
         }
     };
@@ -482,27 +552,125 @@ fn slot_ranking(geom: &DeckGeom, t: u8) -> Vec<usize> {
 
 fn initial_fill(
     geom:      &DeckGeom,
-    inventory: &[u32],     // flat N_TYPES * N_COLORS counts
+    inventory: &[u32],     // regular pool, flat N_TYPES * N_COLORS counts
+    forced:    &[u32],     // forced pool, same shape — must all be placed
 ) -> Vec<(u8, u8)> {
     let mut asgn: Vec<(u8, u8)> = vec![(DEAD, COLOR_NONE); geom.n];
     let mut filled = vec![false; geom.n];
-    let mut remaining: Vec<u32> = inventory.to_vec();
 
+    // Combined budget for phase 2; we decrement as phase 1 consumes its share.
+    let mut remaining: Vec<u32> = inventory
+        .iter().zip(forced.iter())
+        .map(|(&r, &f)| r + f)
+        .collect();
+    let mut forced_remaining: Vec<u32> = forced.to_vec();
+
+    // ── Phase 0: arcane slots ────────────────────────────────────────────────
+    // Fill every arcane slot with ARCANE drawn from the biggest color bucket
+    // first. When inventory runs out, the remaining arcane slots stay DEAD
+    // (the only other legal placement). Honors forced ARCANE counts implicitly.
+    for s in 0..geom.n {
+        if !geom.is_arcane_slot[s] { continue; }
+        // Pick the color with the most ARCANE cards still available.
+        let mut best_color: Option<u8> = None;
+        let mut best_avail = 0u32;
+        for c in 0..N_COLORS as u8 {
+            let idx = ARCANE as usize * N_COLORS + c as usize;
+            if remaining[idx] > best_avail {
+                best_avail = remaining[idx];
+                best_color = Some(c);
+            }
+        }
+        match best_color {
+            Some(c) => {
+                asgn[s] = (ARCANE, c);
+                filled[s] = true;
+                let idx = ARCANE as usize * N_COLORS + c as usize;
+                remaining[idx] -= 1;
+                if forced_remaining[idx] > 0 {
+                    forced_remaining[idx] -= 1;
+                }
+            }
+            None => {
+                // No ARCANE inventory left — fall back to DEAD (still legal).
+                // asgn[s] is already (DEAD, COLOR_NONE) from the default fill.
+                filled[s] = true;
+            }
+        }
+    }
+
+    // ── Phase 1: place all forced cards ──────────────────────────────────────
+    // Positional / deluxe / typeless first via the geometric rankings.
     for &t in &FILL_ORDER {
         let ranking = slot_ranking(geom, t);
-        // Colors of this type sorted by remaining count, descending.
+        let mut color_order: [u8; N_COLORS] = [RED, GREEN, BLUE, YELLOW];
+        color_order.sort_by(|&a, &b| {
+            forced_remaining[t as usize * N_COLORS + b as usize]
+                .cmp(&forced_remaining[t as usize * N_COLORS + a as usize])
+        });
+        let mut cursor = 0usize;
+        for &c in &color_order {
+            let idx = t as usize * N_COLORS + c as usize;
+            while forced_remaining[idx] > 0 {
+                // Skip filled slots AND arcane slots (no non-arcane allowed there).
+                while cursor < ranking.len()
+                    && (filled[ranking[cursor]] || geom.is_arcane_slot[ranking[cursor]])
+                {
+                    cursor += 1;
+                }
+                if cursor >= ranking.len() { break; }
+                let slot = ranking[cursor];
+                asgn[slot] = (t, c);
+                filled[slot] = true;
+                forced_remaining[idx] -= 1;
+                remaining[idx]       -= 1;
+                cursor += 1;
+            }
+            if cursor >= ranking.len() { break; }
+        }
+    }
+    // Catch any forced types NOT in FILL_ORDER (greeds) via plain slot iteration.
+    // Skip ARCANE (already handled in Phase 0) and arcane slots.
+    for t_idx in 0..N_TYPES {
+        if t_idx as u8 == ARCANE { continue; }
+        for c_idx in 0..N_COLORS {
+            let idx = t_idx * N_COLORS + c_idx;
+            while forced_remaining[idx] > 0 {
+                // Find any open NON-arcane slot.
+                let mut placed = false;
+                for s in 0..geom.n {
+                    if !filled[s] && !geom.is_arcane_slot[s] {
+                        asgn[s] = (t_idx as u8, c_idx as u8);
+                        filled[s] = true;
+                        forced_remaining[idx] -= 1;
+                        remaining[idx]       -= 1;
+                        placed = true;
+                        break;
+                    }
+                }
+                if !placed { break; }
+            }
+        }
+    }
+
+    // ── Phase 2: place regular cards using existing priority ────────────────
+    // Skip ARCANE (already placed in Phase 0) and arcane slots.
+    for &t in &FILL_ORDER {
+        let ranking = slot_ranking(geom, t);
         let mut color_order: [u8; N_COLORS] = [RED, GREEN, BLUE, YELLOW];
         color_order.sort_by(|&a, &b| {
             remaining[t as usize * N_COLORS + b as usize]
                 .cmp(&remaining[t as usize * N_COLORS + a as usize])
         });
-
         let mut cursor = 0usize;
         for &c in &color_order {
             let idx = t as usize * N_COLORS + c as usize;
             while remaining[idx] > 0 {
-                // Find next open slot in the ranking.
-                while cursor < ranking.len() && filled[ranking[cursor]] { cursor += 1; }
+                while cursor < ranking.len()
+                    && (filled[ranking[cursor]] || geom.is_arcane_slot[ranking[cursor]])
+                {
+                    cursor += 1;
+                }
                 if cursor >= ranking.len() { break; }
                 let slot = ranking[cursor];
                 asgn[slot] = (t, c);
@@ -525,7 +693,9 @@ fn sa_one_restart(
     geom:       &DeckGeom,
     cores:      &CoresPack,
     cfg:        &SimConfig,
-    inventory:  &[u32],          // N_TYPES * N_COLORS
+    inventory:  &[u32],          // regular pool, N_TYPES * N_COLORS
+    forced:     &[u32],          // forced pool, same shape — per-(t,c) lower bound
+    cap:        &[u32],          // = inventory + forced, per-(t,c) upper bound
     options:    &[(u8, u8)],     // stacks the user owns + (DEAD, COLOR_NONE) at end
     n_iter:     usize,
     t_start:    f64,
@@ -533,7 +703,7 @@ fn sa_one_restart(
     seed:       u64,
 ) -> (Vec<(u8, u8)>, f64) {
     let mut rng = SmallRng::seed_from_u64(seed);
-    let mut asgn = initial_fill(geom, inventory);
+    let mut asgn = initial_fill(geom, inventory, forced);
 
     // Placed counters (flat N_TYPES * N_COLORS).
     let mut placed = vec![0u32; N_TYPES * N_COLORS];
@@ -554,20 +724,63 @@ fn sa_one_restart(
     let log_cool = (t_end / t_start).ln();
     let n = geom.n;
 
+    // Arcane-restricted proposal alphabet: every ARCANE color with cap > 0,
+    // plus DEAD when auto_place is off. When auto_place is on, ARCANE-locked
+    // slots can only swap colors among other ARCANE choices.
+    let mut arcane_options: Vec<(u8, u8)> = Vec::new();
+    for c in 0..N_COLORS as u8 {
+        let idx = ARCANE as usize * N_COLORS + c as usize;
+        if cap[idx] > 0 {
+            arcane_options.push((ARCANE, c));
+        }
+    }
+    if !cfg.auto_place_arcane {
+        arcane_options.push((DEAD, COLOR_NONE));
+    }
+
+    // Under auto_place_arcane, ARCANE-slot positions filled with DEAD at init
+    // (inventory exhausted) are locked — SA cannot change them at all. Track
+    // their indices so the move kernel can skip them.
+    let mut locked_arcane: Vec<bool> = vec![false; n];
+    if cfg.auto_place_arcane {
+        for i in 0..n {
+            if geom.is_arcane_slot[i] && asgn[i] == (DEAD, COLOR_NONE) {
+                locked_arcane[i] = true;
+            }
+        }
+    }
+
     for i in 0..n_iter {
         let temperature = t_start * (log_cool * i as f64 / n_iter as f64).exp();
 
         if n < 2 || rng.gen::<f64>() < 0.80 {
             // ── Replace move ─────────────────────────────────────────────────
             let p   = rng.gen_range(0..n);
+            // Skip locked arcane slots entirely.
+            if locked_arcane[p] { continue; }
             let old = asgn[p];
-            let new = options[rng.gen_range(0..options.len())];
+
+            // Pick `new` from the appropriate alphabet for this slot type.
+            let new = if geom.is_arcane_slot[p] {
+                if arcane_options.is_empty() { continue; }
+                arcane_options[rng.gen_range(0..arcane_options.len())]
+            } else {
+                let candidate = options[rng.gen_range(0..options.len())];
+                // Regular slot may never receive ARCANE.
+                if candidate.0 == ARCANE { continue; }
+                candidate
+            };
             if new == old { continue; }
 
-            // Inventory feasibility for `new`.
+            // Upper bound on `new`: placed[new] < cap[new] = inv + forced.
             if !(new.0 == DEAD || new.1 == COLOR_NONE) {
                 let idx = new.0 as usize * N_COLORS + new.1 as usize;
-                if placed[idx] >= inventory[idx] { continue; }
+                if placed[idx] >= cap[idx] { continue; }
+            }
+            // Lower bound on `old`: removing one must leave placed[old] >= forced[old].
+            if !(old.0 == DEAD || old.1 == COLOR_NONE) {
+                let idx = old.0 as usize * N_COLORS + old.1 as usize;
+                if placed[idx] <= forced[idx] { continue; }
             }
 
             // Apply
@@ -600,6 +813,18 @@ fn sa_one_restart(
             let mut p2 = rng.gen_range(0..n);
             while p2 == p1 { p2 = rng.gen_range(0..n); }
             if asgn[p1] == asgn[p2] { continue; }
+            // Reject swaps involving locked arcane slots.
+            if locked_arcane[p1] || locked_arcane[p2] { continue; }
+            // Reject swaps that would place ARCANE in a regular slot, or
+            // place a non-{ARCANE, DEAD} card in an arcane slot.
+            let a1 = geom.is_arcane_slot[p1];
+            let a2 = geom.is_arcane_slot[p2];
+            let v1 = asgn[p2].0;   // type that lands at p1 after swap
+            let v2 = asgn[p1].0;   // type that lands at p2 after swap
+            let legal = |is_arc: bool, t: u8| -> bool {
+                if is_arc { t == ARCANE || t == DEAD } else { t != ARCANE }
+            };
+            if !legal(a1, v1) || !legal(a2, v2) { continue; }
 
             asgn.swap(p1, p2);
             let new_score = simulate(geom, &asgn, cores, cfg, &mut row_color, &mut col_color, &mut boost);
@@ -623,13 +848,16 @@ fn sa_one_restart(
 #[pyfunction]
 #[pyo3(signature = (
     slots, row_peers, col_peers, surr_peers, diag_peers,
-    n_arcane, is_shiny, inventory, cores,
+    arcane_slot_indices, auto_place_arcane,
+    is_shiny, inventory, forced_inventory, cores,
     n_iter, restarts,
     mult_dir_vert, mult_dir_horiz, mult_evo_greed, mult_surr_greed,
     mult_dir_diag_up, mult_dir_diag_down,
     mult_pure_base, mult_pure_scale,
     mult_equilibrium, mult_foil, mult_steadfast, mult_color,
     mult_deluxe_flat, mult_deluxe_core_base, mult_deluxe_core_scale,
+    mult_void_core_base, mult_void_core_scale,
+    mult_pluto,
     greed_additive, additive_cores,
 ))]
 pub fn run_sa_inventory(
@@ -638,9 +866,11 @@ pub fn run_sa_inventory(
     col_peers:              Vec<Vec<usize>>,
     surr_peers:             Vec<Vec<usize>>,
     diag_peers:             Vec<Vec<usize>>,
-    n_arcane:               usize,
+    arcane_slot_indices:    Vec<usize>,
+    auto_place_arcane:      bool,
     is_shiny:               bool,
-    inventory:              Vec<(String, String, u32)>,  // (type, color, count)
+    inventory:              Vec<(String, String, u32)>,  // regular: (type, color, count)
+    forced_inventory:       Vec<(String, String, u32)>,  // forced: same shape
     cores:                  Vec<(String, String, f64)>,  // (type, color, override<0 = none)
     n_iter:                 usize,
     restarts:               usize,
@@ -659,6 +889,9 @@ pub fn run_sa_inventory(
     mult_deluxe_flat:       f64,
     mult_deluxe_core_base:  f64,
     mult_deluxe_core_scale: f64,
+    mult_void_core_base:    f64,
+    mult_void_core_scale:   f64,
+    mult_pluto:             f64,
     greed_additive:         bool,
     additive_cores:         bool,
 ) -> PyResult<(Vec<(String, String)>, f64)> {
@@ -686,6 +919,12 @@ pub fn run_sa_inventory(
     let col_min = *col_of.iter().min().unwrap_or(&0);
     let col_max = *col_of.iter().max().unwrap_or(&0);
 
+    // Build per-slot arcane flag from the index list.
+    let mut is_arcane_slot = vec![false; n];
+    for &idx in &arcane_slot_indices {
+        if idx < n { is_arcane_slot[idx] = true; }
+    }
+
     let geom = DeckGeom {
         n,
         row_of,
@@ -696,7 +935,7 @@ pub fn run_sa_inventory(
         diag_peers,
         dir_up, dir_down, dir_left, dir_right,
         dir_ne, dir_nw, dir_se, dir_sw,
-        n_arcane,
+        is_arcane_slot,
         row_min,
         row_span: (row_max - row_min + 1) as usize,
         col_min,
@@ -709,7 +948,10 @@ pub fn run_sa_inventory(
         mult_pure_base, mult_pure_scale,
         mult_equilibrium, mult_foil, mult_steadfast, mult_color,
         mult_deluxe_flat, mult_deluxe_core_base, mult_deluxe_core_scale,
+        mult_void_core_base, mult_void_core_scale,
+        mult_pluto,
         greed_additive, additive_cores, is_shiny,
+        auto_place_arcane,
     };
 
     // Pack cores
@@ -723,7 +965,7 @@ pub fn run_sa_inventory(
         .collect();
     let cores_pack = CoresPack::build(&core_specs, &cfg);
 
-    // Pack inventory into flat array
+    // Pack inventory (regular) into flat array
     let mut inv_flat = vec![0u32; N_TYPES * N_COLORS];
     for (t_s, c_s, n) in &inventory {
         let t = card_type_from_str(t_s) as usize;
@@ -731,12 +973,26 @@ pub fn run_sa_inventory(
         if c == COLOR_NONE { continue; }   // skip malformed entries
         inv_flat[t * N_COLORS + c as usize] += *n;
     }
+    // Pack forced into a parallel flat array (same shape as inv_flat).
+    let mut forced_flat = vec![0u32; N_TYPES * N_COLORS];
+    for (t_s, c_s, n) in &forced_inventory {
+        let t = card_type_from_str(t_s) as usize;
+        let c = color_from_str(c_s);
+        if c == COLOR_NONE { continue; }
+        forced_flat[t * N_COLORS + c as usize] += *n;
+    }
+    // Cap = regular + forced for the SA's upper-bound check.
+    let cap_flat: Vec<u32> = inv_flat
+        .iter().zip(forced_flat.iter())
+        .map(|(&a, &b)| a + b)
+        .collect();
 
-    // Build proposal options list: every owned (type, color) + DEAD sentinel.
-    let mut options: Vec<(u8, u8)> = Vec::with_capacity(inventory.len() + 1);
+    // Build proposal options list: every owned (type, color) in EITHER pool
+    // plus DEAD sentinel. Driven by cap_flat so neither bucket is forgotten.
+    let mut options: Vec<(u8, u8)> = Vec::with_capacity(inventory.len() + forced_inventory.len() + 1);
     for t_idx in 0..N_TYPES {
         for c_idx in 0..N_COLORS {
-            if inv_flat[t_idx * N_COLORS + c_idx] > 0 {
+            if cap_flat[t_idx * N_COLORS + c_idx] > 0 {
                 options.push((t_idx as u8, c_idx as u8));
             }
         }
@@ -752,7 +1008,7 @@ pub fn run_sa_inventory(
             // Use thread-local entropy XOR'd with restart index for a robust seed.
             let mut seed_rng = SmallRng::from_entropy();
             let seed: u64 = seed_rng.gen::<u64>() ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-            sa_one_restart(&geom, &cores_pack, &cfg, &inv_flat, &options, n_iter, 100.0, 0.5, seed)
+            sa_one_restart(&geom, &cores_pack, &cfg, &inv_flat, &forced_flat, &cap_flat, &options, n_iter, 100.0, 0.5, seed)
         })
         .collect();
 

@@ -30,6 +30,8 @@ const DIR_GREED_SW: u8   = 13;
 const EVO_GREED: u8      = 14;
 const SURR_GREED: u8     = 15;
 const FILLER_GREED: u8   = 16;  // display-only, never placed
+const DEAD: u8           = 17;  // transparent slot — counts only for VOID_CORE's n_dead
+const ARCANE: u8         = 18;  // placeable only in arcane slots; 0 NDM
 
 // Core type constants (u8)
 const CORE_PURE: u8        = 0;
@@ -38,6 +40,8 @@ const CORE_STEADFAST: u8   = 2;
 const CORE_COLOR: u8       = 3;
 const CORE_FOIL: u8        = 4;
 const CORE_DELUXE: u8      = 5;
+const CORE_VOID: u8        = 6;
+const CORE_PLUTO: u8       = 7;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String ↔ u8 conversions (used only at the Python boundary, not in hot path)
@@ -62,6 +66,8 @@ fn card_type_from_str(s: &str) -> u8 {
         "evo_greed"       => EVO_GREED,
         "surr_greed"      => SURR_GREED,
         "filler_greed"    => FILLER_GREED,
+        "dead"            => DEAD,
+        "arcane"          => ARCANE,
         other             => panic!("Unknown card type string: {}", other),
     }
 }
@@ -85,6 +91,8 @@ fn card_type_to_str(t: u8) -> &'static str {
         EVO_GREED      => "evo_greed",
         SURR_GREED     => "surr_greed",
         FILLER_GREED   => "filler_greed",
+        DEAD           => "dead",
+        ARCANE         => "arcane",
         other          => panic!("Unknown card type u8: {}", other),
     }
 }
@@ -97,6 +105,8 @@ fn core_from_str(s: &str) -> u8 {
         "color"       => CORE_COLOR,
         "foil"        => CORE_FOIL,
         "deluxe_core" => CORE_DELUXE,
+        "void_core"   => CORE_VOID,
+        "pluto_core"  => CORE_PLUTO,
         other         => panic!("Unknown core type string: {}", other),
     }
 }
@@ -143,8 +153,10 @@ struct DeckData {
     dir_sw: Vec<Option<usize>>,
     // Geometry-optimal positional type per slot (precomputed from peer set sizes)
     best_positional: Vec<u8>,
+    // Per-slot arcane flag — true at indices that correspond to an `A` (arcane)
+    // slot in the source layout. Arcane slots accept only ARCANE or DEAD.
+    is_arcane_slot: Vec<bool>,
     // Deck parameters
-    n_arcane: usize,
     min_regular: i32,
     max_greed: i32,
 }
@@ -169,6 +181,9 @@ struct SimConfig {
     mult_deluxe_flat: f64,
     mult_deluxe_core_base: f64,
     mult_deluxe_core_scale: f64,
+    mult_void_core_base: f64,
+    mult_void_core_scale: f64,
+    mult_pluto: f64,
     greed_additive: bool,
     additive_cores: bool,
     is_shiny: bool,
@@ -178,6 +193,10 @@ struct SimConfig {
     experimental_exponent: f64,
     experimental_boost: f64,
     deluxe_counted_as_regular: bool,
+    // Arcane behaviour. When true, arcane slots are pre-filled with ARCANE and
+    // SA cannot touch them. When false, SA may swap arcane slots to DEAD (the
+    // only other legal placement) for void-core trade-offs.
+    auto_place_arcane: bool,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,11 +211,15 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
     let mut is_reg     = vec![false; n];
     let mut is_deluxe  = vec![false; n];
     let mut is_typeless= vec![false; n];
+    let mut is_arcane  = vec![false; n];
     let mut is_scorable= vec![false; n]; // reg | deluxe | typeless
-    let mut is_filled  = vec![false; n]; // greed | reg | deluxe | typeless
+    let mut is_filled  = vec![false; n]; // greed | reg | deluxe | typeless | arcane
     let mut n_greed: usize = 0;
     let mut n_regular: usize = 0;
     let mut n_deluxe: usize = 0;
+    let mut n_typeless: usize = 0;
+    let mut n_arcane_placed: usize = 0;
+    let mut n_dead: usize = 0;
 
     for i in 0..n {
         match asgn[i] {
@@ -221,33 +244,60 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
                 is_typeless[i]= true;
                 is_scorable[i]= true;
                 is_filled[i]  = true;
+                n_typeless += 1;
+            }
+            ARCANE => {
+                // 0 NDM contribution but DOES count toward row/col counts (so
+                // neighboring positionals see arcanes in their peer counts) and
+                // toward n_ns for Pure-core scaling (subject to EVO/FOIL rule).
+                is_arcane[i] = true;
+                is_filled[i] = true;   // bumps row_count/col_count for peers
+                n_arcane_placed += 1;
+            }
+            DEAD => {
+                // Counted only for VOID_CORE's n_dead. Not "filled" — doesn't
+                // contribute to row/col counts or greed targeting.
+                n_dead += 1;
             }
             _ => {}
         }
     }
 
     // ── n_ns: non-shiny count for Pure Core ──────────────────────────────────
-    // EVO without FOIL: n_ns = regular + greed
+    // EVO without FOIL: n_ns = regular + arcane + greed
     // EVO with FOIL:    n_ns = greed only
     // SHINY:            n_ns = greed only (regular cards are always shiny)
+    //
+    // NOTE: Old fudge `+ deck.n_arcane` is gone — arcane placements are now
+    // real cards in the assignment and are counted here directly. (Classic
+    // doesn't include deluxe/typeless here — that's an inventory-optimizer
+    // divergence; we keep the classic formula and just add arcane.)
+    let _ = n_typeless;  // currently unused in n_ns; tracked for symmetry
     let n_ns: usize = if cfg.is_shiny || cfg.foil_active {
         n_greed
     } else {
-        n_regular + n_greed
+        n_regular + n_arcane_placed + n_greed
     };
 
     // ── Core multipliers ──────────────────────────────────────────────────────
-    // All cores fold into a single core_mult. DELUXE_CORE is gated per-card:
-    // it applies to regulars and typeless cards but NOT to deluxes. So we
-    // compute a baseline (everything except deluxe core) and an addend / factor
-    // for the deluxe core, then build the two card-class core_mult variants.
-    let mut baseline_c: Vec<f64> = Vec::with_capacity(5);
+    // All cores fold into a single core_mult. Three cores are per-card gated:
+    //   DELUXE_CORE — applies to regulars/typeless but not deluxe cards.
+    //   VOID_CORE   — applies to regulars/typeless/deluxe but not dead cards
+    //                 (dead cards have base 0, so this only matters for the
+    //                 deluxe-vs-non-deluxe variant math below).
+    //   PLUTO_CORE  — flat MULT_PLUTO; targets only the less-common of
+    //                 {EVO regulars, deluxe cards}. With 0 of one group, boosts
+    //                 the other. Tied (both > 0) → boosts both. EVO-only.
+    let mut baseline_c: Vec<f64> = Vec::with_capacity(6);
     let mut deluxe_core_value: Option<f64> = None;
+    let mut void_core_value:   Option<f64> = None;
+    let mut pluto_present = false;
 
     for &core in cores {
         match core {
             CORE_PURE => {
-                baseline_c.push(cfg.mult_pure_base + cfg.mult_pure_scale * (n_ns + deck.n_arcane) as f64);
+                // n_ns already includes placed arcane cards; no fudge addend.
+                baseline_c.push(cfg.mult_pure_base + cfg.mult_pure_scale * n_ns as f64);
             }
             CORE_EQUILIBRIUM if cfg.is_shiny => { baseline_c.push(cfg.mult_equilibrium); }
             CORE_STEADFAST   if cfg.is_shiny => { baseline_c.push(cfg.mult_steadfast); }
@@ -258,23 +308,53 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
                     cfg.mult_deluxe_core_base + cfg.mult_deluxe_core_scale * n_deluxe as f64,
                 );
             }
+            CORE_VOID => {
+                void_core_value = Some(
+                    cfg.mult_void_core_base + cfg.mult_void_core_scale * n_dead as f64,
+                );
+            }
+            CORE_PLUTO => { pluto_present = true; }
             _ => {}
         }
     }
 
-    let (non_deluxe_core_mult, deluxe_card_core_mult) = if cfg.additive_cores {
-        let baseline_sum: f64 = baseline_c.iter().map(|v| v - 1.0).sum();
+    // Pluto's target groups — EVO-only.
+    let (pluto_target_reg, pluto_target_dlx) = if pluto_present && !cfg.is_shiny {
+        if n_regular == 0 && n_deluxe == 0      { (false, false) }
+        else if n_regular == 0                  { (false, true)  }
+        else if n_deluxe == 0                   { (true,  false) }
+        else if n_regular < n_deluxe            { (true,  false) }
+        else if n_deluxe  < n_regular           { (false, true)  }
+        else                                    { (true,  true)  }
+    } else {
+        (false, false)
+    };
+
+    // Three card-class variants — typeless DIVERGES from regular because
+    // pluto only targets EVO regulars, not typeless cards.
+    let (regular_core_mult, deluxe_card_core_mult, typeless_core_mult) = if cfg.additive_cores {
+        let baseline_sum:  f64 = baseline_c.iter().map(|v| v - 1.0).sum();
         let deluxe_addend: f64 = deluxe_core_value.map_or(0.0, |v| v - 1.0);
+        let void_addend:   f64 = void_core_value.map_or(0.0, |v| v - 1.0);
+        let pluto_addend:  f64 = if pluto_present { cfg.mult_pluto - 1.0 } else { 0.0 };
         (
-            1.0 + baseline_sum + deluxe_addend, // non-deluxe (regular + typeless)
-            1.0 + baseline_sum,                  // deluxe cards
+            1.0 + baseline_sum + deluxe_addend + void_addend
+                + if pluto_target_reg { pluto_addend } else { 0.0 },
+            1.0 + baseline_sum                  + void_addend
+                + if pluto_target_dlx { pluto_addend } else { 0.0 },
+            1.0 + baseline_sum + deluxe_addend + void_addend,  // typeless: no pluto ever
         )
     } else {
         let baseline_prod: f64 = if baseline_c.is_empty() { 1.0 } else { baseline_c.iter().product() };
         let deluxe_factor: f64 = deluxe_core_value.unwrap_or(1.0);
+        let void_factor:   f64 = void_core_value.unwrap_or(1.0);
+        let pluto_factor:  f64 = if pluto_present { cfg.mult_pluto } else { 1.0 };
         (
-            baseline_prod * deluxe_factor,
-            baseline_prod,
+            baseline_prod * deluxe_factor * void_factor
+                * if pluto_target_reg { pluto_factor } else { 1.0 },
+            baseline_prod                 * void_factor
+                * if pluto_target_dlx { pluto_factor } else { 1.0 },
+            baseline_prod * deluxe_factor * void_factor,        // typeless: no pluto
         )
     };
 
@@ -386,13 +466,13 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
                 _    => 0,
             };
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
-            ndm += contrib(pos as f64 * non_deluxe_core_mult * b);
+            ndm += contrib(pos as f64 * regular_core_mult * b);
         } else if is_deluxe[i] {
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
             ndm += contrib(cfg.mult_deluxe_flat * deluxe_card_core_mult * b);
         } else if is_typeless[i] {
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
-            ndm += contrib(1.0_f64 * non_deluxe_core_mult * b);
+            ndm += contrib(1.0_f64 * typeless_core_mult * b);
         }
     }
 
@@ -422,10 +502,16 @@ fn sa_optimize_inner(
         SURR
     };
 
-    // Initialise assignment
-    let mut asgn: Vec<u8> = if deck.min_regular > 0 && (deck.min_regular as usize) < n {
-        // Seed with min_regular default_t cards, rest SURR_GREED
-        let mut indices: Vec<usize> = (0..n).collect();
+    // Initialise assignment. Arcane slots get ARCANE first; non-arcane slots
+    // follow the usual seeding (min_regular / default_t).
+    let n_arcane_slots = deck.is_arcane_slot.iter().filter(|&&b| b).count();
+    let non_arcane_n   = n - n_arcane_slots;
+    let mut asgn: Vec<u8> = if deck.min_regular > 0
+        && (deck.min_regular as usize) < non_arcane_n
+    {
+        // Seed with min_regular default_t cards in NON-arcane slots, rest
+        // SURR_GREED. Arcane slots are filled below.
+        let mut indices: Vec<usize> = (0..n).filter(|&i| !deck.is_arcane_slot[i]).collect();
         indices.shuffle(&mut rng);
         let mut a = vec![SURR_GREED; n];
         for &i in indices.iter().take(deck.min_regular as usize) {
@@ -436,9 +522,18 @@ fn sa_optimize_inner(
         vec![default_t; n]
     };
 
-    // Apply best_positional to initial regular cards
+    // Pre-fill every arcane slot with ARCANE — the only optimal choice in the
+    // classic optimizer (unlimited supply, strictly dominant unless SA flips
+    // to DEAD for void-core under auto_place_arcane=false).
     for i in 0..n {
-        if is_regular_type(asgn[i]) {
+        if deck.is_arcane_slot[i] {
+            asgn[i] = ARCANE;
+        }
+    }
+
+    // Apply best_positional to initial regular cards in NON-arcane slots
+    for i in 0..n {
+        if !deck.is_arcane_slot[i] && is_regular_type(asgn[i]) {
             asgn[i] = deck.best_positional[i];
         }
     }
@@ -483,9 +578,37 @@ fn sa_optimize_inner(
         if n < 2 || rng.gen::<f64>() < 0.80 {
             // ── Move: change one slot ─────────────────────────────────────
             let slot = rng.gen_range(0..n);
+            // Arcane-slot rule: under auto-place ON, arcane slots are locked
+            // (no SA mutations). Under OFF, the only legal swap is ARCANE↔DEAD.
+            if deck.is_arcane_slot[slot] {
+                if cfg.auto_place_arcane {
+                    continue;
+                }
+                let old = asgn[slot];
+                let new = if old == ARCANE { DEAD } else { ARCANE };
+                // Constraint counts: ARCANE and DEAD are neither greed nor
+                // scoring, so the deltas are always zero. Skip the valid()
+                // check (it would pass trivially).
+                asgn[slot] = new;
+                let new_score = simulate(deck, &asgn, cores, cfg);
+                let delta     = new_score - score;
+                if delta >= 0.0 || rng.gen::<f64>() < (delta / temp).exp() {
+                    score = new_score;
+                    if score > best_score {
+                        best_score = score;
+                        best_asgn  = asgn.clone();
+                    }
+                } else {
+                    asgn[slot] = old;
+                }
+                continue;
+            }
+
             let old  = asgn[slot];
             let new  = resolve(slot, placeable[rng.gen_range(0..placeable.len())]);
             if new == old { continue; }
+            // Regular slot may never receive ARCANE.
+            if new == ARCANE { continue; }
 
             // Incremental counter update
             let dg: i32 = is_greed_type(new) as i32 - is_greed_type(old) as i32;
@@ -524,6 +647,20 @@ fn sa_optimize_inner(
                 if raw >= i1 { raw + 1 } else { raw }
             };
             if asgn[i1] == asgn[i2] { continue; }
+            // Reject swaps that cross the arcane/non-arcane boundary in ways
+            // that would put ARCANE in a regular slot or non-ARCANE/non-DEAD
+            // in an arcane slot. Also reject any swap involving a locked
+            // arcane slot under auto_place_arcane.
+            let a1 = deck.is_arcane_slot[i1];
+            let a2 = deck.is_arcane_slot[i2];
+            if cfg.auto_place_arcane && (a1 || a2) { continue; }
+            let v1 = asgn[i2];   // what i1 would receive after swap
+            let v2 = asgn[i1];   // what i2 would receive after swap
+            let legal_at = |is_arc: bool, v: u8| -> bool {
+                if is_arc { v == ARCANE || v == DEAD }
+                else      { v != ARCANE }
+            };
+            if !legal_at(a1, v1) || !legal_at(a2, v2) { continue; }
 
             asgn.swap(i1, i2);
 
@@ -558,14 +695,15 @@ fn sa_optimize_inner(
 #[allow(clippy::too_many_arguments)]
 fn run_sa_optimize(
     // Deck geometry
-    slots:      Vec<(i32, i32)>,
-    row_peers:  Vec<Vec<usize>>,
-    col_peers:  Vec<Vec<usize>>,
-    surr_peers: Vec<Vec<usize>>,
-    diag_peers: Vec<Vec<usize>>,
-    n_arcane:   usize,
-    min_regular: i32,
-    max_greed:   i32,
+    slots:               Vec<(i32, i32)>,
+    row_peers:           Vec<Vec<usize>>,
+    col_peers:           Vec<Vec<usize>>,
+    surr_peers:          Vec<Vec<usize>>,
+    diag_peers:          Vec<Vec<usize>>,
+    arcane_slot_indices: Vec<usize>,
+    auto_place_arcane:   bool,
+    min_regular:         i32,
+    max_greed:           i32,
     // Run parameters
     is_shiny:   bool,
     cores:      Vec<String>,     // e.g. ["pure", "color"]
@@ -589,6 +727,9 @@ fn run_sa_optimize(
     mult_deluxe_flat: f64,
     mult_deluxe_core_base: f64,
     mult_deluxe_core_scale: f64,
+    mult_void_core_base: f64,
+    mult_void_core_scale: f64,
+    mult_pluto: f64,
     // Flags
     greed_additive: bool,
     additive_cores: bool,
@@ -653,6 +794,12 @@ fn run_sa_optimize(
     let placeable_u8: Vec<u8> = placeable.iter().map(|s| card_type_from_str(s)).collect();
     let foil_active = cores_u8.contains(&CORE_FOIL);
 
+    // Build per-slot arcane flag from the index list.
+    let mut is_arcane_slot = vec![false; n];
+    for &idx in &arcane_slot_indices {
+        if idx < n { is_arcane_slot[idx] = true; }
+    }
+
     let deck = DeckData {
         n,
         row_of,
@@ -670,7 +817,7 @@ fn run_sa_optimize(
         dir_se,
         dir_sw,
         best_positional,
-        n_arcane,
+        is_arcane_slot,
         min_regular,
         max_greed,
     };
@@ -691,6 +838,9 @@ fn run_sa_optimize(
         mult_deluxe_flat,
         mult_deluxe_core_base,
         mult_deluxe_core_scale,
+        mult_void_core_base,
+        mult_void_core_scale,
+        mult_pluto,
         greed_additive,
         additive_cores,
         is_shiny,
@@ -700,6 +850,7 @@ fn run_sa_optimize(
         experimental_exponent,
         experimental_boost,
         deluxe_counted_as_regular,
+        auto_place_arcane,
     };
 
     let (best_asgn, best_score) =

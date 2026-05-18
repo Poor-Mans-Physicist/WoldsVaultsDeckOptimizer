@@ -41,6 +41,12 @@ class CardType(Enum):
     # Inventory optimizer only: transparent slot-filler when inventory is exhausted.
     # Contributes nothing to NDM and does not participate in any same-color count.
     DEAD            = "dead"
+    # Arcane card — placeable ONLY in arcane (`A`) slots. Contributes 0 NDM,
+    # receives no cores, no greed boost. Counts in n_ns for Pure-core scaling
+    # (under the same EVO-no-FOIL rule as regulars) and participates in
+    # same-color neighbor positional counts in the inventory optimizer
+    # (unfiltered count in the classic optimizer, which is color-blind).
+    ARCANE          = "arcane"
 
 
 class Color(Enum):
@@ -76,6 +82,10 @@ PLACEABLE: List[CardType] = [
     CardType.DIR_GREED_NE,    CardType.DIR_GREED_NW,
     CardType.DIR_GREED_SE,    CardType.DIR_GREED_SW,
     CardType.EVO_GREED,       CardType.SURR_GREED,
+    # DEAD is a "blank" placement — counts as neither regular nor greed for
+    # constraint purposes. Only useful when VOID_CORE is in the candidate set;
+    # the SA will avoid it otherwise (a dead slot strictly loses NDM).
+    CardType.DEAD,
 ]
 
 
@@ -91,3 +101,12 @@ class CoreType(Enum):
     COLOR       = "color"
     FOIL        = "foil"
     DELUXE_CORE = "deluxe_core"
+    # Void core: base + scale * (# dead cards in deck). Always considered as a
+    # candidate (treated like PURE in the permutator). Excluded from dead cards
+    # themselves; otherwise applies to every non-greed scoring card.
+    VOID_CORE   = "void_core"
+    # Pluto core: flat 3x multiplier targeting only the less-common of
+    # {EVO regular cards, deluxe cards} in the deck (both if tied; the non-empty
+    # group if the other is 0). EVO-only. Special-cased in candidate enumeration
+    # to avoid the 2x permutation blow-up of a naive variable-pool addition.
+    PLUTO_CORE  = "pluto_core"

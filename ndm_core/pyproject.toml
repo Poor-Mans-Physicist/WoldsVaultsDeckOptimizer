@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ndm_core"
-version = "0.1.1"
+version = "0.1.5"
 description = "Rust simulation core for the Wold's Vaults NDM optimizer."
 requires-python = ">=3.9"
 classifiers = [
