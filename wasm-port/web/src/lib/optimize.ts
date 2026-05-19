@@ -43,6 +43,34 @@ export function parseStackKey(k: string): [string, string] {
   return [k.slice(0, i), k.slice(i + 1)];
 }
 
+/**
+ * Strip stack entries whose CardType is in `hidden`. Returns the filtered
+ * dict plus the total count of cards that were dropped.
+ *
+ * The GUI's row visibility is just a render gate; without this filter, cards
+ * stocked while in another (mode, class) — e.g. positional shiny cards added
+ * during a Wold's run — would silently land in the SA's candidate pool when
+ * the user flipped to a mode/class that hides those rows. Apply this right
+ * before passing inventory to the optimizer to keep behavior consistent with
+ * what's on screen.
+ */
+export function filterInventoryByHidden(
+  inv: InventoryCounts,
+  hidden: Set<string>,
+): { kept: InventoryCounts; dropped: number } {
+  const kept: InventoryCounts = {};
+  let dropped = 0;
+  for (const [k, v] of Object.entries(inv)) {
+    const [t, _c] = parseStackKey(k);
+    if (hidden.has(t)) {
+      if (v > 0) dropped += v;
+    } else {
+      kept[k] = v;
+    }
+  }
+  return { kept, dropped };
+}
+
 export interface OptimizeInput {
   deck:        Deck;
   cardClass:   CardClass;

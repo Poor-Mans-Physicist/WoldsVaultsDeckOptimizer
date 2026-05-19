@@ -11,11 +11,12 @@
   import { loadDecks } from "./lib/deck";
   import { CardClass } from "./lib/types";
   import { optimizeInventoryAsync } from "./lib/workerClient";
+  import { filterInventoryByHidden } from "./lib/optimize";
   import { loadModifiers } from "./lib/modifiers";
   import {
     isAssignableSlot, slotFamily, resetAssignmentsOnRun,
   } from "./lib/preview";
-  import { classSelectLabel } from "./lib/visibility";
+  import { classSelectLabel, hiddenInventoryTypes } from "./lib/visibility";
   import type { SlotBreakdown } from "./lib/breakdown";
   import type { Position, CardType } from "./lib/types";
 
@@ -50,6 +51,14 @@
     return m;
   });
 
+  // Effective core-slot count: deck's raw value + the user-adjustable Bonus
+  // Cores delta, clamped to ≥ 0. Used for both the meta display in the Deck
+  // card and the optimizer payload below — so the number the user sees and
+  // the number the SA enumerates against are always the same.
+  const effectiveCoreSlots = $derived(
+    app.deck ? Math.max(0, app.deck.base_core_slots + app.bonusCores) : 0,
+  );
+
   const VERIFY_TOL = 1e-6;
 
   onMount(async () => {
@@ -62,6 +71,9 @@
       app.cfg    = getMode(bundle, app.mode);
       // Seed the arcane auto-place toggle from the resolved config.
       app.autoPlaceArcane = app.cfg.arcane?.auto_place ?? true;
+      // Bonus Cores defaults to the mode's configured deckmod (1 in wolds,
+      // 0 in vanilla). User-set value is reset whenever the mode flips.
+      app.bonusCores = app.cfg.deckmod ?? 0;
       app.decks  = await loadDecks(baseUrl, app.cfg.deckmod, app.mode);
       app.deck   = app.decks[0] ?? null;
     } catch (e) {
@@ -82,6 +94,10 @@
     app.cfg   = getMode(app.bundle, next);
     // Each mode can have its own arcane.auto_place default; re-seed on flip.
     app.autoPlaceArcane = app.cfg.arcane?.auto_place ?? true;
+    // Re-seed Bonus Cores from the new mode's deckmod (wolds=1, vanilla=0).
+    // Intentionally drops any user override on mode flip — defaults are
+    // mode-meaningful and "sticky" Bonus Cores across modes is confusing.
+    app.bonusCores = app.cfg.deckmod ?? 0;
     app.decks = await loadDecks(baseUrl, app.cfg.deckmod, next);
     app.deck  = (prevName && app.decks.find((d) => d.name === prevName)) || app.decks[0] || null;
     clearRunResult();
@@ -110,13 +126,33 @@
 
     const t0 = performance.now();
     try {
+      // Strip card types that the current (mode, class) combo hides — same
+      // rule the inventory table uses to gate its rows. Without this, cards
+      // stocked in another mode/class (e.g. positional shiny added during a
+      // Wold's run) would silently land in the SA's pool when the user flips
+      // to vanilla-stat. Filter is silent on purpose — the hide rule is
+      // already implied by the inventory table, so a "N ignored" badge would
+      // just add noise.
+      const hidden = hiddenInventoryTypes(app.mode, app.cardClass, app.cfg);
+      const invSnap  = $state.snapshot(app.inventoryCounts);
+      const fcSnap   = $state.snapshot(app.forcedCounts);
+      const { kept: invKept } = filterInventoryByHidden(invSnap, hidden);
+      const { kept: fcKept  } = filterInventoryByHidden(fcSnap,  hidden);
+
+      // Override `core_slots` with the user-adjusted Bonus Cores total. The
+      // deck object's `core_slots` field still holds base+deckmod (set at
+      // load time) for legacy callers; we splice in `effectiveCoreSlots` for
+      // the optimizer so the SA enumerates the right candidate count.
+      const deckSnap = $state.snapshot(app.deck);
+      deckSnap.core_slots = effectiveCoreSlots;
+
       // $state.snapshot() unwraps Svelte 5 reactive proxies so structured-clone
       // can ship them across the worker boundary.
       const r = await optimizeInventoryAsync({
-        deck:            $state.snapshot(app.deck),
+        deck:            deckSnap,
         cardClass:       app.cardClass,
-        inventory:       $state.snapshot(app.inventoryCounts),
-        forcedCounts:    $state.snapshot(app.forcedCounts),
+        inventory:       invKept,
+        forcedCounts:    fcKept,
         autoPlaceArcane: app.autoPlaceArcane,
         cores:           selectedCores(),
         nIter:           app.nIter,
@@ -248,7 +284,7 @@
           </label>
         </div>
         <div class="meta">
-          {app.deck.slots.length} slots · {app.deck.core_slots} cores · {app.deck.arcaneSlots.length} arcane
+          {app.deck.slots.length} slots · {effectiveCoreSlots} cores · {app.deck.arcaneSlots.length} arcane
         </div>
       </section>
 

@@ -41,6 +41,12 @@ interface AppState {
   // to DEAD for void-core trade-offs. Initialised from cfg.arcane.auto_place.
   autoPlaceArcane: boolean;
   coreState: CoreRowState[];                          // index aligned with CORE_OPTIONS
+  // User-adjustable "Bonus Cores" delta. Defaults to the active mode's
+  // `deckmod` (1 in wolds, 0 in vanilla) and is re-seeded on every mode flip.
+  // The optimizer uses `max(0, deck.base_core_slots + bonusCores)`, so the
+  // value is unbounded — typing a large negative number just clamps the
+  // effective core count to 0.
+  bonusCores: number;
   nIter: number;
   restarts: number;
 
@@ -76,6 +82,7 @@ export const app = $state<AppState>({
   inventoryView:   "regular",
   autoPlaceArcane: true,   // default; overridden from cfg.arcane.auto_place on boot
   coreState: initialCoreState(),
+  bonusCores: 0,           // seeded from cfg.deckmod on boot + mode change
   nIter: 60_000,
   restarts: 12,
 

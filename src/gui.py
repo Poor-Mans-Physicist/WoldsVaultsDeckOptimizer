@@ -136,6 +136,11 @@ class _AppState:
     # Both grids persist when hidden; preset buttons apply to the active view.
     inventory_view: str = "regular"
     core_state: Dict[int, Tuple[bool, Optional[float]]] = field(default_factory=dict)
+    # User-adjustable "Bonus Cores" delta. Seeded from ``_cfg.DECKMOD`` (wolds
+    # default 1, vanilla default 0) and re-seeded on every mode flip.
+    # Effective deck core slots = max(0, deck.core_slots - DECKMOD + bonus_cores)
+    # — see ``_run_optimization``. Negative values silently clamp to 0 cores.
+    bonus_cores: int = 0
     last_result: Optional[InventoryResult] = None
     n_iter: int = 60_000
     restarts: int = 12
@@ -562,6 +567,7 @@ def _build_page() -> None:
         deck=_cfg.DECKS[0],
         mode=_cfg.MODE,
         auto_place_arcane=_cfg.AUTO_PLACE_ARCANE,
+        bonus_cores=_cfg.DECKMOD,
     )
     for idx in range(len(_CORE_OPTIONS)):
         state.core_state[idx] = (False, None)
@@ -708,6 +714,11 @@ def _build_page() -> None:
                             state.mode = e.value
                             state.last_result = None
                             state.preview_assignments.clear()
+                            # Re-seed Bonus Cores from the new mode's deckmod
+                            # (wolds=1, vanilla=0). Drops any in-flight user
+                            # override on flip — defaults are mode-meaningful
+                            # and a "sticky" override across modes is confusing.
+                            state.bonus_cores = _cfg.DECKMOD
                             # Re-fetch our currently-selected deck from the new DECKS list
                             # (each Deck's core_slots may have shifted due to deckmod change).
                             prev_name = state.deck.name
@@ -731,6 +742,10 @@ def _build_page() -> None:
                             deck_select.options = [d.name for d in _cfg.DECKS]
                             deck_select.value   = state.deck.name
                             deck_select.update()
+                            # Push the re-seeded bonus_cores value into its
+                            # input widget (state mutation alone doesn't drive
+                            # the UI; see the comment in the cores section).
+                            bonus_cores_input.set_value(state.bonus_cores)
                             _render_deck_grid(
                                 grid_container, state,
                                 on_preview_change=_on_preview_change,
@@ -785,6 +800,54 @@ def _build_page() -> None:
                             row, cb, ov, sync = _build_core_row(idx, ct, color, state)
                             core_rows.append((cb, ov, sync))
                             core_row_containers.append(row)
+
+                        # ── Bonus Cores ─────────────────────────────────
+                        # User-adjustable delta on top of the deck's raw
+                        # core-slot count. Defaults to the mode's `deckmod`
+                        # (wolds=1, vanilla=0); the optimizer uses
+                        # `max(0, deck.core_slots - DECKMOD + bonus_cores)`,
+                        # so the value is unbounded — typing a huge negative
+                        # number just clamps the run to 0 cores.
+                        ui.separator().classes("my-2")
+                        with ui.row().classes("w-full items-center gap-2"):
+                            ui.label("Bonus Cores").classes("text-sm flex-grow")
+                            def _on_bonus_cores_change(e):
+                                # NiceGUI's number input returns a float; cast
+                                # back to int and reject `None` (cleared input).
+                                v = e.value
+                                state.bonus_cores = int(v) if v is not None else 0
+                            # Held by name so `_on_mode_change` can push the
+                            # mode's new deckmod into the widget (state alone
+                            # doesn't drive the UI here — no two-way binding).
+                            bonus_cores_input = ui.number(
+                                value=state.bonus_cores,
+                                step=1,
+                                format="%d",
+                                on_change=_on_bonus_cores_change,
+                            ).props("dense outlined").classes("w-24")
+                        # Collapsible "?" with the long explanation. Keeps the
+                        # default cores panel tidy; only opens when clicked.
+                        with ui.expansion(
+                            "What is Bonus Cores?", icon="help_outline",
+                        ).classes("w-full text-xs").props("dense"):
+                            ui.markdown(
+                                "Adjusts how many core slots the optimizer "
+                                "has to fill, beyond what the deck normally "
+                                "provides.\n\n"
+                                "**Positive** — add slots. In Wold's, the "
+                                "Core Expertise ability lets you craft a "
+                                "deck with one extra slot and strip the "
+                                "temp core in a Deck Altar afterwards "
+                                "(this is why the default in Wold's is "
+                                "`1`).\n\n"
+                                "**Negative** — reserve slots for cores "
+                                "the optimizer doesn't consider. E.g. you "
+                                "plan to slot a Bounty Core for resource "
+                                "cards — set Bonus Cores to `-1` so the "
+                                "optimizer only fills the remaining slots.\n\n"
+                                "Vanilla has no equivalent free-slot "
+                                "mechanic, so the default there is `0`."
+                            ).classes("text-xs text-gray-400")
 
                 # Inventory — two views (regular / forced) toggled by a button
                 # in the card header. Both tables persist in the DOM; only the
@@ -1190,6 +1253,14 @@ async def _run_optimization(
         forced_counts=forced_counts,
     )
 
+    # Apply the user's Bonus Cores override to a fresh deck copy. The deck
+    # in DECKS already has `core_slots = base + _cfg.DECKMOD` baked in at
+    # load time, so we subtract DECKMOD back out to recover the raw base
+    # and then add the user-set bonus. Clamped to 0 — typing a big negative
+    # just yields a zero-core optimization.
+    effective_core_slots = max(0, state.deck.core_slots - _cfg.DECKMOD + state.bonus_cores)
+    run_deck = state.deck.with_core_slots(effective_core_slots)
+
     run_button.props(add="loading")
     run_button.disable()
     total_label.text = "Optimizing…"
@@ -1198,7 +1269,7 @@ async def _run_optimization(
 
     try:
         result: InventoryResult = await run.io_bound(
-            optimize_inventory, state.deck, inv, state.n_iter, state.restarts,
+            optimize_inventory, run_deck, inv, state.n_iter, state.restarts,
             state.auto_place_arcane,
         )
         state.last_result = result

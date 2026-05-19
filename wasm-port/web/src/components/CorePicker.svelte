@@ -42,6 +42,54 @@
       </div>
     {/if}
   {/each}
+
+  <!-- ── Bonus Cores ────────────────────────────────────────────────────
+       User-adjustable delta on top of the deck's raw core-slot count. The
+       optimizer uses `max(0, base + bonusCores)` so the value is unbounded
+       in both directions (clamping happens silently if the user types a
+       big negative). Defaults to the active mode's `deckmod` and is
+       re-seeded on mode flip.
+  -->
+  <div class="bonus-row">
+    <!-- Plain div (not <label>) — the `<details>` info popover would break
+         the label/input association anyway, so we associate the input via
+         id + for=. -->
+    <div class="bonus-label">
+      <label for="bonus-cores-input">Bonus Cores</label>
+      <details class="info">
+        <summary aria-label="What is Bonus Cores?">?</summary>
+        <div class="info-body">
+          <p>
+            Adjusts how many core slots the optimizer has to fill, beyond
+            what the deck normally provides.
+          </p>
+          <p>
+            <strong>Positive</strong> — add slots. In Wold's, the Core
+            Expertise ability lets you craft a deck with one extra slot and
+            strip the temp core in a Deck Altar afterwards (this is why the
+            default in Wold's is <code>1</code>).
+          </p>
+          <p>
+            <strong>Negative</strong> — reserve slots for cores the
+            optimizer doesn't consider. E.g. you plan to slot a Bounty Core
+            for resource cards — set Bonus Cores to <code>-1</code> so the
+            optimizer only fills the remaining slots.
+          </p>
+          <p>
+            Vanilla has no equivalent free-slot mechanic, so the default
+            there is <code>0</code>.
+          </p>
+        </div>
+      </details>
+    </div>
+    <input
+      id="bonus-cores-input"
+      type="number"
+      class="override"
+      step="1"
+      bind:value={app.bonusCores}
+    />
+  </div>
 </div>
 
 <style>
@@ -103,5 +151,70 @@
     text-align: right;
     background: var(--bg-input);
     color: var(--text-primary);
+  }
+
+  /* Bonus Cores row — visually divided from the core checkboxes above. */
+  .bonus-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 10px;
+    margin-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .bonus-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-grow: 1;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+  /* Collapsible `?` info popover — `<details>` keeps the explanatory text
+     out of the way until the user clicks. Anchored next to the label so the
+     opened pane drops below without shifting the input. */
+  .info { position: relative; }
+  .info summary {
+    list-style: none;
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--bg-input);
+  }
+  .info summary::-webkit-details-marker { display: none; }
+  .info summary:hover {
+    color: var(--text-primary);
+    border-color: var(--accent);
+  }
+  .info[open] > summary { color: var(--accent); border-color: var(--accent); }
+  .info[open] > .info-body {
+    position: absolute;
+    top: 22px;
+    left: 0;
+    width: 260px;
+    z-index: 10;
+    padding: 10px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-primary);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .info-body p { margin: 0; }
+  .info-body p + p { margin-top: 6px; }
+  .info-body code {
+    background: var(--bg-input);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
   }
 </style>

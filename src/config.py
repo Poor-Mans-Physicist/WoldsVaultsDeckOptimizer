@@ -228,6 +228,22 @@ class Deck:
             name         = self.name,
         )
 
+    def with_core_slots(self, core_slots: int) -> "Deck":
+        """Return a shallow copy of this deck with ``core_slots`` overridden.
+
+        Used by the GUI's "Bonus Cores" slider to enumerate against a different
+        slot count than the deck's loaded value (which already includes the
+        active mode's ``deckmod``) without mutating the shared ``DECKS`` list.
+        """
+        return Deck(
+            slots        = self.slots,
+            core_slots   = core_slots,
+            arcane_slots = self.arcane_slots,
+            min_regular  = self.min_regular,
+            max_greed    = self.max_greed,
+            name         = self.name,
+        )
+
     def constraint_str(self) -> str:
         """Human-readable summary of this deck's min_regular / max_greed."""
         n = len(self.slots)

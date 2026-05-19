@@ -27,7 +27,9 @@ export interface Deck {
   key:        string;
   name:       string;
   slots:      Position[];                // ordering is canonical for the Rust call
-  core_slots: number;                    // base + mode's deckmod
+  base_core_slots: number;               // raw deck-card value, before deckmod / Bonus Cores
+  core_slots: number;                    // base + mode's deckmod (initial display value;
+                                         // overridden at run-time by app.bonusCores)
   arcaneSlots:         Position[];        // for rendering the purple border
   arcaneSlotIndices:   number[];          // indices into `slots`, for the SA payload
   min_regular: number;
@@ -90,6 +92,7 @@ export function buildDeck(raw: RawDeck, deckmod: number): Deck {
     key:               raw.key,
     name:              raw.name,
     slots,
+    base_core_slots:   raw.base_core_slots,
     core_slots:        raw.base_core_slots + deckmod,
     arcaneSlots,
     arcaneSlotIndices,
