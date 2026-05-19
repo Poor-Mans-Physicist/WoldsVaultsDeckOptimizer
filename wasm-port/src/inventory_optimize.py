@@ -54,13 +54,10 @@ from .config import (
     MULT_EQUILIBRIUM,
     MULT_EVO_GREED,
     MULT_FOIL,
-    MULT_PLUTO,
     MULT_PURE_BASE,
     MULT_PURE_SCALE,
     MULT_STEADFAST,
     MULT_SURR_GREED,
-    MULT_VOID_CORE_BASE,
-    MULT_VOID_CORE_SCALE,
 )
 
 
@@ -85,12 +82,6 @@ GREED_TYPES_NEW: FrozenSet[CardType] = frozenset({
     CardType.DIR_GREED_NE,    CardType.DIR_GREED_NW,
     CardType.DIR_GREED_SE,    CardType.DIR_GREED_SW,
     CardType.EVO_GREED,       CardType.SURR_GREED,
-})
-
-# Card types that may legally occupy an arcane (`A`) slot. Everything else is
-# rejected by the SA swap kernel and by initial_fill placement logic.
-ARCANE_SLOT_LEGAL: FrozenSet[CardType] = frozenset({
-    CardType.ARCANE, CardType.DEAD,
 })
 
 
@@ -129,35 +120,13 @@ class CoreInventory:
 
 @dataclass
 class CardInventory:
-    """All the cards + cores available for one optimization run.
-
-    Two-bucket inventory model:
-      * ``counts`` — regular cards: optimizer may use 0 to N of each (type, color).
-      * ``forced_counts`` — must-place cards: optimizer must place AT LEAST N.
-
-    The total cap per (type, color) is the sum of both buckets:
-      ``placement_count[(t, c)] in [forced_counts[(t, c)], counts[(t, c)] + forced_counts[(t, c)]]``
-    """
-    counts:        Dict[Tuple[CardType, Color], int]
-    card_class:    CardClass
-    cores:         CoreInventory = field(default_factory=CoreInventory)
-    # Forced cards — empty dict by default. Existing call-sites that don't pass
-    # this stay backwards-compatible (zero forced = current behavior).
-    forced_counts: Dict[Tuple[CardType, Color], int] = field(default_factory=dict)
-
-    def cap(self, t: CardType, c: Color) -> int:
-        """Combined upper bound for one (type, color)."""
-        return self.counts.get((t, c), 0) + self.forced_counts.get((t, c), 0)
-
-    def min_required(self, t: CardType, c: Color) -> int:
-        """Lower bound (forced minimum) for one (type, color)."""
-        return self.forced_counts.get((t, c), 0)
+    """All the cards + cores available for one optimization run."""
+    counts:     Dict[Tuple[CardType, Color], int]
+    card_class: CardClass
+    cores:      CoreInventory = field(default_factory=CoreInventory)
 
     def total_cards(self) -> int:
-        return sum(self.counts.values()) + sum(self.forced_counts.values())
-
-    def total_forced(self) -> int:
-        return sum(self.forced_counts.values())
+        return sum(self.counts.values())
 
 
 @dataclass
@@ -247,79 +216,34 @@ def _deluxe_core_mult(spec: CoreSpec, n_deluxe: int) -> float:
     return MULT_DELUXE_CORE_BASE + scale * n_deluxe
 
 
-def _void_core_mult(spec: CoreSpec, n_dead: int) -> float:
-    """VOID_CORE multiplier given runtime ``n_dead``. ``override`` is scale."""
-    scale = spec.override if spec.override is not None else MULT_VOID_CORE_SCALE
-    return MULT_VOID_CORE_BASE + scale * n_dead
-
-
-def _pluto_core_mult(spec: CoreSpec) -> float:
-    """PLUTO_CORE flat multiplier. ``override`` replaces it outright."""
-    return spec.override if spec.override is not None else MULT_PLUTO
-
-
-def _pluto_targets(
-    card_class: CardClass, n_evo_reg: int, n_deluxe: int,
-) -> Tuple[bool, bool]:
-    """Resolve pluto's target groups: (target_regular, target_deluxe).
-
-    EVO-only. Less-common group wins; if one is 0, the other gets the boost;
-    tie with both > 0 boosts both. Both 0 → no boost.
-    """
-    if card_class != CardClass.EVO:
-        return False, False
-    if n_evo_reg == 0 and n_deluxe == 0:
-        return False, False
-    if n_evo_reg == 0:                return False, True
-    if n_deluxe  == 0:                return True,  False
-    if n_evo_reg < n_deluxe:          return True,  False
-    if n_deluxe  < n_evo_reg:         return False, True
-    return True, True   # tie, both > 0
-
-
 def _classify_cores(
     cores:      FrozenSet[CoreSpec],
     card_class: CardClass,
     n_ns:       int,
     n_deluxe:   int,
-    n_dead:     int,
-) -> Tuple[
-    List["CoreComponent"],
-    Optional["CoreComponent"],
-    Optional["CoreComponent"],
-    Optional["CoreComponent"],
-    Optional["CoreComponent"],
-    List["ExcludedCore"],
-]:
-    """Sort cores into baseline / color / deluxe / void / pluto buckets.
+    n_arcane:   int,
+) -> Tuple[List["CoreComponent"], Optional["CoreComponent"], Optional["CoreComponent"], List["ExcludedCore"]]:
+    """Sort cores into baseline / color-core / deluxe-core buckets.
 
-    Returns ``(baseline, color_comp, deluxe_comp, void_comp, pluto_comp,
-    class_excluded)``:
+    Returns ``(baseline, color_comp, deluxe_comp, class_excluded)``:
       * ``baseline`` — cores that apply to every non-greed scoring card
         regardless of color (PURE, FOIL, plus EQUI/STEAD when class is SHINY).
       * ``color_comp`` — the active COLOR core, if any. Gates per-card by color.
-      * ``deluxe_comp`` — the active DELUXE_CORE, if any. Excludes deluxe cards.
-      * ``void_comp`` — the active VOID_CORE, if any. Excludes dead cards
-        (dead cards score 0 anyway; this is only used for breakdown symmetry).
-      * ``pluto_comp`` — the active PLUTO_CORE, if any. EVO-only; target groups
-        are decided per-simulation by ``_pluto_targets`` from runtime counts.
-        Excluded entirely in SHINY (surfaced via class_excluded).
+      * ``deluxe_comp`` — the active DELUXE_CORE, if any. Gates per-card by
+        "is this a deluxe card."
       * ``class_excluded`` — cores excluded by the card-class rule (EQUI/STEAD
-        on EVO; PLUTO on SHINY). Precomputed once for the run.
+        when class is EVO). Same for every slot in the run, so we precompute
+        these once.
     """
     baseline:   List[CoreComponent]      = []
     color_comp: Optional[CoreComponent]  = None
     deluxe_comp: Optional[CoreComponent] = None
-    void_comp:  Optional[CoreComponent]  = None
-    pluto_comp: Optional[CoreComponent]  = None
     class_excluded: List[ExcludedCore]   = []
 
     for spec in cores:
         is_override = spec.override is not None
         if spec.core_type == CoreType.PURE:
-            # n_ns already includes placed ARCANE cards (computed by the caller
-            # from the runtime assignment) — no separate fudge addend needed.
-            v = _pure_mult(spec, n_ns)
+            v = _pure_mult(spec, n_ns + n_arcane)
             baseline.append(CoreComponent(CoreType.PURE, None, v, is_override))
         elif spec.core_type == CoreType.EQUILIBRIUM:
             if card_class == CardClass.SHINY:
@@ -344,19 +268,8 @@ def _classify_cores(
         elif spec.core_type == CoreType.DELUXE_CORE:
             v = _deluxe_core_mult(spec, n_deluxe)
             deluxe_comp = CoreComponent(CoreType.DELUXE_CORE, None, v, is_override)
-        elif spec.core_type == CoreType.VOID_CORE:
-            v = _void_core_mult(spec, n_dead)
-            void_comp = CoreComponent(CoreType.VOID_CORE, None, v, is_override)
-        elif spec.core_type == CoreType.PLUTO_CORE:
-            if card_class == CardClass.EVO:
-                pluto_comp = CoreComponent(CoreType.PLUTO_CORE, None, _pluto_core_mult(spec), is_override)
-            else:
-                class_excluded.append(ExcludedCore(
-                    CoreType.PLUTO_CORE, None,
-                    "pluto only applies to EVO decks (this run is SHINY)",
-                ))
 
-    return baseline, color_comp, deluxe_comp, void_comp, pluto_comp, class_excluded
+    return baseline, color_comp, deluxe_comp, class_excluded
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -388,21 +301,16 @@ def simulate_inventory(
     deluxe:     Dict[Position, Placed] = {}
     typeless:   Dict[Position, Placed] = {}
     greed:      Dict[Position, Placed] = {}
-    arcane:     Dict[Position, Placed] = {}
-    n_dead = 0
 
     for p, (t, _c) in assignment.items():
-        if   t == CardType.DEAD:        n_dead += 1
-        elif t == CardType.ARCANE:      arcane[p]     = (t, _c)
+        if   t == CardType.DEAD:        continue
         elif t in POSITIONAL_TYPES:     positional[p] = (t, _c)
         elif t == CardType.DELUXE:      deluxe[p]     = (t, _c)
         elif t == CardType.TYPELESS:    typeless[p]   = (t, _c)
         elif t in GREED_TYPES_NEW:      greed[p]      = (t, _c)
         # FILLER_GREED, EMPTY etc. fall through and are ignored.
 
-    # Same-color counts. `colored` is every non-dead placed card with its color
-    # — ARCANE cards participate here so they boost neighbors' same-color peer
-    # counts (their own 0-NDM contribution doesn't change either way).
+    # Same-color counts. `colored` is every non-dead placed card with its color.
     colored: Dict[Position, Color] = {}
     for p, (t, c) in assignment.items():
         if t == CardType.DEAD or c is None:
@@ -418,22 +326,19 @@ def simulate_inventory(
 
     foil_active = any(s.core_type == CoreType.FOIL for s in cores)
 
-    # n_ns for PURE. ARCANE placements always count (preserving the pre-arcane
-    # `+ deck.n_arcane` fudge as real placements). On top of that:
-    #   EVO-no-FOIL → positional + deluxe + typeless + greed (+arcane)
-    #   EVO+FOIL    → greed (+arcane)
-    #   SHINY       → greed (+arcane)
-    if card_class == CardClass.EVO and not foil_active:
-        n_ns = len(positional) + len(deluxe) + len(typeless) + len(arcane) + len(greed)
+    # n_ns for PURE — same rule as the existing simulate(): SHINY and
+    # EVO-with-FOIL count greed only; EVO-without-FOIL counts non-greed too.
+    if card_class == CardClass.EVO:
+        n_ns = len(greed) if foil_active else (len(positional) + len(deluxe) + len(typeless) + len(greed))
     else:
-        n_ns = len(greed) + len(arcane)
+        n_ns = len(greed)
     n_deluxe = len(deluxe)
 
     # All cores fold into ONE per-card ``core_mult``. Precompute the baseline
-    # (cores that apply to every non-greed card) and the color-/deluxe-/void-/
-    # pluto-gated addends so each card's multiplier is a cheap constant-time combo.
-    baseline, color_comp, deluxe_comp, void_comp, pluto_comp, _ex = _classify_cores(
-        cores, card_class, n_ns, n_deluxe, n_dead,
+    # (cores that apply to every non-greed card) and the color- and deluxe-gated
+    # addends so each card's multiplier is a cheap constant-time combination.
+    baseline, color_comp, deluxe_comp, _ex = _classify_cores(
+        cores, card_class, n_ns, n_deluxe, deck.n_arcane,
     )
     baseline_sum  = sum(c.value - 1.0 for c in baseline)
     baseline_prod = math.prod(c.value for c in baseline) if baseline else 1.0
@@ -442,49 +347,24 @@ def simulate_inventory(
     color_factor  = color_comp.value         if color_comp is not None else 1.0
     deluxe_addend = (deluxe_comp.value - 1.0) if deluxe_comp is not None else 0.0
     deluxe_factor = deluxe_comp.value         if deluxe_comp is not None else 1.0
-    void_addend   = (void_comp.value - 1.0)   if void_comp   is not None else 0.0
-    void_factor   = void_comp.value           if void_comp   is not None else 1.0
-    pluto_addend  = (pluto_comp.value - 1.0)  if pluto_comp  is not None else 0.0
-    pluto_factor  = pluto_comp.value          if pluto_comp  is not None else 1.0
-    # Pluto's per-card targeting (EVO-only). For non-EVO runs these are False.
-    pluto_target_reg, pluto_target_dlx = (False, False)
-    if pluto_comp is not None:
-        pluto_target_reg, pluto_target_dlx = _pluto_targets(
-            card_class, len(positional), n_deluxe,
-        )
 
     def _card_core_mult(card_type: CardType, card_color: Optional[Color]) -> float:
-        """Combined per-card core multiplier — color, deluxe, void, and pluto
-        cores fold in here, gated by:
-          color  → card_color matches the color core's color
-          deluxe → card is NOT a deluxe card
-          void   → card is NOT a dead card (never reached in practice)
-          pluto  → card_type matches pluto's resolved target (EVO regular or deluxe)
-        """
+        """Combined per-card core multiplier — color & deluxe cores fold in here
+        too (gated by color match and is-not-deluxe respectively)."""
         color_applies  = (
             color_comp is not None
             and card_color is not None
             and card_color == color_core_color
         )
         deluxe_applies = (deluxe_comp is not None and card_type != CardType.DELUXE)
-        void_applies   = (void_comp is not None and card_type != CardType.DEAD)
-        # Pluto targets only the resolved less-common group.
-        pluto_applies = pluto_comp is not None and (
-            (pluto_target_reg and card_type in POSITIONAL_TYPES)
-            or (pluto_target_dlx and card_type == CardType.DELUXE)
-        )
         if _cfg.ADDITIVE_CORES:
             return (1.0
                     + baseline_sum
-                    + (color_addend  if color_applies  else 0.0)
-                    + (deluxe_addend if deluxe_applies else 0.0)
-                    + (void_addend   if void_applies   else 0.0)
-                    + (pluto_addend  if pluto_applies  else 0.0))
+                    + (color_addend if color_applies else 0.0)
+                    + (deluxe_addend if deluxe_applies else 0.0))
         m = baseline_prod
         if color_applies:  m *= color_factor
         if deluxe_applies: m *= deluxe_factor
-        if void_applies:   m *= void_factor
-        if pluto_applies:  m *= pluto_factor
         return m
 
     # Greed-boost map (per target slot).
@@ -574,12 +454,9 @@ def simulate_inventory_breakdown(
     deluxe:     Dict[Position, Placed] = {}
     typeless:   Dict[Position, Placed] = {}
     greed:      Dict[Position, Placed] = {}
-    arcane:     Dict[Position, Placed] = {}
-    n_dead = 0
 
     for p, (t, c) in assignment.items():
-        if   t == CardType.DEAD:        n_dead += 1
-        elif t == CardType.ARCANE:      arcane[p]     = (t, c)
+        if   t == CardType.DEAD:        continue
         elif t in POSITIONAL_TYPES:     positional[p] = (t, c)
         elif t == CardType.DELUXE:      deluxe[p]     = (t, c)
         elif t == CardType.TYPELESS:    typeless[p]   = (t, c)
@@ -587,7 +464,6 @@ def simulate_inventory_breakdown(
 
     colored: Dict[Position, Color] = {}
     for p, (t, c) in assignment.items():
-        # ARCANE participates in same-color counts to boost neighbors.
         if t == CardType.DEAD or c is None:
             continue
         colored[p] = c
@@ -598,23 +474,18 @@ def simulate_inventory_breakdown(
         row_count[(r, color)]    = row_count.get((r, color), 0)    + 1
         col_count[(ccol, color)] = col_count.get((ccol, color), 0) + 1
 
-    # ARCANE always counts in n_ns (preserves pre-arcane Pure-fudge behavior).
     foil_active = any(s.core_type == CoreType.FOIL for s in cores)
-    if card_class == CardClass.EVO and not foil_active:
-        n_ns = len(positional) + len(deluxe) + len(typeless) + len(arcane) + len(greed)
+    if card_class == CardClass.EVO:
+        n_ns = len(greed) if foil_active else (len(positional) + len(deluxe) + len(typeless) + len(greed))
     else:
-        n_ns = len(greed) + len(arcane)
+        n_ns = len(greed)
     n_deluxe = len(deluxe)
 
     # Classify cores once. The breakdown for each slot picks from these buckets
-    # depending on the slot's color and whether it's a deluxe / dead card.
-    baseline, color_comp, deluxe_comp, void_comp, pluto_comp, class_excluded = _classify_cores(
-        cores, card_class, n_ns, n_deluxe, n_dead,
+    # depending on the slot's color and whether it's a deluxe card.
+    baseline, color_comp, deluxe_comp, class_excluded = _classify_cores(
+        cores, card_class, n_ns, n_deluxe, deck.n_arcane,
     )
-    # Resolve pluto target groups once for the run.
-    bd_pluto_target_reg, bd_pluto_target_dlx = _pluto_targets(
-        card_class, len(positional), n_deluxe,
-    ) if pluto_comp is not None else (False, False)
 
     scorable_positions = set(positional) | set(deluxe) | set(typeless)
     boost: Dict[Position, float] = {p: 1.0 for p in scorable_positions}
@@ -686,38 +557,6 @@ def simulate_inventory_breakdown(
             else:
                 applied.append(deluxe_comp)
 
-        # Void core gating — applies to every non-dead card. Dead cards have
-        # base value 0 (we never call this for them), but the exclusion is
-        # tracked here for symmetry with deluxe.
-        if void_comp is not None:
-            if card_type == CardType.DEAD:
-                excluded.append(ExcludedCore(
-                    CoreType.VOID_CORE, None,
-                    "void core never boosts dead cards (they fuel it instead)",
-                ))
-            else:
-                applied.append(void_comp)
-
-        # Pluto core gating — applies only to the resolved less-common group.
-        if pluto_comp is not None:
-            pluto_applies = (
-                (bd_pluto_target_reg and card_type in POSITIONAL_TYPES)
-                or (bd_pluto_target_dlx and card_type == CardType.DELUXE)
-            )
-            if pluto_applies:
-                applied.append(pluto_comp)
-            else:
-                # Surface why this card didn't receive pluto's boost.
-                if not bd_pluto_target_reg and not bd_pluto_target_dlx:
-                    reason = "pluto inert: no EVO regulars and no deluxe cards in deck"
-                elif card_type in POSITIONAL_TYPES and not bd_pluto_target_reg:
-                    reason = "deluxe cards are the less-common group — pluto boosts them, not EVO regulars"
-                elif card_type == CardType.DELUXE and not bd_pluto_target_dlx:
-                    reason = "EVO regulars are the less-common group — pluto boosts them, not deluxe"
-                else:
-                    reason = "pluto only targets EVO regulars and deluxe cards"
-                excluded.append(ExcludedCore(CoreType.PLUTO_CORE, None, reason))
-
         vals = [c.value for c in applied]
         if _cfg.ADDITIVE_CORES:
             mult = 1.0 + sum(v - 1.0 for v in vals)
@@ -746,21 +585,13 @@ def simulate_inventory_breakdown(
             final_ndm=0.0,
         )
 
-    # Greed/dead/arcane/empty slots — non-scoring.
+    # Greed/dead/empty slots — non-scoring.
     for p in deck.slots:
         if p in scorable_positions:
             continue
         if p in greed:
             gt, gc = greed[p]
             per_slot_breakdown[p] = _zero_breakdown(p, gt, gc, "greed card — provides boost to neighbors, no own NDM")
-        elif p in arcane:
-            at, ac = arcane[p]
-            color_str = ac.value if ac is not None else "—"
-            per_slot_breakdown[p] = _zero_breakdown(
-                p, at, ac,
-                f"arcane card (color {color_str}) — fixed 0 NDM, no cores applied; "
-                f"counts in n_ns for Pure and in same-color peer counts for neighbors"
-            )
         elif p in assignment:
             t, c = assignment[p]
             per_slot_breakdown[p] = _zero_breakdown(p, t, c, "dead card — transparent, contributes nothing")
@@ -855,33 +686,11 @@ def initial_fill(
     deck:      Deck,
     inventory: CardInventory,
 ) -> Dict[Position, Placed]:
-    """Build a feasible starting assignment per the doc's heuristic.
-
-    Phased fill:
-      Phase 0: arcane slots. Pre-fill from inventory's ARCANE cards (largest
-               color first). Slots exceeding supply get DEAD as the fallback —
-               this is the only legal non-arcane placement in arcane slots.
-      Phase 1: forced regulars. Confined to regular_slots — forced ARCANEs
-               from inventory.forced_counts were already placed in Phase 0
-               (caller's pre-flight ensures their total fits).
-      Phase 2: regular cards. Also confined to regular_slots.
-      Phase 3: remaining regular slots → DEAD.
-
-    Arcane-slot rule: only ARCANE or DEAD ever lands in an arcane slot.
-    """
+    """Build a feasible starting assignment per the doc's heuristic."""
     rankings  = _slot_rankings(deck)
     assignment: Dict[Position, Placed] = {}
-    regular_slots = list(deck.regular_slots)
-    arcane_slots  = list(deck.arcane_slots)
-
-    # Working counters. ``remaining`` is the cap-aware budget the regular phase
-    # will draw from; we decrement it as forced/arcane cards consume their share.
-    remaining: Dict[Tuple[CardType, Color], int] = {}
-    for k, n in inventory.counts.items():
-        remaining[k] = n
-    for k, n in inventory.forced_counts.items():
-        remaining[k] = remaining.get(k, 0) + n
-    forced_remaining: Dict[Tuple[CardType, Color], int] = dict(inventory.forced_counts)
+    remaining: Dict[Tuple[CardType, Color], int] = dict(inventory.counts)
+    all_slots = set(deck.slots)
 
     def _next_open(slot_order: Sequence[Position]) -> Optional[Position]:
         for s in slot_order:
@@ -889,71 +698,9 @@ def initial_fill(
                 return s
         return None
 
-    # ── Phase 0: arcane slots ─────────────────────────────────────────────────
-    # Fill arcane slots with ARCANE cards drawn from inventory, biggest color
-    # bucket first (heuristic — SA will optimize colors further if allowed).
-    # Slots remaining after arcane supply is exhausted get DEAD.
-    if arcane_slots:
-        for slot in arcane_slots:
-            # Pick the color with the most arcane cards still available.
-            best_color: Optional[Color] = None
-            best_avail = 0
-            for c in Color:
-                avail = remaining.get((CardType.ARCANE, c), 0)
-                if avail > best_avail:
-                    best_avail = avail
-                    best_color = c
-            if best_color is not None:
-                assignment[slot] = (CardType.ARCANE, best_color)
-                remaining[(CardType.ARCANE, best_color)] -= 1
-                # Honor any forced ARCANE counts we just consumed.
-                fkey = (CardType.ARCANE, best_color)
-                if forced_remaining.get(fkey, 0) > 0:
-                    forced_remaining[fkey] -= 1
-            else:
-                # No ARCANE inventory left — fall back to DEAD (still legal in
-                # arcane slots).
-                assignment[slot] = DEAD_CARD
-
-    # ── Phase 1: forced cards (regular_slots only) ────────────────────────────
-    # Positional / deluxe / typeless first via ranked slots.
     for card_type in _FILL_ORDER:
-        # Skip ARCANE — already handled in Phase 0.
-        if card_type == CardType.ARCANE:
-            continue
-        slot_order = [s for s in rankings.get(card_type, regular_slots) if s in deck.regular_slots]
-        colors_sorted = sorted(
-            Color,
-            key=lambda c: forced_remaining.get((card_type, c), 0),
-            reverse=True,
-        )
-        for color in colors_sorted:
-            while forced_remaining.get((card_type, color), 0) > 0:
-                slot = _next_open(slot_order)
-                if slot is None:
-                    break
-                assignment[slot] = (card_type, color)
-                forced_remaining[(card_type, color)] -= 1
-                remaining[(card_type, color)] = remaining.get((card_type, color), 0) - 1
-    # Catch any forced types NOT in _FILL_ORDER (greeds, etc.) — plain iteration
-    # over regular slots only (ARCANE slots are off-limits to greeds).
-    for (card_type, color), n in list(forced_remaining.items()):
-        if card_type == CardType.ARCANE:
-            continue
-        while n > 0:
-            slot = _next_open(regular_slots)
-            if slot is None:
-                break
-            assignment[slot] = (card_type, color)
-            n -= 1
-            forced_remaining[(card_type, color)] -= 1
-            remaining[(card_type, color)] = remaining.get((card_type, color), 0) - 1
-
-    # ── Phase 2: regular cards (regular_slots only) ───────────────────────────
-    for card_type in _FILL_ORDER:
-        if card_type == CardType.ARCANE:
-            continue
-        slot_order = [s for s in rankings.get(card_type, regular_slots) if s in deck.regular_slots]
+        slot_order = rankings.get(card_type, list(deck.slots))
+        # Colors of this type sorted by remaining stack size, descending.
         colors_sorted = sorted(
             Color,
             key=lambda c: remaining.get((card_type, c), 0),
@@ -966,11 +713,10 @@ def initial_fill(
                     break
                 assignment[slot] = (card_type, color)
                 remaining[(card_type, color)] -= 1
-        # Stop iterating types if every regular slot is filled.
-        if all(s in assignment for s in regular_slots):
+        if len(assignment) == len(all_slots):
             break
 
-    # ── Phase 3: pad with DEAD (regular slots only; arcane slots already filled)
+    # Fill remaining slots with DEAD.
     for s in deck.slots:
         if s not in assignment:
             assignment[s] = DEAD_CARD
@@ -1008,18 +754,6 @@ def candidate_cores_inventory(
 
     pure_spec        = (by_type.get(CoreType.PURE)        or [None])[0]
     deluxe_core_spec = (by_type.get(CoreType.DELUXE_CORE) or [None])[0]
-    # Void is gated by mode (vanilla disables it). Read via _cfg so a runtime
-    # set_mode() flip is honored without re-importing.
-    void_core_spec   = (by_type.get(CoreType.VOID_CORE)   or [None])[0]
-    if not _cfg.ALLOW_VOID:
-        void_core_spec = None
-    # Pluto: EVO-only and mode-gated. Never enters the variable pool (would
-    # double the candidate count); instead, deluxe-containing perms are
-    # duplicated with deluxe→pluto, and deluxe-free perms get a post-SA cheap
-    # swap test handled in optimize_inventory().
-    pluto_core_spec  = (by_type.get(CoreType.PLUTO_CORE)  or [None])[0]
-    if not _cfg.ALLOW_PLUTO or card_class != CardClass.EVO:
-        pluto_core_spec = None
     foil_spec        = (by_type.get(CoreType.FOIL)        or [None])[0]
     equi_spec        = (by_type.get(CoreType.EQUILIBRIUM) or [None])[0]
     stead_spec       = (by_type.get(CoreType.STEADFAST)   or [None])[0]
@@ -1033,15 +767,6 @@ def candidate_cores_inventory(
     def add(combo: FrozenSet[CoreSpec]) -> None:
         if combo not in seen:
             seen.add(combo); candidates.append(combo)
-
-    def maybe_add_pluto_duplicate(combo: FrozenSet[CoreSpec]) -> None:
-        """EVO + pluto-available + deluxe-in-combo → emit copy with deluxe→pluto."""
-        if pluto_core_spec is None or deluxe_core_spec is None:
-            return
-        if deluxe_core_spec not in combo:
-            return
-        pluto_variant = (combo - {deluxe_core_spec}) | {pluto_core_spec}
-        add(pluto_variant)
 
     # ── SHINY ────────────────────────────────────────────────────────────────
     if card_class == CardClass.SHINY:
@@ -1066,7 +791,6 @@ def candidate_cores_inventory(
         var_pool: List[CoreSpec] = []
         if pure_spec        is not None: var_pool.append(pure_spec)
         if deluxe_core_spec is not None: var_pool.append(deluxe_core_spec)
-        if void_core_spec   is not None: var_pool.append(void_core_spec)
 
         for color_pick in color_choices:
             for size in range(0, len(var_pool) + 1):
@@ -1084,10 +808,9 @@ def candidate_cores_inventory(
         return candidates
 
     # ── EVO ─────────────────────────────────────────────────────────────────
-    # n_ns estimate for the "no FOIL" case: positional + deluxe + typeless +
-    # arcane + greed ≈ total slot count (arcane slots are already in deck.slots
-    # under the new model). With FOIL, PURE becomes variable.
-    n_ns_full = len(deck.slots)
+    # n_ns estimate for the "no FOIL" case: positional + deluxe + typeless + greed
+    # ≈ deck size. With FOIL, PURE becomes variable.
+    n_ns_full = len(deck.slots) + deck.n_arcane
 
     def evo_no_foil_static_mult(spec: CoreSpec) -> float:
         if spec.core_type == CoreType.PURE:
@@ -1117,11 +840,9 @@ def candidate_cores_inventory(
         return frozenset()
 
     deluxe_var: List[CoreSpec] = [deluxe_core_spec] if deluxe_core_spec is not None else []
-    # VOID joins the variable pool in both EVO groups (n_dead unknown pre-SA).
-    void_var: List[CoreSpec] = [void_core_spec] if void_core_spec is not None else []
 
     # Group A: no FOIL (PURE is static)
-    var_pool_a = list(deluxe_var) + list(void_var)
+    var_pool_a = list(deluxe_var)
     for color_pick in color_choices:
         for size in range(0, len(var_pool_a) + 1):
             for var_combo in (combinations(var_pool_a, size) if size > 0 else [()]):
@@ -1132,16 +853,13 @@ def candidate_cores_inventory(
                 if len(pre) > k:
                     continue
                 fillers = best_fixed_evo_no_foil(k - len(pre), color_pick)
-                combo = frozenset(pre | set(fillers))
-                add(combo)
-                maybe_add_pluto_duplicate(combo)
+                add(frozenset(pre | set(fillers)))
 
     # Group B: with FOIL (PURE is variable)
     if foil_spec is not None:
         var_pool_b: List[CoreSpec] = []
         if pure_spec        is not None: var_pool_b.append(pure_spec)
         if deluxe_core_spec is not None: var_pool_b.append(deluxe_core_spec)
-        if void_core_spec   is not None: var_pool_b.append(void_core_spec)
 
         for color_pick in color_choices:
             for size in range(0, len(var_pool_b) + 1):
@@ -1153,9 +871,7 @@ def candidate_cores_inventory(
                     if len(pre) > k:
                         continue
                     fillers = best_fixed_evo_with_foil(k - len(pre), color_pick)
-                    combo = frozenset(pre | set(fillers))
-                    add(combo)
-                    maybe_add_pluto_duplicate(combo)
+                    add(frozenset(pre | set(fillers)))
 
     return candidates
 
@@ -1165,16 +881,8 @@ def candidate_cores_inventory(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _placeable_options(inventory: CardInventory) -> List[Placed]:
-    """Concrete proposal alphabet: every (type, color) the user owns (regular
-    OR forced) plus DEAD as a sentinel."""
-    keys: set = set()
-    for (t, c), n in inventory.counts.items():
-        if n > 0:
-            keys.add((t, c))
-    for (t, c), n in inventory.forced_counts.items():
-        if n > 0:
-            keys.add((t, c))
-    opts: List[Placed] = list(keys)
+    """Concrete proposal alphabet: every (type, color) the user owns + DEAD."""
+    opts: List[Placed] = [(t, c) for (t, c), n in inventory.counts.items() if n > 0]
     opts.append(DEAD_CARD)
     return opts
 
@@ -1192,23 +900,14 @@ def _initial_placed_counts(
 
 
 def _sa_inventory_python(
-    deck:              Deck,
-    inventory:         CardInventory,
-    cores:             FrozenSet[CoreSpec],
-    n_iter:            int,
-    auto_place_arcane: bool,
-    T_start:           float = 100.0,
-    T_end:             float = 0.5,
+    deck:      Deck,
+    inventory: CardInventory,
+    cores:     FrozenSet[CoreSpec],
+    n_iter:    int,
+    T_start:   float = 100.0,
+    T_end:     float = 0.5,
 ) -> Tuple[Dict[Position, Placed], float]:
-    """Pure-Python SA for one (deck, inventory, cores) combo.
-
-    Arcane-slot rules enforced here:
-      * Arcane slots: only ARCANE or DEAD ever placed there.
-      * Regular slots: never ARCANE.
-      * Auto-place ON: arcane slots cannot be swapped to DEAD (locked to ARCANE
-        unless inventory ran out, in which case they were pre-filled with DEAD
-        and stay there). SA may still swap COLORS within ARCANE-locked slots.
-    """
+    """Pure-Python SA for one (deck, inventory, cores) combo."""
     assignment      = initial_fill(deck, inventory)
     score           = simulate_inventory(deck, assignment, inventory.card_class, cores)
     best_score      = score
@@ -1216,61 +915,18 @@ def _sa_inventory_python(
 
     placed_counts = _initial_placed_counts(assignment)
     options       = _placeable_options(inventory)
-    # Pre-partition slots: arcane vs regular. Arcane slots have their own
-    # restricted proposal alphabet; regular slots use the full option list.
-    arcane_slots_set = deck.arcane_slots
-    regular_slots    = [s for s in deck.slots if s not in arcane_slots_set]
-    arcane_slots     = list(arcane_slots_set)
-    all_slots        = list(deck.slots)
-
-    # Restricted proposal alphabet for arcane slots: ARCANE colors the user has
-    # in inventory (regular OR forced), plus DEAD. Auto-place ON drops DEAD —
-    # arcane slots must stay ARCANE (or stay DEAD if inventory was exhausted
-    # at initial_fill time; that state then cannot be changed either).
-    arcane_options: List[Placed] = []
-    for c in Color:
-        if inventory.cap(CardType.ARCANE, c) > 0:
-            arcane_options.append((CardType.ARCANE, c))
-    if not auto_place_arcane:
-        arcane_options.append(DEAD_CARD)
-
-    # Auto-place ON: lock down arcane slots that were filled with DEAD at
-    # initial_fill (inventory was exhausted) — they cannot be swapped either.
-    # When ON, only ARCANE-occupied arcane slots are mutable, and only to other
-    # ARCANE colors (subject to inventory).
-    locked_arcane_slots: set = set()
-    if auto_place_arcane:
-        for s in arcane_slots:
-            if assignment[s] == DEAD_CARD:
-                locked_arcane_slots.add(s)
-
+    slots         = list(deck.slots)
     log_cool      = math.log(T_end / T_start)
 
     def _within_inventory(p: Placed) -> bool:
-        """Can we still place one more of `p` given current placed_counts?
-        Cap = regular + forced for this (type, color)."""
+        """Can we still place one more of `p` given current placed_counts?"""
         if p == DEAD_CARD:
             return True
         t, c = p
         if c is None:
             return True
-        return placed_counts.get((t, c), 0) < inventory.cap(t, c)
-
-    def _can_remove(p: Placed) -> bool:
-        """Removing one of `p` must not drop placed_counts below the forced min."""
-        if p == DEAD_CARD:
-            return True
-        t, c = p
-        if c is None:
-            return True
-        return placed_counts.get((t, c), 0) > inventory.min_required(t, c)
-
-    def _slot_legal(p: Position, placed: Placed) -> bool:
-        """Per-slot legality check enforcing the ARCANE-slot rule."""
-        t = placed[0]
-        if p in arcane_slots_set:
-            return t in ARCANE_SLOT_LEGAL
-        return t != CardType.ARCANE
+        key   = (t, c)
+        return placed_counts.get(key, 0) < inventory.counts.get(key, 0)
 
     def _apply(p: Position, old: Placed, new: Placed) -> None:
         if old != DEAD_CARD and old[1] is not None:
@@ -1279,40 +935,17 @@ def _sa_inventory_python(
             placed_counts[(new[0], new[1])] = placed_counts.get((new[0], new[1]), 0) + 1
         assignment[p] = new
 
-    # Slot proposal weights: avoid picking locked arcane slots in replace moves
-    # (they can't be changed under auto-place ON). If every slot is locked or
-    # there are no arcane slots, slot_pool = all_slots.
-    if locked_arcane_slots:
-        slot_pool = [s for s in all_slots if s not in locked_arcane_slots]
-    else:
-        slot_pool = all_slots
-
     for i in range(n_iter):
         T = T_start * math.exp(log_cool * i / n_iter)
 
-        if len(all_slots) < 2 or random.random() < 0.80:
+        if len(slots) < 2 or random.random() < 0.80:
             # ── Replace move ─────────────────────────────────────────────────
-            if not slot_pool:
-                continue
-            p   = random.choice(slot_pool)
+            p   = random.choice(slots)
             old = assignment[p]
-            # Use the arcane proposal alphabet when targeting an arcane slot.
-            if p in arcane_slots_set:
-                if not arcane_options:
-                    continue
-                new = random.choice(arcane_options)
-            else:
-                new = random.choice(options)
-                # Reject ARCANE-into-regular-slot proposals up front.
-                if new[0] == CardType.ARCANE:
-                    continue
+            new = random.choice(options)
             if new == old:
                 continue
-            if not _slot_legal(p, new):
-                continue
             if not _within_inventory(new):
-                continue
-            if not _can_remove(old):     # forced-min constraint
                 continue
             _apply(p, old, new)
             new_score = simulate_inventory(deck, assignment, inventory.card_class, cores)
@@ -1325,16 +958,8 @@ def _sa_inventory_python(
                 _apply(p, new, old)
         else:
             # ── Pair-swap move ─────────────────────────────────────────────────
-            p1, p2 = random.sample(all_slots, 2)
+            p1, p2 = random.sample(slots, 2)
             if assignment[p1] == assignment[p2]:
-                continue
-            # Reject swaps that would violate the arcane-slot rule on either
-            # endpoint (e.g. swapping ARCANE↔regular card across the slot-type
-            # boundary). Also reject any swap involving a locked arcane slot
-            # under auto-place ON.
-            if not _slot_legal(p1, assignment[p2]) or not _slot_legal(p2, assignment[p1]):
-                continue
-            if p1 in locked_arcane_slots or p2 in locked_arcane_slots:
                 continue
             old1, old2 = assignment[p1], assignment[p2]
             assignment[p1], assignment[p2] = old2, old1
@@ -1363,49 +988,17 @@ except Exception:
 
 
 def optimize_inventory(
-    deck:              Deck,
-    inventory:         CardInventory,
-    n_iter:            int = 60_000,
-    restarts:          int = 12,
-    auto_place_arcane: Optional[bool] = None,
+    deck:      Deck,
+    inventory: CardInventory,
+    n_iter:    int = 60_000,
+    restarts:  int = 12,
 ) -> InventoryResult:
     """Run inventory-constrained SA across every viable core combo.
 
     Returns the single best ``InventoryResult``. Tries the Rust core when
     available (parallel restarts via rayon); falls back to a pure-Python loop
     that runs restarts serially.
-
-    ``auto_place_arcane`` defaults to ``_cfg.AUTO_PLACE_ARCANE`` when None.
-    When True (the historical behavior), arcane slots are filled with ARCANE
-    and SA cannot swap them to DEAD; it may still reshuffle ARCANE colors.
-    When False, SA may freely choose ARCANE/DEAD per arcane slot.
-
-    Raises ``ValueError`` if the user's forced inventory exceeds deck capacity.
     """
-    # Default to the config-level toggle when caller doesn't override.
-    if auto_place_arcane is None:
-        auto_place_arcane = _cfg.AUTO_PLACE_ARCANE
-
-    # Pre-flight: forced cards must fit in the deck.
-    total_forced = inventory.total_forced()
-    if total_forced > len(deck.slots):
-        raise ValueError(
-            f"Forced inventory ({total_forced} cards) exceeds deck capacity "
-            f"({len(deck.slots)} slots) — remove some forced entries."
-        )
-    # Forced ARCANE cards must fit in the arcane slots specifically (since
-    # they can't be placed anywhere else).
-    forced_arcane = sum(
-        n for (t, _c), n in inventory.forced_counts.items()
-        if t == CardType.ARCANE
-    )
-    if forced_arcane > len(deck.arcane_slots):
-        raise ValueError(
-            f"Forced ARCANE inventory ({forced_arcane} cards) exceeds arcane "
-            f"slot count ({len(deck.arcane_slots)}) — arcane cards can only "
-            f"go in arcane slots."
-        )
-
     candidates = candidate_cores_inventory(inventory, deck)
     if not candidates:
         # No cores at all — still run with the empty set.
@@ -1413,29 +1006,10 @@ def optimize_inventory(
 
     best: Optional[InventoryResult] = None
 
-    # Pluto-swap eligibility: user enabled PLUTO_CORE, mode allows it, and class
-    # is EVO. Available for every candidate that contains NEITHER deluxe nor pluto.
-    pluto_spec: Optional[CoreSpec] = None
-    if (_cfg.ALLOW_PLUTO
-            and inventory.card_class == CardClass.EVO):
-        for s in inventory.cores.cores:
-            if s.core_type == CoreType.PLUTO_CORE:
-                pluto_spec = s
-                break
-
     for cores in candidates:
-        asgn, score = _run_one_combo(deck, inventory, cores, n_iter, restarts, auto_place_arcane)
-        cores_used: FrozenSet[CoreSpec] = cores
-        # Try the cheap pluto-swap on deluxe-free, pluto-free perms only.
-        if pluto_spec is not None and not any(
-            s.core_type in (CoreType.DELUXE_CORE, CoreType.PLUTO_CORE)
-            for s in cores
-        ):
-            asgn, score, cores_used = _try_pluto_swap_inventory(
-                deck, inventory, asgn, score, cores, pluto_spec,
-            )
+        asgn, score = _run_one_combo(deck, inventory, cores, n_iter, restarts)
         if best is None or score > best.score:
-            best = InventoryResult(assignment=asgn, score=score, cores_used=cores_used)
+            best = InventoryResult(assignment=asgn, score=score, cores_used=cores)
 
     assert best is not None
 
@@ -1459,21 +1033,20 @@ def optimize_inventory(
 
 
 def _run_one_combo(
-    deck:              Deck,
-    inventory:         CardInventory,
-    cores:             FrozenSet[CoreSpec],
-    n_iter:            int,
-    restarts:          int,
-    auto_place_arcane: bool,
+    deck:      Deck,
+    inventory: CardInventory,
+    cores:     FrozenSet[CoreSpec],
+    n_iter:    int,
+    restarts:  int,
 ) -> Tuple[Dict[Position, Placed], float]:
     if _RUST_OK and _ndm_core is not None:
-        return _run_one_combo_rust(deck, inventory, cores, n_iter, restarts, auto_place_arcane)
+        return _run_one_combo_rust(deck, inventory, cores, n_iter, restarts)
 
     # Pure-Python: serial restarts, keep best.
     best_score = -1.0
     best_asgn: Dict[Position, Placed] = {}
     for _ in range(restarts):
-        asgn, score = _sa_inventory_python(deck, inventory, cores, n_iter, auto_place_arcane)
+        asgn, score = _sa_inventory_python(deck, inventory, cores, n_iter)
         if score > best_score:
             best_score = score; best_asgn = asgn
     return best_asgn, best_score
@@ -1484,16 +1057,14 @@ def _run_one_combo(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _run_one_combo_rust(
-    deck:              Deck,
-    inventory:         CardInventory,
-    cores:             FrozenSet[CoreSpec],
-    n_iter:            int,
-    restarts:          int,
-    auto_place_arcane: bool,
+    deck:      Deck,
+    inventory: CardInventory,
+    cores:     FrozenSet[CoreSpec],
+    n_iter:    int,
+    restarts:  int,
 ) -> Tuple[Dict[Position, Placed], float]:
     slots_list = list(deck.slots)
     slot_order = {p: i for i, p in enumerate(slots_list)}
-    arcane_slot_indices = [slot_order[p] for p in deck.arcane_slots]
 
     def _peers(d: Dict[Position, FrozenSet[Position]]) -> List[List[int]]:
         return [[slot_order[q] for q in d[p]] for p in slots_list]
@@ -1502,10 +1073,6 @@ def _run_one_combo_rust(
     inv_list = [
         (t.value, c.value, n)
         for (t, c), n in inventory.counts.items() if n > 0
-    ]
-    forced_list = [
-        (t.value, c.value, n)
-        for (t, c), n in inventory.forced_counts.items() if n > 0
     ]
 
     # Cores as (core_type_str, color_str_or_empty, override_or_negative).
@@ -1519,19 +1086,17 @@ def _run_one_combo_rust(
     ]
 
     result_strs, score = _ndm_core.run_sa_inventory(  # type: ignore[attr-defined]
-        slots                = slots_list,
-        row_peers            = _peers(deck._row_peers),
-        col_peers            = _peers(deck._col_peers),
-        surr_peers           = _peers(deck._surr_peers),
-        diag_peers           = _peers(deck._diag_peers),
-        arcane_slot_indices  = arcane_slot_indices,
-        auto_place_arcane    = auto_place_arcane,
-        is_shiny             = (inventory.card_class == CardClass.SHINY),
-        inventory            = inv_list,
-        forced_inventory     = forced_list,
-        cores                = cores_list,
-        n_iter               = n_iter,
-        restarts             = restarts,
+        slots      = slots_list,
+        row_peers  = _peers(deck._row_peers),
+        col_peers  = _peers(deck._col_peers),
+        surr_peers = _peers(deck._surr_peers),
+        diag_peers = _peers(deck._diag_peers),
+        n_arcane   = deck.n_arcane,
+        is_shiny   = (inventory.card_class == CardClass.SHINY),
+        inventory  = inv_list,
+        cores      = cores_list,
+        n_iter     = n_iter,
+        restarts   = restarts,
         # Multiplier constants — the Rust core needs config values for defaults.
         mult_dir_vert          = MULT_DIR_GREED_VERT,
         mult_dir_horiz         = MULT_DIR_GREED_HORIZ,
@@ -1548,9 +1113,6 @@ def _run_one_combo_rust(
         mult_deluxe_flat       = MULT_DELUXE_FLAT,
         mult_deluxe_core_base  = MULT_DELUXE_CORE_BASE,
         mult_deluxe_core_scale = MULT_DELUXE_CORE_SCALE,
-        mult_void_core_base    = MULT_VOID_CORE_BASE,
-        mult_void_core_scale   = MULT_VOID_CORE_SCALE,
-        mult_pluto             = MULT_PLUTO,
         # Flags — read via _cfg so a runtime set_mode() takes effect on the
         # next Rust call without re-importing this module.
         greed_additive = GREED_ADDITIVE,
@@ -1563,60 +1125,3 @@ def _run_one_combo_rust(
         c = Color(c_s) if c_s else None
         assignment[slots_list[i]] = (t, c)
     return assignment, float(score)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Post-SA pluto-swap (cheap check for deluxe-free EVO permutations)
-# ──────────────────────────────────────────────────────────────────────────────
-
-_INVENTORY_PLUTO_INELIGIBLE: FrozenSet[CoreType] = frozenset({
-    CoreType.VOID_CORE, CoreType.PLUTO_CORE,
-})
-
-
-def _try_pluto_swap_inventory(
-    deck:       Deck,
-    inventory:  CardInventory,
-    asgn:       Dict[Position, Placed],
-    score:      float,
-    cores:      FrozenSet[CoreSpec],
-    pluto_spec: CoreSpec,
-) -> Tuple[Dict[Position, Placed], float, FrozenSet[CoreSpec]]:
-    """Replace the weakest swappable core in ``cores`` with ``pluto_spec`` and
-    re-score on the same assignment. Return whichever (asgn, score, cores) is
-    better. Caller already verified the eligibility conditions (EVO, allowed,
-    deluxe-free, pluto-free)."""
-    swap_candidates = [
-        s for s in cores if s.core_type not in _INVENTORY_PLUTO_INELIGIBLE
-    ]
-    if not swap_candidates:
-        return asgn, score, cores
-
-    # Count post-SA quantities for per-core analytic value computation.
-    n_greed    = sum(1 for (t, _c) in asgn.values() if t in GREED_TYPES_NEW)
-    n_regular  = sum(1 for (t, _c) in asgn.values() if t in POSITIONAL_TYPES)
-    n_deluxe   = sum(1 for (t, _c) in asgn.values() if t == CardType.DELUXE)
-    n_typeless = sum(1 for (t, _c) in asgn.values() if t == CardType.TYPELESS)
-    n_arcane   = sum(1 for (t, _c) in asgn.values() if t == CardType.ARCANE)
-    foil_in_cores = any(s.core_type == CoreType.FOIL for s in cores)
-    # n_ns mirrors simulate_inventory's rule: ARCANE always counts. EVO-no-FOIL
-    # additionally counts every other non-shiny placement.
-    if inventory.card_class == CardClass.EVO and not foil_in_cores:
-        n_ns = n_regular + n_deluxe + n_typeless + n_arcane + n_greed
-    else:
-        n_ns = n_greed + n_arcane
-
-    def core_val(spec: CoreSpec) -> float:
-        if spec.core_type == CoreType.PURE:
-            return _pure_mult(spec, n_ns)
-        if spec.core_type == CoreType.DELUXE_CORE:
-            return _deluxe_core_mult(spec, n_deluxe)
-        # COLOR / FOIL / EQUI / STEADFAST — all static.
-        return _static_mult(spec)
-
-    weakest = min(swap_candidates, key=core_val)
-    alt_cores = frozenset((set(cores) - {weakest}) | {pluto_spec})
-    alt_score = simulate_inventory(deck, asgn, inventory.card_class, alt_cores)
-    if alt_score > score:
-        return asgn, alt_score, alt_cores
-    return asgn, score, cores

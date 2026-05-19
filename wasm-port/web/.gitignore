@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.vite/
+*.log
+
+# Build artefacts from wasm-pack — regenerated each build.
+src/wasm/
+
+# Build-time generated data (committed copies acceptable, but the workflow
+# regenerates them). Leave commented to allow checking them in for offline dev.
+# public/decks.json
+# public/config.json
+# public/modifiers.json

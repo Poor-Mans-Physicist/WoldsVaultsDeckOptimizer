@@ -1,0 +1,17 @@
+name: Moon Deck
+enabled: false
+
+core_slots: 2
+min_regular: -1
+max_greed:   -1
+
+layout: |
+  XXXOOOX
+  XOOOOOX
+  OOOXXXX
+  OOXAXXX
+  OOXXAXX
+  OOXAXXX
+  OOOXXXX
+  XOOOOOX
+  XXXOOOX

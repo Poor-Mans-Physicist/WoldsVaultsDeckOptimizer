@@ -1,0 +1,33 @@
+[package]
+name = "ndm_core"
+version = "0.1.2"
+edition = "2021"
+
+[lib]
+name = "ndm_core"
+# `cdylib` for both PyO3 and wasm-bindgen output; `rlib` so tests / native bins
+# can link against the same crate.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# `python` builds the PyO3 extension module (used by maturin for the CLI).
+# `wasm`   builds the wasm-bindgen extension (used by wasm-pack for the SPA).
+# Defaulting to `python` preserves the existing `uv run --extra rust` workflow.
+default = ["python"]
+python  = ["dep:pyo3", "dep:rayon"]
+wasm    = ["dep:wasm-bindgen", "dep:serde", "dep:serde-wasm-bindgen", "dep:getrandom"]
+
+[dependencies]
+rand = { version = "0.8", features = ["small_rng"] }
+
+# Python backend
+pyo3  = { version = "0.21", features = ["extension-module"], optional = true }
+rayon = { version = "1.10", optional = true }
+
+# WASM backend
+wasm-bindgen        = { version = "0.2", optional = true }
+serde               = { version = "1",   features = ["derive"], optional = true }
+serde-wasm-bindgen  = { version = "0.6", optional = true }
+# Without this `getrandom` feature, `rand::SmallRng::from_entropy` won't link
+# on wasm32-unknown-unknown (no OS RNG by default).
+getrandom = { version = "0.2", features = ["js"], optional = true }

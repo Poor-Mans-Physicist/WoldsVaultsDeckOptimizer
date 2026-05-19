@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wolds-vaults-deck-optimizer"
+version = "0.1.0"
+description = "Optimizer that computes the best deck layouts for Wold's Vaults."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "openpyxl>=3.1",
+    "pyyaml>=6.0",
+]
+
+# Opt-in Rust core. Enable it with `uv run --extra rust optimize`.
+# Users without a Rust toolchain can still use `uv run optimize-py` out of the
+# box — `ndm_core` will simply not be built.
+[project.optional-dependencies]
+rust = ["ndm_core"]
+
+[project.scripts]
+optimize = "optimizer:main"
+optimize-py = "optimizer:main_no_rust"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["optimizer.py", "src"]
+
+[tool.uv.sources]
+ndm_core = { path = "ndm_core", editable = false }
+
+[tool.uv]
+# Force a rebuild of the Rust extension whenever its sources change.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "optimizer.py" },
+    { file = "src/**/*.py" },
+    { file = "ndm_core/Cargo.toml" },
+    { file = "ndm_core/Cargo.lock" },
+    { file = "ndm_core/src/**/*.rs" },
+]
