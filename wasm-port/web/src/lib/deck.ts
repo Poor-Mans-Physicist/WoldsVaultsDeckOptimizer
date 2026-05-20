@@ -127,5 +127,10 @@ export async function loadDecks(
       `Mode '${mode}' missing from decks.json (have: ${Object.keys(_decksCache ?? {}).join(", ")})`,
     );
   }
-  return list.map((r) => buildDeck(r, deckmod));
+  // Alphabetize by display name (case-insensitive). The build-time JSON
+  // preserves insertion order — sorting here means the dropdown order is
+  // independent of how the YAML/JSON sources happen to be laid out.
+  return list
+    .map((r) => buildDeck(r, deckmod))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }

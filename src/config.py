@@ -441,6 +441,10 @@ def _load_decks() -> List[Deck]:
         raise RuntimeError(
             f"No enabled deck files found in {_DECKS_DIR}."
         )
+    # Alphabetize by display name (case-insensitive). One sort here gates the
+    # ordering everywhere ``_cfg.DECKS`` is consumed: GUI dropdown, terminal
+    # summary loop, and spreadsheet (summary block + per-deck breakdown).
+    decks.sort(key=lambda d: d.name.casefold())
     return decks
 
 
