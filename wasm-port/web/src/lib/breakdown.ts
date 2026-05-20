@@ -89,15 +89,16 @@ export function simulateInventoryBreakdown(
   }
 
   // ── n_ns / n_deluxe ──────────────────────────────────────────────────────
-  // ARCANE placements always count (preserves the pre-arcane `+ deck.n_arcane`
-  // fudge as real placements). The class/FOIL rule decides which OTHER
-  // placements count on top:
-  //   EVO-no-FOIL  → positional + deluxe + typeless + greed (+arcane)
-  //   EVO-with-FOIL → greed (+arcane)
-  //   SHINY         → greed (+arcane)
+  // Mirrors the classic CLI kernel (`src/simulate.py::simulate` /
+  // `ndm_core/src/lib.rs::run_sa_optimize`). ARCANE always counts; on top:
+  //   EVO-no-FOIL  → positional + greed (+ arcane)
+  //   EVO+FOIL     → greed (+ arcane)
+  //   SHINY        → greed (+ arcane)
+  // TYPELESS / DELUXE are intentionally excluded — typeless is "always
+  // shiny" by classic-kernel design and deluxe scores via DELUXE_CORE.
   const foilActive = cores.some((s) => s.core_type === CoreType.FOIL);
   const n_ns = (card_class === CardClass.EVO && !foilActive)
-    ? positional.size + deluxe.size + typeless.size + arcane.size + greed.size
+    ? positional.size + arcane.size + greed.size
     : greed.size + arcane.size;
   const n_deluxe = deluxe.size;
 

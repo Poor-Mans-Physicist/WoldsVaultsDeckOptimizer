@@ -321,16 +321,21 @@ fn simulate(
         else if is_greed(t)         { n_greed      += 1; }
     }
 
-    // n_ns for PURE. ARCANE placements always count (preserving the
-    // pre-arcane `+ deck.n_arcane` fudge with real placements). On top of
-    // that the class/FOIL rule decides which other placements count:
-    //   EVO-no-FOIL → positional + deluxe + typeless + greed (+arcane)
-    //   EVO-with-FOIL → greed (+arcane)
-    //   SHINY        → greed (+arcane)
+    // n_ns for PURE — aligned with the classic CLI kernel
+    // (`src/simulate.py::simulate` / `ndm_core/src/lib.rs::run_sa_optimize`).
+    // ARCANE placements always count; on top of that:
+    //   EVO-no-FOIL → positional + greed (+ arcane)
+    //   EVO+FOIL    → greed (+ arcane)
+    //   SHINY       → greed (+ arcane)
+    // TYPELESS is "always shiny" by design and DELUXE rides its own track
+    // via DELUXE_CORE — neither feeds Pure's n_ns. `n_deluxe` is still used
+    // later for the deluxe-core math; `n_typeless` is unused after this
+    // point but kept in the classifier for symmetry.
+    let _ = n_typeless;
     let n_ns = if cfg.is_shiny || cores.foil_active {
         n_greed + n_arcane
     } else {
-        n_positional + n_deluxe + n_typeless + n_arcane + n_greed
+        n_positional + n_arcane + n_greed
     };
 
     // All cores fold into a single per-card core_mult. Precompute the baseline

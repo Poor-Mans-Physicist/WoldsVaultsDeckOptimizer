@@ -354,10 +354,11 @@ function tryPlutoSwap(
     else if (GREED_TYPES.has(ct))     nGreed++;
   }
   const foilActive = cores.some((s) => s.core_type === CoreType.FOIL);
-  // Mirrors simulate_inventory's n_ns rule. ARCANE always counts; on top of
-  // that EVO-no-FOIL also counts every other non-shiny placement.
+  // Mirrors the classic CLI kernel's n_ns rule (`src/simulate.py::simulate`).
+  // ARCANE always counts; on top of that EVO-no-FOIL counts regulars/greed.
+  // TYPELESS / DELUXE are intentionally excluded (classic-kernel design).
   const n_ns = (cardClass === CardClass.EVO && !foilActive)
-    ? nRegular + nDeluxe + nTypeless + nArcane + nGreed
+    ? nRegular + nArcane + nGreed
     : nGreed + nArcane;
 
   const coreVal = (spec: CoreSpec): number => {
