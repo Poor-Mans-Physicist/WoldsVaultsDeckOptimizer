@@ -102,14 +102,18 @@ def simulate(
                 | frozenset(typeless) | frozenset(arcane))
     scorable = {**regular, **deluxe, **typeless}
 
-    # TYPELESS cards are always shiny-classed — never count toward n_ns
-    # ARCANE is "treated like regulars" — counted under EVO-no-FOIL. Old fudge
-    # `+ deck.n_arcane` is gone; arcane placements are now real cards counted here.
+    # n_ns for PURE. ARCANE placements always count (preserving the pre-arcane
+    # `+ deck.n_arcane` fudge as real placements). On top of that:
+    #   EVO-no-FOIL → regular + greed (+arcane)   ─ regulars contribute too
+    #   EVO+FOIL    → greed (+arcane)
+    #   SHINY       → greed (+arcane)
+    # TYPELESS / DELUXE are intentionally excluded here (this is the classic
+    # kernel's design — only the inventory optimizer counts them).
     foil_active = CoreType.FOIL in cores
-    if card_class == CardClass.EVO:
-        n_ns = len(greed) if foil_active else (len(regular) + len(arcane) + len(greed))
+    if card_class == CardClass.EVO and not foil_active:
+        n_ns = len(regular) + len(arcane) + len(greed)
     else:
-        n_ns = len(greed)
+        n_ns = len(greed) + len(arcane)
     n_deluxe = len(deluxe)
 
     # All cores fold into a single core_mult. Three cores are *per-card gated*:

@@ -97,11 +97,13 @@ def compute_heatmap(
                 | frozenset(typeless) | frozenset(arcane))
     scorable = {**regular, **deluxe, **typeless}
 
+    # n_ns mirrors simulate.py: arcane always counts; EVO-no-FOIL also counts
+    # regulars; TYPELESS/DELUXE are not part of n_ns in the classic kernel.
     foil_active = CoreType.FOIL in cores
-    if card_class == CardClass.EVO:
-        n_ns = len(greed) if foil_active else (len(regular) + len(arcane) + len(greed))
+    if card_class == CardClass.EVO and not foil_active:
+        n_ns = len(regular) + len(arcane) + len(greed)
     else:
-        n_ns = len(greed)
+        n_ns = len(greed) + len(arcane)
     n_deluxe = len(deluxe)
 
     core_contributions        = []

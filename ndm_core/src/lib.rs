@@ -264,17 +264,16 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
     }
 
     // ── n_ns: non-shiny count for Pure Core ──────────────────────────────────
-    // EVO without FOIL: n_ns = regular + arcane + greed
-    // EVO with FOIL:    n_ns = greed only
-    // SHINY:            n_ns = greed only (regular cards are always shiny)
-    //
-    // NOTE: Old fudge `+ deck.n_arcane` is gone — arcane placements are now
-    // real cards in the assignment and are counted here directly. (Classic
-    // doesn't include deluxe/typeless here — that's an inventory-optimizer
-    // divergence; we keep the classic formula and just add arcane.)
+    // ARCANE placements always count (preserves the pre-arcane `+ n_arcane`
+    // fudge as real cards). On top of that:
+    //   EVO without FOIL: regular + greed (+ arcane)
+    //   EVO with FOIL:    greed (+ arcane)
+    //   SHINY:            greed (+ arcane)
+    // TYPELESS / DELUXE are intentionally excluded here (classic-kernel
+    // design; only the inventory optimizer counts them).
     let _ = n_typeless;  // currently unused in n_ns; tracked for symmetry
     let n_ns: usize = if cfg.is_shiny || cfg.foil_active {
-        n_greed
+        n_greed + n_arcane_placed
     } else {
         n_regular + n_arcane_placed + n_greed
     };
