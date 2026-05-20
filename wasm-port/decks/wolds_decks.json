@@ -1,6 +1,55 @@
 {
   "minimumDeckLevel": 0,
   "values": {
+    "queen": {
+      "model": "woldsvaults:deck/queen#inventory",
+      "name": "The Queen Deck",
+      "essence": {
+        "min": 4,
+        "max": 4
+      },
+      "layout": [
+        {
+          "value": [
+            "OXOXOXOXO",
+            "XOXOOOXOX",
+            "OOOOOOOOO",
+            "XOXOOOXOX",
+            "OXOXOXOXO"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "socketCount": {
+        "min": 3,
+        "max": 3
+      }
+    },
+    "fives": {
+      "model": "woldsvaults:deck/fives#inventory",
+      "name": "The Fives Deck",
+      "essence": {
+        "min": 4,
+        "max": 4
+      },
+      "layout": [
+        {
+          "value": [
+            "XXOXAXOXX",
+            "XOAOXOAOX",
+            "AXOXOXOXA",
+            "XOXOAOXOX",
+            "OAOXOXOAO",
+            "XOXAXAXOX"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "socketCount": {
+        "min": 3,
+        "max": 3
+      }
+    },
     "starter": {
       "model": "the_vault:deck/starter_deck#inventory",
       "name": "Starter Deck",
@@ -876,8 +925,8 @@
         }
       ],
       "socketCount": {
-        "min": 3,
-        "max": 3
+        "min": 2,
+        "max": 2
       }
     },
     "wall": {
