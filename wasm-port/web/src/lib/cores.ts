@@ -1,7 +1,7 @@
 // Core math + candidate-core enumeration (inventory-aware).
 // Ports `_static_mult`, `_pure_mult`, `_deluxe_core_mult`, `_void_core_mult`,
-// `_pluto_core_mult`, `_pluto_targets`, `_classify_cores`, and
-// `candidate_cores_inventory` from src/inventory_optimize.py.
+// `_classify_cores`, and `candidate_cores_inventory` from
+// src/inventory_optimize.py.
 
 import { CardClass, CoreType, type Color, type CoreSpec } from "./types";
 import type { ResolvedConfig } from "./config";
@@ -36,31 +36,6 @@ export function voidCoreMult(spec: CoreSpec, n_dead: number, cfg: ResolvedConfig
   return cfg.cores.void_base + scale * n_dead;
 }
 
-/** PLUTO_CORE flat multiplier. `override` replaces it outright. */
-export function plutoCoreMult(spec: CoreSpec, cfg: ResolvedConfig): number {
-  return spec.override !== null ? spec.override : cfg.pluto.multiplier;
-}
-
-/**
- * Resolve pluto's target groups: `[targetRegular, targetDeluxe]`.
- *
- * EVO-only. Less-common group wins; if one is 0, the other gets the boost;
- * tie with both > 0 boosts both. Both 0 → no boost.
- */
-export function plutoTargets(
-  card_class: CardClass,
-  n_evo_reg:  number,
-  n_deluxe:   number,
-): [boolean, boolean] {
-  if (card_class !== CardClass.EVO)        return [false, false];
-  if (n_evo_reg === 0 && n_deluxe === 0)   return [false, false];
-  if (n_evo_reg === 0)                     return [false, true ];
-  if (n_deluxe  === 0)                     return [true,  false];
-  if (n_evo_reg < n_deluxe)                return [true,  false];
-  if (n_deluxe  < n_evo_reg)               return [false, true ];
-  return [true, true];                  // tie with both > 0
-}
-
 // ── Classified-core output (for breakdown re-score) ───────────────────────────
 
 export interface CoreComponent {
@@ -78,7 +53,7 @@ export interface ExcludedCore {
 
 /**
  * Mirror `_classify_cores`: split cores into baseline / color / deluxe / void
- * / pluto / excluded buckets.
+ * / excluded buckets.
  *
  * `n_arcane` is NOT used here (the old Pure-core fudge is gone; arcane cards
  * count via the assignment-derived `n_ns` instead). `n_dead` is used by the
@@ -96,14 +71,12 @@ export function classifyCores(
   colorComp:  CoreComponent | null;
   deluxeComp: CoreComponent | null;
   voidComp:   CoreComponent | null;
-  plutoComp:  CoreComponent | null;
   classExcluded: ExcludedCore[];
 } {
   const baseline: CoreComponent[] = [];
   let colorComp:  CoreComponent | null = null;
   let deluxeComp: CoreComponent | null = null;
   let voidComp:   CoreComponent | null = null;
-  let plutoComp:  CoreComponent | null = null;
   const classExcluded: ExcludedCore[] = [];
 
   for (const spec of cores) {
@@ -147,17 +120,9 @@ export function classifyCores(
         voidComp = { core_type: CoreType.VOID_CORE, color: null, value: v, override: isOverride };
         break;
       }
-      case CoreType.PLUTO_CORE:
-        if (card_class === CardClass.EVO) {
-          plutoComp = { core_type: CoreType.PLUTO_CORE, color: null, value: plutoCoreMult(spec, cfg), override: isOverride };
-        } else {
-          classExcluded.push({ core_type: CoreType.PLUTO_CORE, color: null,
-            reason: "pluto only applies to EVO decks (this run is SHINY)" });
-        }
-        break;
     }
   }
-  return { baseline, colorComp, deluxeComp, voidComp, plutoComp, classExcluded };
+  return { baseline, colorComp, deluxeComp, voidComp, classExcluded };
 }
 
 // ── Set-like dedup for CoreSpec collections ──────────────────────────────────
@@ -213,12 +178,6 @@ export function candidateCoresInventory(
   // Void core is mode-gated. Vanilla disables it via cfg.cores.void_allow.
   let voidCoreSpec  = byType.get(CoreType.VOID_CORE)?.[0]  ?? null;
   if (!cfg.cores.void_allow) voidCoreSpec = null;
-  // Pluto: EVO-only and mode-gated. Never enters the variable pool (would
-  // double the candidate count); instead, deluxe-containing perms are
-  // duplicated with deluxe→pluto, and deluxe-free perms get a post-SA cheap
-  // swap test handled in optimize.ts.
-  let plutoCoreSpec = byType.get(CoreType.PLUTO_CORE)?.[0] ?? null;
-  if (!cfg.pluto.allow || card_class !== CardClass.EVO) plutoCoreSpec = null;
   const foilSpec       = byType.get(CoreType.FOIL)?.[0]        ?? null;
   const equiSpec       = byType.get(CoreType.EQUILIBRIUM)?.[0] ?? null;
   const steadSpec      = byType.get(CoreType.STEADFAST)?.[0]   ?? null;
@@ -231,22 +190,6 @@ export function candidateCoresInventory(
   const add = (combo: CoreSpec[]) => {
     const key = comboKey(combo);
     if (!seen.has(key)) { seen.add(key); candidates.push(combo); }
-  };
-
-  // For every DELUXE_CORE-containing combo, also emit a copy with
-  // deluxe→pluto. Only fires when pluto is available + class is EVO.
-  const maybeAddPlutoDuplicate = (combo: CoreSpec[]) => {
-    if (plutoCoreSpec === null || deluxeCoreSpec === null) return;
-    const deluxeKey = coreSpecKey(deluxeCoreSpec);
-    if (!combo.some((s) => coreSpecKey(s) === deluxeKey)) return;
-    const plutoKey = coreSpecKey(plutoCoreSpec);
-    const variant: CoreSpec[] = combo
-      .filter((s) => coreSpecKey(s) !== deluxeKey)
-      .concat(plutoCoreSpec);
-    // Defensive: skip if pluto somehow already present (shouldn't happen
-    // since the pluto-not-in-pool invariant holds for both groups).
-    if (variant.filter((s) => coreSpecKey(s) === plutoKey).length > 1) return;
-    add(variant);
   };
 
   // Union-by-key (avoids duplicates when fillers re-pick color_pick).
@@ -295,10 +238,6 @@ export function candidateCoresInventory(
           const fillers = bestShinyFillers(k - preKeys.size, colorPick);
           const combo = unionUnique(pre, fillers);
           add(combo);
-          // SHINY excludes PLUTO at classifyCores time (class_excluded), so
-          // the maybeAddPlutoDuplicate guard above already returns early via
-          // `plutoCoreSpec === null`. Safe to call unconditionally.
-          maybeAddPlutoDuplicate(combo);
         }
       }
     }
@@ -356,7 +295,6 @@ export function candidateCoresInventory(
         const fillers = bestFixedEvoNoFoil(k - preKeys.size, colorPick);
         const combo = unionUnique(pre, fillers);
         add(combo);
-        maybeAddPlutoDuplicate(combo);
       }
     }
   }
@@ -378,7 +316,6 @@ export function candidateCoresInventory(
           const fillers = bestFixedEvoWithFoil(k - preKeys.size, colorPick);
           const combo = unionUnique(pre, fillers);
           add(combo);
-          maybeAddPlutoDuplicate(combo);
         }
       }
     }

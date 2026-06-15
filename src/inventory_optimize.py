@@ -54,7 +54,6 @@ from .config import (
     MULT_EQUILIBRIUM,
     MULT_EVO_GREED,
     MULT_FOIL,
-    MULT_PLUTO,
     MULT_PURE_BASE,
     MULT_PURE_SCALE,
     MULT_STEADFAST,
@@ -253,30 +252,6 @@ def _void_core_mult(spec: CoreSpec, n_dead: int) -> float:
     return MULT_VOID_CORE_BASE + scale * n_dead
 
 
-def _pluto_core_mult(spec: CoreSpec) -> float:
-    """PLUTO_CORE flat multiplier. ``override`` replaces it outright."""
-    return spec.override if spec.override is not None else MULT_PLUTO
-
-
-def _pluto_targets(
-    card_class: CardClass, n_evo_reg: int, n_deluxe: int,
-) -> Tuple[bool, bool]:
-    """Resolve pluto's target groups: (target_regular, target_deluxe).
-
-    EVO-only. Less-common group wins; if one is 0, the other gets the boost;
-    tie with both > 0 boosts both. Both 0 → no boost.
-    """
-    if card_class != CardClass.EVO:
-        return False, False
-    if n_evo_reg == 0 and n_deluxe == 0:
-        return False, False
-    if n_evo_reg == 0:                return False, True
-    if n_deluxe  == 0:                return True,  False
-    if n_evo_reg < n_deluxe:          return True,  False
-    if n_deluxe  < n_evo_reg:         return False, True
-    return True, True   # tie, both > 0
-
-
 def _classify_cores(
     cores:      FrozenSet[CoreSpec],
     card_class: CardClass,
@@ -288,30 +263,24 @@ def _classify_cores(
     Optional["CoreComponent"],
     Optional["CoreComponent"],
     Optional["CoreComponent"],
-    Optional["CoreComponent"],
     List["ExcludedCore"],
 ]:
-    """Sort cores into baseline / color / deluxe / void / pluto buckets.
+    """Sort cores into baseline / color / deluxe / void buckets.
 
-    Returns ``(baseline, color_comp, deluxe_comp, void_comp, pluto_comp,
-    class_excluded)``:
+    Returns ``(baseline, color_comp, deluxe_comp, void_comp, class_excluded)``:
       * ``baseline`` — cores that apply to every non-greed scoring card
         regardless of color (PURE, FOIL, plus EQUI/STEAD when class is SHINY).
       * ``color_comp`` — the active COLOR core, if any. Gates per-card by color.
       * ``deluxe_comp`` — the active DELUXE_CORE, if any. Excludes deluxe cards.
       * ``void_comp`` — the active VOID_CORE, if any. Excludes dead cards
         (dead cards score 0 anyway; this is only used for breakdown symmetry).
-      * ``pluto_comp`` — the active PLUTO_CORE, if any. EVO-only; target groups
-        are decided per-simulation by ``_pluto_targets`` from runtime counts.
-        Excluded entirely in SHINY (surfaced via class_excluded).
       * ``class_excluded`` — cores excluded by the card-class rule (EQUI/STEAD
-        on EVO; PLUTO on SHINY). Precomputed once for the run.
+        on EVO). Precomputed once for the run.
     """
     baseline:   List[CoreComponent]      = []
     color_comp: Optional[CoreComponent]  = None
     deluxe_comp: Optional[CoreComponent] = None
     void_comp:  Optional[CoreComponent]  = None
-    pluto_comp: Optional[CoreComponent]  = None
     class_excluded: List[ExcludedCore]   = []
 
     for spec in cores:
@@ -347,16 +316,8 @@ def _classify_cores(
         elif spec.core_type == CoreType.VOID_CORE:
             v = _void_core_mult(spec, n_dead)
             void_comp = CoreComponent(CoreType.VOID_CORE, None, v, is_override)
-        elif spec.core_type == CoreType.PLUTO_CORE:
-            if card_class == CardClass.EVO:
-                pluto_comp = CoreComponent(CoreType.PLUTO_CORE, None, _pluto_core_mult(spec), is_override)
-            else:
-                class_excluded.append(ExcludedCore(
-                    CoreType.PLUTO_CORE, None,
-                    "pluto only applies to EVO decks (this run is SHINY)",
-                ))
 
-    return baseline, color_comp, deluxe_comp, void_comp, pluto_comp, class_excluded
+    return baseline, color_comp, deluxe_comp, void_comp, class_excluded
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -435,9 +396,9 @@ def simulate_inventory(
     n_deluxe = len(deluxe)
 
     # All cores fold into ONE per-card ``core_mult``. Precompute the baseline
-    # (cores that apply to every non-greed card) and the color-/deluxe-/void-/
-    # pluto-gated addends so each card's multiplier is a cheap constant-time combo.
-    baseline, color_comp, deluxe_comp, void_comp, pluto_comp, _ex = _classify_cores(
+    # (cores that apply to every non-greed card) and the color-/deluxe-/void-
+    # gated addends so each card's multiplier is a cheap constant-time combo.
+    baseline, color_comp, deluxe_comp, void_comp, _ex = _classify_cores(
         cores, card_class, n_ns, n_deluxe, n_dead,
     )
     baseline_sum  = sum(c.value - 1.0 for c in baseline)
@@ -449,22 +410,13 @@ def simulate_inventory(
     deluxe_factor = deluxe_comp.value         if deluxe_comp is not None else 1.0
     void_addend   = (void_comp.value - 1.0)   if void_comp   is not None else 0.0
     void_factor   = void_comp.value           if void_comp   is not None else 1.0
-    pluto_addend  = (pluto_comp.value - 1.0)  if pluto_comp  is not None else 0.0
-    pluto_factor  = pluto_comp.value          if pluto_comp  is not None else 1.0
-    # Pluto's per-card targeting (EVO-only). For non-EVO runs these are False.
-    pluto_target_reg, pluto_target_dlx = (False, False)
-    if pluto_comp is not None:
-        pluto_target_reg, pluto_target_dlx = _pluto_targets(
-            card_class, len(positional), n_deluxe,
-        )
 
     def _card_core_mult(card_type: CardType, card_color: Optional[Color]) -> float:
-        """Combined per-card core multiplier — color, deluxe, void, and pluto
-        cores fold in here, gated by:
+        """Combined per-card core multiplier — color, deluxe, and void cores
+        fold in here, gated by:
           color  → card_color matches the color core's color
           deluxe → card is NOT a deluxe card
           void   → card is NOT a dead card (never reached in practice)
-          pluto  → card_type matches pluto's resolved target (EVO regular or deluxe)
         """
         color_applies  = (
             color_comp is not None
@@ -473,23 +425,16 @@ def simulate_inventory(
         )
         deluxe_applies = (deluxe_comp is not None and card_type != CardType.DELUXE)
         void_applies   = (void_comp is not None and card_type != CardType.DEAD)
-        # Pluto targets only the resolved less-common group.
-        pluto_applies = pluto_comp is not None and (
-            (pluto_target_reg and card_type in POSITIONAL_TYPES)
-            or (pluto_target_dlx and card_type == CardType.DELUXE)
-        )
         if _cfg.ADDITIVE_CORES:
             return (1.0
                     + baseline_sum
                     + (color_addend  if color_applies  else 0.0)
                     + (deluxe_addend if deluxe_applies else 0.0)
-                    + (void_addend   if void_applies   else 0.0)
-                    + (pluto_addend  if pluto_applies  else 0.0))
+                    + (void_addend   if void_applies   else 0.0))
         m = baseline_prod
         if color_applies:  m *= color_factor
         if deluxe_applies: m *= deluxe_factor
         if void_applies:   m *= void_factor
-        if pluto_applies:  m *= pluto_factor
         return m
 
     # Greed-boost map (per target slot).
@@ -615,13 +560,9 @@ def simulate_inventory_breakdown(
 
     # Classify cores once. The breakdown for each slot picks from these buckets
     # depending on the slot's color and whether it's a deluxe / dead card.
-    baseline, color_comp, deluxe_comp, void_comp, pluto_comp, class_excluded = _classify_cores(
+    baseline, color_comp, deluxe_comp, void_comp, class_excluded = _classify_cores(
         cores, card_class, n_ns, n_deluxe, n_dead,
     )
-    # Resolve pluto target groups once for the run.
-    bd_pluto_target_reg, bd_pluto_target_dlx = _pluto_targets(
-        card_class, len(positional), n_deluxe,
-    ) if pluto_comp is not None else (False, False)
 
     scorable_positions = set(positional) | set(deluxe) | set(typeless)
     # Mirror simulate_inventory: additive starts at 0 (floored to 1 at use),
@@ -707,26 +648,6 @@ def simulate_inventory_breakdown(
                 ))
             else:
                 applied.append(void_comp)
-
-        # Pluto core gating — applies only to the resolved less-common group.
-        if pluto_comp is not None:
-            pluto_applies = (
-                (bd_pluto_target_reg and card_type in POSITIONAL_TYPES)
-                or (bd_pluto_target_dlx and card_type == CardType.DELUXE)
-            )
-            if pluto_applies:
-                applied.append(pluto_comp)
-            else:
-                # Surface why this card didn't receive pluto's boost.
-                if not bd_pluto_target_reg and not bd_pluto_target_dlx:
-                    reason = "pluto inert: no EVO regulars and no deluxe cards in deck"
-                elif card_type in POSITIONAL_TYPES and not bd_pluto_target_reg:
-                    reason = "deluxe cards are the less-common group — pluto boosts them, not EVO regulars"
-                elif card_type == CardType.DELUXE and not bd_pluto_target_dlx:
-                    reason = "EVO regulars are the less-common group — pluto boosts them, not deluxe"
-                else:
-                    reason = "pluto only targets EVO regulars and deluxe cards"
-                excluded.append(ExcludedCore(CoreType.PLUTO_CORE, None, reason))
 
         vals = [c.value for c in applied]
         if _cfg.ADDITIVE_CORES:
@@ -1023,13 +944,6 @@ def candidate_cores_inventory(
     void_core_spec   = (by_type.get(CoreType.VOID_CORE)   or [None])[0]
     if not _cfg.ALLOW_VOID:
         void_core_spec = None
-    # Pluto: EVO-only and mode-gated. Never enters the variable pool (would
-    # double the candidate count); instead, deluxe-containing perms are
-    # duplicated with deluxe→pluto, and deluxe-free perms get a post-SA cheap
-    # swap test handled in optimize_inventory().
-    pluto_core_spec  = (by_type.get(CoreType.PLUTO_CORE)  or [None])[0]
-    if not _cfg.ALLOW_PLUTO or card_class != CardClass.EVO:
-        pluto_core_spec = None
     foil_spec        = (by_type.get(CoreType.FOIL)        or [None])[0]
     equi_spec        = (by_type.get(CoreType.EQUILIBRIUM) or [None])[0]
     stead_spec       = (by_type.get(CoreType.STEADFAST)   or [None])[0]
@@ -1043,15 +957,6 @@ def candidate_cores_inventory(
     def add(combo: FrozenSet[CoreSpec]) -> None:
         if combo not in seen:
             seen.add(combo); candidates.append(combo)
-
-    def maybe_add_pluto_duplicate(combo: FrozenSet[CoreSpec]) -> None:
-        """EVO + pluto-available + deluxe-in-combo → emit copy with deluxe→pluto."""
-        if pluto_core_spec is None or deluxe_core_spec is None:
-            return
-        if deluxe_core_spec not in combo:
-            return
-        pluto_variant = (combo - {deluxe_core_spec}) | {pluto_core_spec}
-        add(pluto_variant)
 
     # ── SHINY ────────────────────────────────────────────────────────────────
     if card_class == CardClass.SHINY:
@@ -1144,7 +1049,6 @@ def candidate_cores_inventory(
                 fillers = best_fixed_evo_no_foil(k - len(pre), color_pick)
                 combo = frozenset(pre | set(fillers))
                 add(combo)
-                maybe_add_pluto_duplicate(combo)
 
     # Group B: with FOIL (PURE is variable)
     if foil_spec is not None:
@@ -1165,7 +1069,6 @@ def candidate_cores_inventory(
                     fillers = best_fixed_evo_with_foil(k - len(pre), color_pick)
                     combo = frozenset(pre | set(fillers))
                     add(combo)
-                    maybe_add_pluto_duplicate(combo)
 
     return candidates
 
@@ -1423,29 +1326,10 @@ def optimize_inventory(
 
     best: Optional[InventoryResult] = None
 
-    # Pluto-swap eligibility: user enabled PLUTO_CORE, mode allows it, and class
-    # is EVO. Available for every candidate that contains NEITHER deluxe nor pluto.
-    pluto_spec: Optional[CoreSpec] = None
-    if (_cfg.ALLOW_PLUTO
-            and inventory.card_class == CardClass.EVO):
-        for s in inventory.cores.cores:
-            if s.core_type == CoreType.PLUTO_CORE:
-                pluto_spec = s
-                break
-
     for cores in candidates:
         asgn, score = _run_one_combo(deck, inventory, cores, n_iter, restarts, auto_place_arcane)
-        cores_used: FrozenSet[CoreSpec] = cores
-        # Try the cheap pluto-swap on deluxe-free, pluto-free perms only.
-        if pluto_spec is not None and not any(
-            s.core_type in (CoreType.DELUXE_CORE, CoreType.PLUTO_CORE)
-            for s in cores
-        ):
-            asgn, score, cores_used = _try_pluto_swap_inventory(
-                deck, inventory, asgn, score, cores, pluto_spec,
-            )
         if best is None or score > best.score:
-            best = InventoryResult(assignment=asgn, score=score, cores_used=cores_used)
+            best = InventoryResult(assignment=asgn, score=score, cores_used=cores)
 
     assert best is not None
 
@@ -1560,7 +1444,6 @@ def _run_one_combo_rust(
         mult_deluxe_core_scale = MULT_DELUXE_CORE_SCALE,
         mult_void_core_base    = MULT_VOID_CORE_BASE,
         mult_void_core_scale   = MULT_VOID_CORE_SCALE,
-        mult_pluto             = MULT_PLUTO,
         # Flags — read via _cfg so a runtime set_mode() takes effect on the
         # next Rust call without re-importing this module.
         greed_additive = GREED_ADDITIVE,
@@ -1573,60 +1456,3 @@ def _run_one_combo_rust(
         c = Color(c_s) if c_s else None
         assignment[slots_list[i]] = (t, c)
     return assignment, float(score)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Post-SA pluto-swap (cheap check for deluxe-free EVO permutations)
-# ──────────────────────────────────────────────────────────────────────────────
-
-_INVENTORY_PLUTO_INELIGIBLE: FrozenSet[CoreType] = frozenset({
-    CoreType.VOID_CORE, CoreType.PLUTO_CORE,
-})
-
-
-def _try_pluto_swap_inventory(
-    deck:       Deck,
-    inventory:  CardInventory,
-    asgn:       Dict[Position, Placed],
-    score:      float,
-    cores:      FrozenSet[CoreSpec],
-    pluto_spec: CoreSpec,
-) -> Tuple[Dict[Position, Placed], float, FrozenSet[CoreSpec]]:
-    """Replace the weakest swappable core in ``cores`` with ``pluto_spec`` and
-    re-score on the same assignment. Return whichever (asgn, score, cores) is
-    better. Caller already verified the eligibility conditions (EVO, allowed,
-    deluxe-free, pluto-free)."""
-    swap_candidates = [
-        s for s in cores if s.core_type not in _INVENTORY_PLUTO_INELIGIBLE
-    ]
-    if not swap_candidates:
-        return asgn, score, cores
-
-    # Count post-SA quantities for per-core analytic value computation.
-    n_greed    = sum(1 for (t, _c) in asgn.values() if t in GREED_TYPES_NEW)
-    n_regular  = sum(1 for (t, _c) in asgn.values() if t in POSITIONAL_TYPES)
-    n_deluxe   = sum(1 for (t, _c) in asgn.values() if t == CardType.DELUXE)
-    n_typeless = sum(1 for (t, _c) in asgn.values() if t == CardType.TYPELESS)
-    n_arcane   = sum(1 for (t, _c) in asgn.values() if t == CardType.ARCANE)
-    foil_in_cores = any(s.core_type == CoreType.FOIL for s in cores)
-    # n_ns mirrors simulate_inventory's rule: ARCANE always counts. EVO-no-FOIL
-    # additionally counts every other non-shiny placement.
-    if inventory.card_class == CardClass.EVO and not foil_in_cores:
-        n_ns = n_regular + n_deluxe + n_typeless + n_arcane + n_greed
-    else:
-        n_ns = n_greed + n_arcane
-
-    def core_val(spec: CoreSpec) -> float:
-        if spec.core_type == CoreType.PURE:
-            return _pure_mult(spec, n_ns)
-        if spec.core_type == CoreType.DELUXE_CORE:
-            return _deluxe_core_mult(spec, n_deluxe)
-        # COLOR / FOIL / EQUI / STEADFAST — all static.
-        return _static_mult(spec)
-
-    weakest = min(swap_candidates, key=core_val)
-    alt_cores = frozenset((set(cores) - {weakest}) | {pluto_spec})
-    alt_score = simulate_inventory(deck, asgn, inventory.card_class, alt_cores)
-    if alt_score > score:
-        return asgn, alt_score, alt_cores
-    return asgn, score, cores

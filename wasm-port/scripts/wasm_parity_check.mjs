@@ -98,7 +98,6 @@ function buildPayload(mode, deck, opts) {
     mult_deluxe_core_scale: cfg.deluxe.core_scale,
     mult_void_core_base:    cfg.cores.void_base ?? 0,
     mult_void_core_scale:   cfg.cores.void_scale ?? 0,
-    mult_pluto:             cfg.pluto?.multiplier ?? 0,
     greed_additive:         cfg.stacking.greed_additive,
     additive_cores:         cfg.stacking.additive_cores,
   };
@@ -196,7 +195,7 @@ TESTS.push({
 // ── Case 4: vanilla — confirm vanilla mode loads its own deck roster ────────
 // Pick the first vanilla deck and run a no-cores, all-typeless baseline.
 // Verifies that the vanilla pipeline is plumbed through (different json file,
-// no DELUXE / VOID / PLUTO cores in the candidate set).
+// no DELUXE / VOID cores in the candidate set).
 const firstVanilla = decksByMode.vanilla?.[0];
 if (firstVanilla) {
   TESTS.push({

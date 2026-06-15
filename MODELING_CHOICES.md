@@ -46,9 +46,7 @@ deck slots, then computes one NDM value.
    class+FOIL rule below.
 3. **Build the per-card-type core multipliers.** Three variants exist —
    `regular_core_mult`, `deluxe_card_core_mult`, `typeless_core_mult` —
-   because some cores apply differently per category (PLUTO targets
-   regulars or deluxe depending on counts; DELUXE_CORE skips deluxe
-   cards).
+   because DELUXE_CORE skips deluxe cards.
 4. **Greed boosts.** Every greed card applies its target-specific boost
    to a `boost: position → float` map (only scorable targets receive it).
 5. **Sum NDM per category:**
@@ -182,7 +180,6 @@ every scoring call.
 | `FOIL`        | **2.8**                           | regulars, deluxe cards (baseline), typeless                             | greed                                    | Flat                                                     | Universal;**also flips EVO's `n_ns` to the SHINY formula** (see below) |
 | `DELUXE_CORE` | base**1.0**, scale **0.2**  | regulars, typeless                                                      | **deluxe cards themselves**, greed | `deluxe_core_base + deluxe_core_scale × n_deluxe`     | Universal; gated by `deluxe.allow` (off in vanilla)                          |
 | `VOID_CORE`   | base**1.0**, scale **0.3**  | regulars, deluxe cards, typeless                                        | dead cards themselves, greed             | `void_base + void_scale × n_dead`                     | Universal; gated by `cores.void_allow` (off in vanilla)                      |
-| `PLUTO_CORE`  | flat**3.0**                       | The less-common of {EVO regulars, deluxe cards} (see Pluto rules below) | greed, typeless, arcane, dead            | Flat × target group                                     | **EVO-only**; gated by `pluto.allow` (off in vanilla)                  |
 
 Cores **never** apply to greed cards. They never apply to ARCANE cards
 (arcane = 0 NDM, fixed). DEAD cards score 0 regardless and so are not
@@ -207,27 +204,15 @@ track via DELUXE_CORE; double-counting would be wrong.
 Pure mult is then `1.0 + 0.07 × n_ns`. For e.g. a SHINY+Pure run on the
 Starter deck with 7 greed + 1 arcane placed: `n_ns = 8`, Pure mult = `1.56×`.
 
-### Pluto core — "less-common group" targeting
+### Pluto core (REMOVED)
 
-`PLUTO_CORE` is EVO-only and applies its flat 3× to **only** the smaller
-of these two groups in the deck:
-
-- `n_regulars` (count of placed ROW/COL/SURR/DIAG cards)
-- `n_deluxe`   (count of placed DELUXE cards)
-
-Tiebreak rules:
-
-| n_regulars                | n_deluxe | Pluto targets               |
-| ------------------------- | -------- | --------------------------- |
-| 0                         | 0        | (nobody — Pluto inert)     |
-| 0                         | > 0      | deluxe                      |
-| > 0                       | 0        | regulars                    |
-| < n_deluxe                | > 0      | regulars                    |
-| > n_deluxe                | > 0      | deluxe                      |
-| `= n_deluxe` (both > 0) |          | **Both** groups (tie) |
-
-This rule lives in `src/simulate.py::simulate` and the matching Rust /
-TypeScript scoring kernels.
+The Pluto core was removed from the optimizer entirely in the modpack
+update that nerfed it to never be optimal. No code path, config key, or
+UI surface for it remains. Historical reference only: it used to be an
+EVO-only flat 3× core that targeted the smaller of {EVO regulars, deluxe
+cards}, with ties boosting both groups. If a future pack version
+reintroduces a similar mechanic, restore from the previous commit
+history rather than re-deriving the design here.
 
 ---
 
@@ -244,17 +229,15 @@ computed values).
 baseline contribs, plus per-category addends:
 
 - `regular_core_mult` adds `(deluxe_core_value − 1)` if DELUXE_CORE on,
-  `(void_core_value − 1)` if VOID_CORE on, `(MULT_PLUTO − 1)` if PLUTO is
-  on AND `pluto_target_regular`.
-- `deluxe_card_core_mult` adds `(void_core_value − 1)` and
-  `(MULT_PLUTO − 1) if pluto_target_deluxe`, but **does not** add the
-  deluxe-core addend (deluxe cards don't boost themselves).
-- `typeless_core_mult` adds `(deluxe_core_value − 1)`,
-  `(void_core_value − 1)`, but not pluto's (pluto skips typeless).
+  and `(void_core_value − 1)` if VOID_CORE on.
+- `deluxe_card_core_mult` adds `(void_core_value − 1)` but **does not**
+  add the deluxe-core addend (deluxe cards don't boost themselves).
+- `typeless_core_mult` adds `(deluxe_core_value − 1)` and
+  `(void_core_value − 1)`.
 
 **Multiplicative** (`false`, Vanilla): `baseline_prod = Π baseline_contribs`,
-then per category multiplied by the relevant DELUXE/VOID/PLUTO factors.
-Same gating rules.
+then per category multiplied by the relevant DELUXE/VOID factors. Same
+gating rules.
 
 In both modes, the per-card NDM is `base × core_mult × boost`. So an EVO
 ROW card in an additive deck with FOIL + COLOR + DELUXE_CORE (any deluxe
@@ -274,8 +257,6 @@ The class gates several scoring paths:
 - **EQUILIBRIUM, STEADFAST** apply only when `card_class == SHINY`. In
   EVO runs they're silently dropped from the baseline (the candidate-core
   enumerator never includes them on the EVO side).
-- **PLUTO_CORE** applies only when `card_class == EVO`. SHINY runs ignore
-  Pluto entirely.
 - **EVO_GREED** applies only when `card_class == EVO`. In SHINY runs an
   evo-greed card is a no-op (counts as a greed for `n_ns` but boosts
   nothing).
@@ -326,14 +307,12 @@ identical.
 | `shiny.positional`        | **true**       | **false**   | Vanilla SHINY decks have no positional cards — typeless-only ("Stat" decks)                                |
 | `deluxe.allow`            | **true**       | **false**   | Vanilla disables DELUXE cards + DELUXE_CORE entirely                                                        |
 | `cores.void_allow`        | **true**       | **false**   | Vanilla has no Void core (and therefore no DEAD-card optimization)                                          |
-| `pluto.allow`             | **true**       | **false**   | Vanilla has no Pluto core                                                                                   |
 | `stacking.additive_cores` | **true**       | **false**   | Vanilla multiplies cores instead of summing                                                                 |
 | `decks.json_file`         | `wolds_decks.json` | `vh_decks.json` | Different deck rosters per mode                                                                             |
 
 Greed defaults (`dir_vert: 5`, `dir_horiz: 5`, others 0) and core multipliers
 (`pure_scale: 0.07`, `equilibrium: 3.0`, `foil: 2.8`, `steadfast: 2.2`,
-`color: 1.75`, `void_scale: 0.3`, `deluxe.flat: 2`, `pluto.multiplier: 3.0`)
-are shared.
+`color: 1.75`, `void_scale: 0.3`, `deluxe.flat: 2`) are shared.
 
 The UI also relabels in Vanilla: SHINY → "Stat" in class pickers
 (`wasm-port/web/src/lib/visibility.ts::classSelectLabel`).
@@ -353,7 +332,7 @@ counted a **wider** set under EVO-no-FOIL than the classic CLI:
 | Path                                                                                                                           | EVO-no-FOIL `n_ns`                                   |
 | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
 | WASM web app + classic CLI + classic Rust                                                                                      | regulars + arcane + greed                              |
-| **NiceGUI desktop** (`src/inventory_optimize.py::simulate_inventory` + `_breakdown` + `_try_pluto_swap_inventory`) | regulars +**deluxe + typeless** + arcane + greed |
+| **NiceGUI desktop** (`src/inventory_optimize.py::simulate_inventory` + `_breakdown`) | regulars +**deluxe + typeless** + arcane + greed |
 
 The NiceGUI still uses the wider formula. To align it, drop `deluxe.size`
 and `typeless.size` from both n_ns lines in `inventory_optimize.py`.
@@ -392,7 +371,7 @@ follow-up.
 `wasm-port/src/simulate.py`, `wasm-port/src/report.py`,
 `wasm-port/src/inventory_optimize.py` are pre-arcane snapshots from when
 `wasm-port/` was a sibling fork. They lack arcane-card handling entirely
-and predate the void/pluto/arcane work. None of them are used by anything
+and predate the void/arcane work. None of them are used by anything
 live (the web app uses TypeScript; the desktop uses outer `src/`). Will
 be deleted during the unification follow-up.
 

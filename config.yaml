@@ -52,16 +52,6 @@ deluxe:
   core_base:  1.0     # deluxe (fancy) core intercept
   core_scale: 0.2     # deluxe core multiplier per deluxe card
 
-# Pluto core (EVO-only, Wold's-exclusive). Flat 3x multiplier that targets only
-# the less-common of {evolution regulars, deluxe cards} in the deck — both groups
-# if equal. Never appears in normal candidate enumeration: instead, every
-# DELUXE_CORE-containing EVO permutation is duplicated with deluxe→pluto, and
-# every deluxe-free EVO permutation gets a post-SA cheap-check that swaps the
-# weakest core for pluto if it improves NDM.
-pluto:
-  allow:      true
-  multiplier: 3.0
-
 # Arcane behavior.
 #  auto_place: true  → every arcane (`A`) slot is filled with an ARCANE card
 #                      before SA. Classic optimizer locks them; GUI optimizer
@@ -98,7 +88,7 @@ metrics:
 
 output:
   export_spreadsheet: true
-  spreadsheet_prefix: "Panel_WV_Decks_void_"   # produces "{prefix}ndm_simulation.xlsx"
+  spreadsheet_prefix: "Panel_WV_Decks_real_"   # produces "{prefix}ndm_simulation.xlsx"
 
 testing:
   # When true, every deck/class is run through all of `panel_configs`.
@@ -118,15 +108,13 @@ modes:
 
   vanilla:
     # Vanilla preset: multiplicative core scaling, positional shiny off,
-    # deluxe card system disabled, void + pluto cores unavailable. Vanilla also
+    # deluxe card system disabled, void core unavailable. Vanilla also
     # ships its own deck roster (different layouts, different socket counts).
     deckmod: 0
     deluxe:
       allow: false
     cores:
       void_allow: false
-    pluto:
-      allow: false
     stacking:
       additive_cores: false
     shiny:

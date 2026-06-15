@@ -1,15 +1,15 @@
 // High-level orchestrator: candidate-core enumeration + wasm SA dispatch +
-// breakdown re-score + pluto post-SA swap. Mirrors `optimize_inventory` in
+// breakdown re-score. Mirrors `optimize_inventory` in
 // src/inventory_optimize.py.
 //
 // Split into three pieces so the main thread can fan out candidates across
 // a pool of workers:
 //
 //   * `enumerateCandidates(input)` (sync, main thread): pre-flight + builds
-//     candidate combos + decides if pluto-swap is eligible.
+//     candidate combos.
 //   * `optimizeInventorySlice(input, candidatesSlice)` (async, worker):
 //     runs WASM SA for a slice of candidates and optionally a per-candidate
-//     pluto-swap, returning the slice's best.
+//     returning the slice's best.
 //   * `finalizeResult(input, sliceBest)` (sync, main thread): materializes
 //     the per-slot Map and runs the TS-side breakdown re-score.
 //
@@ -20,15 +20,12 @@ import init, { runSaInventory } from "../wasm/ndm_core";
 import wasmUrl from "../wasm/ndm_core_bg.wasm?url";
 
 import {
-  CardClass, CardType, CoreType,
-  GREED_TYPES, POSITIONAL_TYPES,
+  CardClass,
   type CoreSpec, type Placed,
 } from "./types";
 import type { Deck } from "./deck";
 import type { ResolvedConfig } from "./config";
-import {
-  candidateCoresInventory, pureMult, deluxeCoreMult, staticMult,
-} from "./cores";
+import { candidateCoresInventory } from "./cores";
 import { simulateInventoryBreakdown, type BreakdownResult } from "./breakdown";
 
 export interface InventoryCounts {
@@ -107,7 +104,6 @@ export interface SliceResult {
  *  invoke `optimizeInventorySlice` without re-running pre-flight. */
 export interface CandidateBundle {
   candidates: CoreSpec[][];
-  plutoSpec:  CoreSpec | null;         // null if pluto-swap is not eligible
 }
 
 let _wasmReady: Promise<void> | null = null;
@@ -161,13 +157,7 @@ export function enumerateCandidates(input: OptimizeInput): CandidateBundle {
   );
   if (candidates.length === 0) candidates = [[]];   // run with no cores
 
-  // Pluto-swap eligibility for the post-SA cheap check.
-  let plutoSpec: CoreSpec | null = null;
-  if (cfg.pluto.allow && cardClass === CardClass.EVO) {
-    plutoSpec = cores.find((s) => s.core_type === CoreType.PLUTO_CORE) ?? null;
-  }
-
-  return { candidates, plutoSpec };
+  return { candidates };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -219,7 +209,6 @@ function buildBasePayload(input: OptimizeInput) {
     mult_deluxe_core_scale: cfg.deluxe.core_scale,
     mult_void_core_base:    cfg.cores.void_base,
     mult_void_core_scale:   cfg.cores.void_scale,
-    mult_pluto:             cfg.pluto.multiplier,
     greed_additive:         cfg.stacking.greed_additive,
     additive_cores:         cfg.stacking.additive_cores,
   };
@@ -235,10 +224,8 @@ function buildBasePayload(input: OptimizeInput) {
 export async function optimizeInventorySlice(
   input: OptimizeInput,
   candidatesSlice: CoreSpec[][],
-  plutoSpec: CoreSpec | null,
 ): Promise<SliceResult> {
   await initWasm();
-  const { deck, cardClass, cfg } = input;
   const basePayload = buildBasePayload(input);
 
   let bestScore = -1;
@@ -256,24 +243,12 @@ export async function optimizeInventorySlice(
       score:      number;
     };
 
-    let asgn   = out.assignment;
-    let score  = out.score;
-    let coresUsed: CoreSpec[] = combo;
-
-    // Post-SA pluto swap: only on deluxe-free + pluto-free combos.
-    const hasDeluxe = combo.some((s) => s.core_type === CoreType.DELUXE_CORE);
-    const hasPluto  = combo.some((s) => s.core_type === CoreType.PLUTO_CORE);
-    if (plutoSpec !== null && !hasDeluxe && !hasPluto) {
-      const swap = tryPlutoSwap(deck, asgn, score, combo, plutoSpec, cardClass, cfg);
-      asgn      = swap.asgn;
-      score     = swap.score;
-      coresUsed = swap.cores;
-    }
-
+    const asgn  = out.assignment;
+    const score = out.score;
     if (score > bestScore) {
       bestScore  = score;
       bestAssign = asgn;
-      bestCores  = coresUsed;
+      bestCores  = combo;
     }
   }
 
@@ -315,82 +290,7 @@ export function finalizeResult(
 // ──────────────────────────────────────────────────────────────────────────────
 
 export async function optimizeInventory(input: OptimizeInput): Promise<OptimizeResult> {
-  const { candidates, plutoSpec } = enumerateCandidates(input);
-  const slice = await optimizeInventorySlice(input, candidates, plutoSpec);
+  const { candidates } = enumerateCandidates(input);
+  const slice = await optimizeInventorySlice(input, candidates);
   return finalizeResult(input, slice);
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Post-SA pluto-swap (cheap check for deluxe-free, pluto-free EVO permutations)
-// ──────────────────────────────────────────────────────────────────────────────
-//
-// Port of `_try_pluto_swap_inventory` in src/inventory_optimize.py.
-// VOID and PLUTO are never swap targets here: void's value depends on the
-// pre-SA n_dead so swapping it out of a converged assignment may invalidate
-// the score; pluto can't be swapped for itself.
-
-const PLUTO_SWAP_INELIGIBLE = new Set<CoreType>([CoreType.VOID_CORE, CoreType.PLUTO_CORE]);
-
-function tryPlutoSwap(
-  deck:       Deck,
-  asgn:       [string, string][],
-  score:      number,
-  cores:      readonly CoreSpec[],
-  plutoSpec:  CoreSpec,
-  cardClass:  CardClass,
-  cfg:        ResolvedConfig,
-): { asgn: [string, string][]; score: number; cores: CoreSpec[] } {
-  const swappable = cores.filter((s) => !PLUTO_SWAP_INELIGIBLE.has(s.core_type));
-  if (swappable.length === 0) return { asgn, score, cores: [...cores] };
-
-  // Count post-SA quantities for analytic per-core value computation.
-  let nGreed = 0, nRegular = 0, nDeluxe = 0, nTypeless = 0, nArcane = 0;
-  for (const [t] of asgn) {
-    const ct = t as CardType;
-    if (POSITIONAL_TYPES.has(ct))     nRegular++;
-    else if (ct === CardType.DELUXE)  nDeluxe++;
-    else if (ct === CardType.TYPELESS) nTypeless++;
-    else if (ct === CardType.ARCANE)  nArcane++;
-    else if (GREED_TYPES.has(ct))     nGreed++;
-  }
-  const foilActive = cores.some((s) => s.core_type === CoreType.FOIL);
-  // Mirrors the classic CLI kernel's n_ns rule (`src/simulate.py::simulate`).
-  // ARCANE always counts; on top of that EVO-no-FOIL counts regulars/greed.
-  // TYPELESS / DELUXE are intentionally excluded (classic-kernel design).
-  const n_ns = (cardClass === CardClass.EVO && !foilActive)
-    ? nRegular + nArcane + nGreed
-    : nGreed + nArcane;
-
-  const coreVal = (spec: CoreSpec): number => {
-    if (spec.core_type === CoreType.PURE)        return pureMult(spec, n_ns, cfg);
-    if (spec.core_type === CoreType.DELUXE_CORE) return deluxeCoreMult(spec, nDeluxe, cfg);
-    return staticMult(spec, cfg);   // COLOR / FOIL / EQUI / STEADFAST
-  };
-
-  // Pick weakest swappable core.
-  let weakest = swappable[0];
-  let weakestVal = coreVal(weakest);
-  for (let i = 1; i < swappable.length; i++) {
-    const v = coreVal(swappable[i]);
-    if (v < weakestVal) { weakest = swappable[i]; weakestVal = v; }
-  }
-
-  // Build candidate cores: (cores - weakest) ∪ plutoSpec.
-  const altCores: CoreSpec[] = cores.filter((s) => s !== weakest).concat(plutoSpec);
-
-  // Re-score on the same assignment. The breakdown call mirrors WASM's
-  // simulate() math exactly so we don't need to round-trip through WASM.
-  const asgnMap = new Map<string, Placed>();
-  for (let i = 0; i < deck.slots.length; i++) {
-    const [tStr, cStr] = asgn[i];
-    asgnMap.set(
-      `${deck.slots[i][0]},${deck.slots[i][1]}`,
-      [tStr as any, (cStr ? cStr : null) as any],
-    );
-  }
-  const altScore = simulateInventoryBreakdown(deck, asgnMap, cardClass, altCores, cfg).total;
-  if (altScore > score) {
-    return { asgn, score: altScore, cores: altCores };
-  }
-  return { asgn, score, cores: [...cores] };
 }

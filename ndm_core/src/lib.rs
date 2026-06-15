@@ -41,7 +41,6 @@ const CORE_COLOR: u8       = 3;
 const CORE_FOIL: u8        = 4;
 const CORE_DELUXE: u8      = 5;
 const CORE_VOID: u8        = 6;
-const CORE_PLUTO: u8       = 7;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String ↔ u8 conversions (used only at the Python boundary, not in hot path)
@@ -106,7 +105,6 @@ fn core_from_str(s: &str) -> u8 {
         "foil"        => CORE_FOIL,
         "deluxe_core" => CORE_DELUXE,
         "void_core"   => CORE_VOID,
-        "pluto_core"  => CORE_PLUTO,
         other         => panic!("Unknown core type string: {}", other),
     }
 }
@@ -183,7 +181,6 @@ struct SimConfig {
     mult_deluxe_core_scale: f64,
     mult_void_core_base: f64,
     mult_void_core_scale: f64,
-    mult_pluto: f64,
     greed_additive: bool,
     additive_cores: bool,
     is_shiny: bool,
@@ -284,13 +281,9 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
     //   VOID_CORE   — applies to regulars/typeless/deluxe but not dead cards
     //                 (dead cards have base 0, so this only matters for the
     //                 deluxe-vs-non-deluxe variant math below).
-    //   PLUTO_CORE  — flat MULT_PLUTO; targets only the less-common of
-    //                 {EVO regulars, deluxe cards}. With 0 of one group, boosts
-    //                 the other. Tied (both > 0) → boosts both. EVO-only.
     let mut baseline_c: Vec<f64> = Vec::with_capacity(6);
     let mut deluxe_core_value: Option<f64> = None;
     let mut void_core_value:   Option<f64> = None;
-    let mut pluto_present = false;
 
     for &core in cores {
         match core {
@@ -312,50 +305,32 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
                     cfg.mult_void_core_base + cfg.mult_void_core_scale * n_dead as f64,
                 );
             }
-            CORE_PLUTO => { pluto_present = true; }
             _ => {}
         }
     }
 
-    // Pluto's target groups — EVO-only.
-    let (pluto_target_reg, pluto_target_dlx) = if pluto_present && !cfg.is_shiny {
-        if n_regular == 0 && n_deluxe == 0      { (false, false) }
-        else if n_regular == 0                  { (false, true)  }
-        else if n_deluxe == 0                   { (true,  false) }
-        else if n_regular < n_deluxe            { (true,  false) }
-        else if n_deluxe  < n_regular           { (false, true)  }
-        else                                    { (true,  true)  }
-    } else {
-        (false, false)
-    };
-
-    // Three card-class variants — typeless DIVERGES from regular because
-    // pluto only targets EVO regulars, not typeless cards.
     let (regular_core_mult, deluxe_card_core_mult, typeless_core_mult) = if cfg.additive_cores {
         let baseline_sum:  f64 = baseline_c.iter().map(|v| v - 1.0).sum();
         let deluxe_addend: f64 = deluxe_core_value.map_or(0.0, |v| v - 1.0);
         let void_addend:   f64 = void_core_value.map_or(0.0, |v| v - 1.0);
-        let pluto_addend:  f64 = if pluto_present { cfg.mult_pluto - 1.0 } else { 0.0 };
         (
-            1.0 + baseline_sum + deluxe_addend + void_addend
-                + if pluto_target_reg { pluto_addend } else { 0.0 },
-            1.0 + baseline_sum                  + void_addend
-                + if pluto_target_dlx { pluto_addend } else { 0.0 },
-            1.0 + baseline_sum + deluxe_addend + void_addend,  // typeless: no pluto ever
+            1.0 + baseline_sum + deluxe_addend + void_addend,
+            1.0 + baseline_sum                  + void_addend,
+            1.0 + baseline_sum + deluxe_addend + void_addend,
         )
     } else {
         let baseline_prod: f64 = if baseline_c.is_empty() { 1.0 } else { baseline_c.iter().product() };
         let deluxe_factor: f64 = deluxe_core_value.unwrap_or(1.0);
         let void_factor:   f64 = void_core_value.unwrap_or(1.0);
-        let pluto_factor:  f64 = if pluto_present { cfg.mult_pluto } else { 1.0 };
         (
-            baseline_prod * deluxe_factor * void_factor
-                * if pluto_target_reg { pluto_factor } else { 1.0 },
-            baseline_prod                 * void_factor
-                * if pluto_target_dlx { pluto_factor } else { 1.0 },
-            baseline_prod * deluxe_factor * void_factor,        // typeless: no pluto
+            baseline_prod * deluxe_factor * void_factor,
+            baseline_prod                 * void_factor,
+            baseline_prod * deluxe_factor * void_factor,
         )
     };
+    // n_regular is kept in the classifier for symmetry with future per-card
+    // gating; silence the unused-variable warning until then.
+    let _ = n_regular;
 
     // ── Row / col counts for positional multipliers ───────────────────────────
     // Counts ALL filled cards (including greed) — same as Python.
@@ -729,7 +704,6 @@ fn run_sa_optimize(
     mult_deluxe_core_scale: f64,
     mult_void_core_base: f64,
     mult_void_core_scale: f64,
-    mult_pluto: f64,
     // Flags
     greed_additive: bool,
     additive_cores: bool,
@@ -840,7 +814,6 @@ fn run_sa_optimize(
         mult_deluxe_core_scale,
         mult_void_core_base,
         mult_void_core_scale,
-        mult_pluto,
         greed_additive,
         additive_cores,
         is_shiny,

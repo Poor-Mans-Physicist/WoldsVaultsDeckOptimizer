@@ -7,7 +7,7 @@
 //! Every field added after the initial WASM landing is gated by
 //! `#[serde(default …)]` so old JS payloads keep working — the new behaviour
 //! falls back to "no arcane slots / no forced inventory / auto-place ON /
-//! 0× void multipliers / 0× pluto", which is exactly the pre-arcane behaviour.
+//! 0× void multipliers", which is exactly the pre-arcane behaviour.
 
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -68,9 +68,6 @@ pub struct WasmInventoryInput {
     pub mult_void_core_base:    f64,
     #[serde(default)]
     pub mult_void_core_scale:   f64,
-    /// Pluto core flat multiplier. Default 0 → core inert if accidentally selected.
-    #[serde(default)]
-    pub mult_pluto:             f64,
     pub greed_additive:         bool,
     pub additive_cores:         bool,
 }
@@ -117,7 +114,6 @@ pub fn run_sa_inventory_wasm(input: JsValue) -> Result<JsValue, JsValue> {
         mult_deluxe_core_scale: inp.mult_deluxe_core_scale,
         mult_void_core_base:    inp.mult_void_core_base,
         mult_void_core_scale:   inp.mult_void_core_scale,
-        mult_pluto:             inp.mult_pluto,
         greed_additive:         inp.greed_additive,
         additive_cores:         inp.additive_cores,
         is_shiny:               inp.is_shiny,

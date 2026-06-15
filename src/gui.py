@@ -105,7 +105,6 @@ _CORE_OPTIONS: List[Tuple[CoreType, Optional[Color]]] = [
     (CoreType.FOIL,        None),
     (CoreType.DELUXE_CORE, None),
     (CoreType.VOID_CORE,   None),
-    (CoreType.PLUTO_CORE,  None),
     (CoreType.COLOR,       Color.RED),
     (CoreType.COLOR,       Color.GREEN),
     (CoreType.COLOR,       Color.BLUE),
@@ -410,7 +409,7 @@ def _build_legend() -> None:
                     [
                         "Each enabled core has an override field on the right. Leave blank to use the "
                         "config default, or type a number to replace it for the next run only.",
-                        "• Static cores (Foil, Color, Equilibrium, Steadfast, Pluto): the override is "
+                        "• Static cores (Foil, Color, Equilibrium, Steadfast): the override is "
                         "the FULL multiplier. A core that boosts a card by +50% multiplies by ×1.5, "
                         "so enter 1.5. A flat 3× core needs 3.0.",
                         "• Scaling cores (Pure, Deluxe Core, Void Core): the override replaces ONLY "
@@ -781,7 +780,7 @@ def _build_page() -> None:
                 # Cores
                 core_rows: List[Tuple["ui.checkbox", "ui.number", "callable"]] = []
                 # Parallel to ``_CORE_OPTIONS`` — used by _apply_mode_visibility
-                # to hide mode-incompatible core rows (e.g. void/pluto in vanilla).
+                # to hide mode-incompatible core rows (e.g. void in vanilla).
                 core_row_containers: List["ui.element"] = []
                 with ui.card().tight().classes("w-full"):
                     with ui.card_section():
@@ -950,7 +949,7 @@ def _build_page() -> None:
             optimize_panel.set_visibility(state.view == "optimize")
             preview_panel.set_visibility(state.view == "preview")
 
-            # Initial mode-driven visibility (hides void/pluto/etc. if we
+            # Initial mode-driven visibility (hides void/etc. if we
             # booted into vanilla via --mode vanilla on the command line).
             _apply_mode_visibility()
 
@@ -1034,7 +1033,7 @@ def _hidden_inventory_types(mode: str, card_class: CardClass) -> "set[CardType]"
 def _hidden_core_types(mode: str) -> "set[CoreType]":
     """Core options that should be hidden + ignored at Run time."""
     if mode == "vanilla":
-        return {CoreType.DELUXE_CORE, CoreType.VOID_CORE, CoreType.PLUTO_CORE}
+        return {CoreType.DELUXE_CORE, CoreType.VOID_CORE}
     return set()
 
 

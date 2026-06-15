@@ -67,7 +67,6 @@ export function dispatchSlice(
   workerIdx:        number,
   input:            OptimizeInput,
   candidatesSlice:  CoreSpec[][],
-  plutoSpec:        CoreSpec | null,
 ): Promise<SliceResult> {
   const pool = ensurePool();
   const slot = pool[workerIdx % pool.length];
@@ -75,7 +74,7 @@ export function dispatchSlice(
   return new Promise<SliceResult>((resolve, reject) => {
     slot.pending.set(id, { resolve, reject });
     slot.worker.postMessage({
-      id, type: "slice", input, candidatesSlice, plutoSpec,
+      id, type: "slice", input, candidatesSlice,
     });
   });
 }

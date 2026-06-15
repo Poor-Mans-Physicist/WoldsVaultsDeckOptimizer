@@ -12,7 +12,7 @@ import {
 import type { Deck } from "./deck";
 import type { ResolvedConfig } from "./config";
 import {
-  classifyCores, plutoTargets,
+  classifyCores,
   type CoreComponent, type ExcludedCore,
 } from "./cores";
 
@@ -105,14 +105,8 @@ export function simulateInventoryBreakdown(
     : greed.size + arcane.size;
   const n_deluxe = deluxe.size;
 
-  const { baseline, colorComp, deluxeComp, voidComp, plutoComp, classExcluded } =
+  const { baseline, colorComp, deluxeComp, voidComp, classExcluded } =
     classifyCores(cores, card_class, n_ns, n_deluxe, n_dead, cfg);
-
-  // Resolve pluto target groups once for the run (EVO-only; plutoComp is
-  // null in SHINY so this is irrelevant there).
-  const [plutoTargetReg, plutoTargetDlx] = plutoComp !== null
-    ? plutoTargets(card_class, positional.size, n_deluxe)
-    : [false, false];
 
   // ── Greed → boost (with provenance) ──────────────────────────────────────
   // Additive starts at 0 (use-site floors at 1); multiplicative starts at 1.
@@ -201,29 +195,6 @@ export function simulateInventoryBreakdown(
           reason: "void core never boosts dead cards (they fuel it instead)" });
       } else {
         applied.push(voidComp);
-      }
-    }
-
-    // Pluto: only the resolved less-common target group.
-    if (plutoComp !== null) {
-      const plutoApplies =
-        (plutoTargetReg && POSITIONAL_TYPES.has(cardType))
-        || (plutoTargetDlx && cardType === CardType.DELUXE);
-      if (plutoApplies) {
-        applied.push(plutoComp);
-      } else {
-        // Surface why this card didn't receive pluto's boost.
-        let reason: string;
-        if (!plutoTargetReg && !plutoTargetDlx) {
-          reason = "pluto inert: no EVO regulars and no deluxe cards in deck";
-        } else if (POSITIONAL_TYPES.has(cardType) && !plutoTargetReg) {
-          reason = "deluxe cards are the less-common group — pluto boosts them, not EVO regulars";
-        } else if (cardType === CardType.DELUXE && !plutoTargetDlx) {
-          reason = "EVO regulars are the less-common group — pluto boosts them, not deluxe";
-        } else {
-          reason = "pluto only targets EVO regulars and deluxe cards";
-        }
-        excluded.push({ core_type: CoreType.PLUTO_CORE, color: null, reason });
       }
     }
 

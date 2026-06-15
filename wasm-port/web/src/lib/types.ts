@@ -51,9 +51,6 @@ export const CoreType = {
   DELUXE_CORE: "deluxe_core",
   // Void core: base + scale × n_dead. Applies to every non-DEAD scoring card.
   VOID_CORE:   "void_core",
-  // Pluto core: flat multiplier. EVO-only. Targets the less-common of
-  // {EVO regulars, deluxe cards}; ties with both>0 → both; one zero → the other.
-  PLUTO_CORE:  "pluto_core",
 } as const;
 export type CoreType = typeof CoreType[keyof typeof CoreType];
 

@@ -35,7 +35,7 @@ export function hiddenInventoryTypes(
 
 /**
  * Core picker rows that should be hidden in the current mode. Vanilla
- * disables deluxe / void / pluto cores via cfg flags. `_mode` is unused
+ * disables deluxe / void cores via cfg flags. `_mode` is unused
  * today (every gate is cfg-derived) but kept in the signature so callers
  * don't need to reshape arguments if we ever add a mode-only rule.
  */
@@ -43,7 +43,6 @@ export function hiddenCoreTypes(_mode: string, cfg: ResolvedConfig): Set<CoreTyp
   const hidden = new Set<CoreType>();
   if (!cfg.deluxe.allow)     hidden.add(CoreType.DELUXE_CORE);
   if (!cfg.cores.void_allow) hidden.add(CoreType.VOID_CORE);
-  if (!cfg.pluto.allow)      hidden.add(CoreType.PLUTO_CORE);
   return hidden;
 }
 

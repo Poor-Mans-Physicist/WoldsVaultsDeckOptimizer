@@ -7,9 +7,8 @@ import random
 import time
 from typing import Dict, List, Tuple
 
-from .types import CardClass, CoreType
+from .types import CardClass
 from .config import (
-    ALLOW_PLUTO,
     DECKS,
     EXPORT_SPREADSHEET,
     MODE,
@@ -18,7 +17,7 @@ from .config import (
     _CFG,
     _get_test_configs,
 )
-from .simulate import candidate_cores, sa_optimize, try_pluto_swap
+from .simulate import candidate_cores, sa_optimize
 from .report import _report, generate_spreadsheet
 
 
@@ -52,31 +51,15 @@ def optimize(
             cores_str = "+".join(ct.value[:4].upper() for ct in sorted(cores, key=lambda x: x.value))
             if verbose:
                 print(f"\n  Candidate cores: {cores_str}")
-            # Eligibility for the cheap post-SA pluto swap: EVO-only, allowed,
-            # and the permutation must already lack both deluxe (the duplicate
-            # path handles that case) and pluto (we don't swap into a perm that
-            # already has it).
-            pluto_swap_eligible = (
-                ALLOW_PLUTO
-                and card_class == CardClass.EVO
-                and CoreType.DELUXE_CORE not in cores
-                and CoreType.PLUTO_CORE  not in cores
-            )
             for _ in range(restarts):
                 run += 1
                 asgn, score = sa_optimize(deck, card_class, cores, n_iter=n_iter)
-                cores_used = cores
-                if pluto_swap_eligible:
-                    asgn, score, cores_used = try_pluto_swap(
-                        deck, asgn, score, cores, card_class,
-                    )
                 improved = score > best["score"]
                 if improved:
-                    best = {"score": score, "cores": cores_used, "assignment": dict(asgn)}
+                    best = {"score": score, "cores": cores, "assignment": dict(asgn)}
                 if verbose:
                     flag = "★" if improved else " "
-                    swap_marker = " [pluto]" if cores_used is not cores else ""
-                    print(f"  {flag}[{run:3d}/{total_runs}]  score={score:10.3f}  best={best['score']:10.3f}{swap_marker}")
+                    print(f"  {flag}[{run:3d}/{total_runs}]  score={score:10.3f}  best={best['score']:10.3f}")
 
         results[card_class] = best
         if verbose:

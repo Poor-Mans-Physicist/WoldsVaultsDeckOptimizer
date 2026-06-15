@@ -38,13 +38,6 @@ export interface ResolvedConfig {
     core_scale: number;
   };
 
-  // Pluto core (EVO-only). Flat multiplier targeting the less-common of
-  // {EVO regulars, deluxe cards}. Vanilla sets `allow: false`.
-  pluto: {
-    allow: boolean;
-    multiplier: number;
-  };
-
   // Arcane behavior. `auto_place: true` pre-fills arcane slots with ARCANE
   // and locks them (SA may still pick color); `false` lets SA swap to DEAD.
   arcane: {

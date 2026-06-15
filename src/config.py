@@ -92,9 +92,6 @@ MULT_DELUXE_FLAT:       float = _CFG["deluxe"]["flat"]
 MULT_DELUXE_CORE_BASE:  float = _CFG["deluxe"]["core_base"]
 MULT_DELUXE_CORE_SCALE: float = _CFG["deluxe"]["core_scale"]
 
-ALLOW_PLUTO:            bool  = _CFG["pluto"]["allow"]
-MULT_PLUTO:             float = _CFG["pluto"]["multiplier"]
-
 # Arcane behavior. When True (the historical default), every arcane (`A`)
 # slot is pre-filled with an ARCANE card before SA runs — preserving the
 # original "arcane slots always count toward Pure" behavior, now via a real
@@ -482,7 +479,6 @@ def set_mode(name: str) -> None:
     global MULT_PURE_BASE, MULT_PURE_SCALE, MULT_EQUILIBRIUM, MULT_FOIL, MULT_STEADFAST, MULT_COLOR
     global ALLOW_VOID, MULT_VOID_CORE_BASE, MULT_VOID_CORE_SCALE
     global ALLOW_DELUXE, MULT_DELUXE_FLAT, MULT_DELUXE_CORE_BASE, MULT_DELUXE_CORE_SCALE
-    global ALLOW_PLUTO, MULT_PLUTO
     global AUTO_PLACE_ARCANE
     global GREED_ADDITIVE, ADDITIVE_CORES, SHINY_POSITIONAL
     global ENABLE_EXPERIMENTAL_EXPONENT, EXPERIMENTAL_EXPONENT, EXPERIMENTAL_BOOST
@@ -520,8 +516,6 @@ def set_mode(name: str) -> None:
     MULT_DELUXE_FLAT         = _CFG["deluxe"]["flat"]
     MULT_DELUXE_CORE_BASE    = _CFG["deluxe"]["core_base"]
     MULT_DELUXE_CORE_SCALE   = _CFG["deluxe"]["core_scale"]
-    ALLOW_PLUTO              = _CFG["pluto"]["allow"]
-    MULT_PLUTO               = _CFG["pluto"]["multiplier"]
     AUTO_PLACE_ARCANE        = bool((_CFG.get("arcane") or {}).get("auto_place", True))
     GREED_ADDITIVE           = _CFG["stacking"]["greed_additive"]
     ADDITIVE_CORES           = _CFG["stacking"]["additive_cores"]

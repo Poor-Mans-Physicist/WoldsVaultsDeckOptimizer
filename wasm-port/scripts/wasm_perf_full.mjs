@@ -78,13 +78,12 @@ const basePayload = {
   mult_deluxe_core_scale: cfg.deluxe.core_scale,
   mult_void_core_base:    cfg.cores.void_base ?? 0,
   mult_void_core_scale:   cfg.cores.void_scale ?? 0,
-  mult_pluto:             cfg.pluto?.multiplier ?? 0,
   greed_additive:         cfg.stacking.greed_additive,
   additive_cores:         cfg.stacking.additive_cores,
 };
 
 // Inline candidate enumeration matching cores.ts logic. EVO with all cores
-// enabled (PURE/EQUI/STEAD/FOIL/COLOR/DELUXE_CORE/VOID/PLUTO).
+// enabled (PURE/EQUI/STEAD/FOIL/COLOR/DELUXE_CORE/VOID).
 // We won't bother enumerating COLOR per-color in this perf test — just count
 // what cores.ts would yield with a representative configuration.
 const SCENARIOS = [

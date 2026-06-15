@@ -63,9 +63,6 @@ const CORE_FOIL:        u8 = 4;
 const CORE_DELUXE:      u8 = 5;
 // Void core (base + scale × n_dead). Applies to every non-DEAD scoring card.
 const CORE_VOID:        u8 = 6;
-// Pluto core (flat multiplier). EVO-only. Targets the less-common of
-// {EVO regulars, deluxe cards}; ties with both>0 → both; one zero → the other.
-const CORE_PLUTO:       u8 = 7;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String ↔ u8 conversions (Python boundary only — never on the hot path)
@@ -150,7 +147,6 @@ pub(crate) fn core_from_str(s: &str) -> u8 {
         "foil"        => CORE_FOIL,
         "deluxe_core" => CORE_DELUXE,
         "void_core"   => CORE_VOID,
-        "pluto_core"  => CORE_PLUTO,
         other         => panic!("Unknown core type: {}", other),
     }
 }
@@ -224,7 +220,6 @@ pub(crate) struct SimConfig {
     pub mult_deluxe_core_scale: f64,
     pub mult_void_core_base:    f64,
     pub mult_void_core_scale:   f64,
-    pub mult_pluto:             f64,
     pub greed_additive: bool,
     pub additive_cores: bool,
     pub is_shiny: bool,
@@ -340,8 +335,8 @@ fn simulate(
 
     // All cores fold into a single per-card core_mult. Precompute the baseline
     // (cores that apply to every non-greed card regardless of color), plus the
-    // color- / deluxe- / void- / pluto-core gated addends, so the per-card
-    // combination at accumulation time is constant-time.
+    // color- / deluxe- / void-core gated addends, so the per-card combination
+    // at accumulation time is constant-time.
     let mut baseline_sum  = 0.0f64;
     let mut baseline_prod = 1.0f64;
     let mut color_addend  = 0.0f64;
@@ -352,9 +347,6 @@ fn simulate(
     let mut void_addend   = 0.0f64;
     let mut void_factor   = 1.0f64;
     let mut void_present  = false;
-    let mut pluto_addend  = 0.0f64;
-    let mut pluto_factor  = 1.0f64;
-    let mut pluto_present = false;
     let color_core_color = cores.color_core_color;
 
     for s in &cores.list {
@@ -400,59 +392,34 @@ fn simulate(
                 void_factor   = v;
                 void_present  = true;
             }
-            CORE_PLUTO if !cfg.is_shiny => {
-                let v = if s.has_override() { s.override_ } else { cfg.mult_pluto };
-                pluto_addend  = v - 1.0;
-                pluto_factor  = v;
-                pluto_present = true;
-            }
             _ => {}
         }
     }
 
-    // Pluto's target groups (EVO-only). Less-common wins; tied with both>0 →
-    // both; one zero → the other.
-    let (pluto_target_reg, pluto_target_dlx) = if pluto_present {
-        if      n_positional == 0 && n_deluxe == 0 { (false, false) }
-        else if n_positional == 0                  { (false, true)  }
-        else if n_deluxe == 0                      { (true,  false) }
-        else if n_positional < n_deluxe            { (true,  false) }
-        else if n_deluxe     < n_positional        { (false, true)  }
-        else                                       { (true,  true)  }
-    } else {
-        (false, false)
-    };
-
-    // Per-card core multiplier — picks color/deluxe/void/pluto addends per
+    // Per-card core multiplier — picks color/deluxe/void addends per
     // applicability:
     //   color  → card_color matches the color core's color
     //   deluxe → card is NOT a deluxe card (deluxes fuel the core)
     //   void   → card is NOT a dead card (deads have base 0 anyway)
-    //   pluto  → card_type matches pluto's resolved target group
     let card_core_mult = |t: u8, c: u8| -> f64 {
         let color_applies  =
             color_core_color != COLOR_NONE && c != COLOR_NONE && c == color_core_color;
         let deluxe_applies = deluxe_present && t != DELUXE;
         let void_applies   = void_present   && t != DEAD;
-        let pluto_applies  = pluto_present && (
-            (pluto_target_reg && is_positional(t))
-            || (pluto_target_dlx && t == DELUXE)
-        );
         if cfg.additive_cores {
             1.0 + baseline_sum
                 + if color_applies  { color_addend  } else { 0.0 }
                 + if deluxe_applies { deluxe_addend } else { 0.0 }
                 + if void_applies   { void_addend   } else { 0.0 }
-                + if pluto_applies  { pluto_addend  } else { 0.0 }
         } else {
             let mut m = baseline_prod;
             if color_applies  { m *= color_factor_val; }
             if deluxe_applies { m *= deluxe_factor; }
             if void_applies   { m *= void_factor; }
-            if pluto_applies  { m *= pluto_factor; }
             m
         }
     };
+    let _ = n_positional;
 
     // Greed → boost pass (same semantics as classic optimizer).
     // Additive: reset to 0 and accumulate raw multipliers (use-site floors at 1).
@@ -1013,7 +980,6 @@ pub(crate) fn run_sa_inventory_core(run: InventoryRun<'_>) -> (Vec<(u8, u8)>, f6
     mult_equilibrium, mult_foil, mult_steadfast, mult_color,
     mult_deluxe_flat, mult_deluxe_core_base, mult_deluxe_core_scale,
     mult_void_core_base, mult_void_core_scale,
-    mult_pluto,
     greed_additive, additive_cores,
 ))]
 pub fn run_sa_inventory(
@@ -1047,7 +1013,6 @@ pub fn run_sa_inventory(
     mult_deluxe_core_scale: f64,
     mult_void_core_base:    f64,
     mult_void_core_scale:   f64,
-    mult_pluto:             f64,
     greed_additive:         bool,
     additive_cores:         bool,
 ) -> PyResult<(Vec<(String, String)>, f64)> {
@@ -1068,7 +1033,7 @@ pub fn run_sa_inventory(
         mult_pure_base, mult_pure_scale,
         mult_equilibrium, mult_foil, mult_steadfast, mult_color,
         mult_deluxe_flat, mult_deluxe_core_base, mult_deluxe_core_scale,
-        mult_void_core_base, mult_void_core_scale, mult_pluto,
+        mult_void_core_base, mult_void_core_scale,
         greed_additive, additive_cores,
         is_shiny,                  // overwritten by orchestrator from run.is_shiny
         auto_place_arcane,         // overwritten too — but set here for completeness

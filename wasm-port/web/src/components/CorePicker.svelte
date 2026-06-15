@@ -8,7 +8,7 @@
     app.coreState[i].override = v === "" ? null : Number(v);
   }
 
-  // Mode-driven row visibility. Vanilla hides deluxe / void / pluto rows;
+  // Mode-driven row visibility. Vanilla hides deluxe / void rows;
   // we recompute on every read since state.mode + state.cfg can change.
   const hidden = $derived(
     app.cfg ? hiddenCoreTypes(app.mode, app.cfg) : new Set(),

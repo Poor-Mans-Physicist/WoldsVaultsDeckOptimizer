@@ -105,8 +105,3 @@ class CoreType(Enum):
     # candidate (treated like PURE in the permutator). Excluded from dead cards
     # themselves; otherwise applies to every non-greed scoring card.
     VOID_CORE   = "void_core"
-    # Pluto core: flat 3x multiplier targeting only the less-common of
-    # {EVO regular cards, deluxe cards} in the deck (both if tied; the non-empty
-    # group if the other is 0). EVO-only. Special-cased in candidate enumeration
-    # to avoid the 2x permutation blow-up of a naive variable-pool addition.
-    PLUTO_CORE  = "pluto_core"

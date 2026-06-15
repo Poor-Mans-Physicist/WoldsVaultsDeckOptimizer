@@ -19,7 +19,7 @@ export async function optimizeInventoryAsync(
   const _T0 = performance.now();
 
   // Phase 1 — pre-flight + enumerate (sync, this thread).
-  const { candidates, plutoSpec } = enumerateCandidates(input);
+  const { candidates } = enumerateCandidates(input);
   const _T_enum = performance.now();
 
   // Phase 2 — fan out across workers. chunkInto round-robins so each slice
@@ -29,7 +29,7 @@ export async function optimizeInventoryAsync(
   const _T_split = performance.now();
 
   const sliceResults: SliceResult[] = await Promise.all(
-    slices.map((slice, i) => dispatchSlice(i, input, slice, plutoSpec)),
+    slices.map((slice, i) => dispatchSlice(i, input, slice)),
   );
   const _T_workers = performance.now();
 

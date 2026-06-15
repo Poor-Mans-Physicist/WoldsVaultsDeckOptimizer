@@ -16,7 +16,6 @@ export const CORE_OPTIONS: readonly CoreOption[] = [
   { coreType: CoreType.FOIL,        color: null },
   { coreType: CoreType.DELUXE_CORE, color: null },
   { coreType: CoreType.VOID_CORE,   color: null },
-  { coreType: CoreType.PLUTO_CORE,  color: null },
   { coreType: CoreType.COLOR,       color: Color.RED },
   { coreType: CoreType.COLOR,       color: Color.GREEN },
   { coreType: CoreType.COLOR,       color: Color.BLUE },
@@ -37,7 +36,7 @@ export function coreLabel(opt: CoreOption): string {
  * Numeric default the optimizer would use when the user leaves the override
  * field blank. For PURE / DELUXE_CORE / VOID_CORE the override replaces only
  * the scale term (formula stays `base + scale × n`), so we surface the scale.
- * Static cores (EQUI / STEAD / FOIL / COLOR / PLUTO) surface their multiplier.
+ * Static cores (EQUI / STEAD / FOIL / COLOR) surface their multiplier.
  */
 export function coreDefaultValue(opt: CoreOption, cfg: ResolvedConfig): number {
   switch (opt.coreType) {
@@ -48,7 +47,6 @@ export function coreDefaultValue(opt: CoreOption, cfg: ResolvedConfig): number {
     case CoreType.STEADFAST:   return cfg.cores.steadfast;
     case CoreType.FOIL:        return cfg.cores.foil;
     case CoreType.COLOR:       return cfg.cores.color;
-    case CoreType.PLUTO_CORE:  return cfg.pluto.multiplier;
   }
 }
 

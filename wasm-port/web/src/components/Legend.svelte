@@ -55,8 +55,8 @@
         for <code>PURE</code> / <code>DELUXE_CORE</code> / <code>VOID_CORE</code>
         it overrides only the <em>scale</em> term (formula stays
         <code>base + scale × n</code>); static cores
-        (<code>EQUI</code> / <code>STEAD</code> / <code>FOIL</code> / <code>COLOR</code>
-        / <code>PLUTO</code>) get a flat replacement.</li>
+        (<code>EQUI</code> / <code>STEAD</code> / <code>FOIL</code> / <code>COLOR</code>)
+        get a flat replacement.</li>
     <li>Hit <em>Run</em>. The deck repaints with the optimizer's chosen placement;
         each tile shows the card's symbol and its NDM contribution. Click any tile
         to see the full math (base × cores × boost) for that slot.</li>
@@ -97,9 +97,9 @@
   <h3>Mode toggle</h3>
   <ul>
     <li><strong>Wolds</strong>: full feature set — positional shiny, deluxe,
-        evo / surr greeds, void / pluto / deluxe cores all available.</li>
+        evo / surr greeds, void / deluxe cores all available.</li>
     <li><strong>Vanilla</strong>: stat-card decks only (positional rows hidden
-        under Stat class); deluxe / void / pluto / evo / surr disabled.
+        under Stat class); deluxe / void / evo / surr disabled.
         Pulls its own deck roster (<code>vh_decks.json</code>).</li>
   </ul>
 </div>
