@@ -11,7 +11,6 @@ requires-python = ">=3.9"
 dependencies = [
     "openpyxl>=3.1",
     "pyyaml>=6.0",
-    "nicegui>=2.0",
 ]
 
 # Opt-in Rust core. Enable it with `uv run --extra rust optimize`.
@@ -23,7 +22,6 @@ rust = ["ndm_core"]
 [project.scripts]
 optimize = "optimizer:main"
 optimize-py = "optimizer:main_no_rust"
-optimize-gui = "src.gui:main"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["optimizer.py", "src"]
