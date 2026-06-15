@@ -5,26 +5,19 @@ edition = "2021"
 
 [lib]
 name = "ndm_core"
-# `cdylib` for both PyO3 and wasm-bindgen output; `rlib` so tests / native bins
-# can link against the same crate.
+# `cdylib` for wasm-bindgen output; `rlib` so cargo check / tests can link.
 crate-type = ["cdylib", "rlib"]
 
+# This crate is web-only after the dedup refactor. The native CLI uses the
+# OUTER ndm_core/ crate (PyO3). The `wasm` feature is kept as a feature flag
+# so the existing build commands keep working unchanged.
 [features]
-# `python` builds the PyO3 extension module (used by maturin for the CLI).
-# `wasm`   builds the wasm-bindgen extension (used by wasm-pack for the SPA).
-# Defaulting to `python` preserves the existing `uv run --extra rust` workflow.
-default = ["python"]
-python  = ["dep:pyo3", "dep:rayon"]
+default = ["wasm"]
 wasm    = ["dep:wasm-bindgen", "dep:serde", "dep:serde-wasm-bindgen", "dep:getrandom"]
 
 [dependencies]
 rand = { version = "0.8", features = ["small_rng"] }
 
-# Python backend
-pyo3  = { version = "0.21", features = ["extension-module"], optional = true }
-rayon = { version = "1.10", optional = true }
-
-# WASM backend
 wasm-bindgen        = { version = "0.2", optional = true }
 serde               = { version = "1",   features = ["derive"], optional = true }
 serde-wasm-bindgen  = { version = "0.6", optional = true }

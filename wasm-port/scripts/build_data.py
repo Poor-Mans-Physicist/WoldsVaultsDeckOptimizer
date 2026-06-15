@@ -36,11 +36,15 @@ from typing import Any, Dict, List, Set, Tuple
 import yaml
 
 
-_REPO_ROOT   = Path(__file__).resolve().parent.parent
+# After the wasm-port dedup refactor, config + decks + modifiers live at the
+# OUTER repo root (single source of truth for both CLI and web app).
+# Script path: <repo>/wasm-port/scripts/build_data.py  →  three .parent hops.
+_REPO_ROOT   = Path(__file__).resolve().parent.parent.parent
+_WASM_ROOT   = _REPO_ROOT / "wasm-port"
 _CONFIG_PATH = _REPO_ROOT / "config.yaml"
 _DECKS_DIR   = _REPO_ROOT / "decks"
 _MODIFIERS   = _REPO_ROOT / "modifiers.json"
-_DEFAULT_OUT = _REPO_ROOT / "web" / "public"
+_DEFAULT_OUT = _WASM_ROOT / "web" / "public"
 
 
 # ── config.yaml resolution ────────────────────────────────────────────────────

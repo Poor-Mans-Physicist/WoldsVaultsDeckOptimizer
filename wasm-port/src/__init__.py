@@ -1,1 +1,0 @@
-"""NDM Optimizer source package."""

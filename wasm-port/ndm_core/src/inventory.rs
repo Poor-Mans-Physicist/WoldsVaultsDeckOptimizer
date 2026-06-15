@@ -8,12 +8,8 @@
 //!   * Empty slots after inventory exhaustion become transparent DEAD cards.
 //!   * Restarts run in parallel via rayon.
 
-#[cfg(feature = "python")]
-use pyo3::prelude::*;
 use rand::prelude::*;
 use rand::rngs::SmallRng;
-#[cfg(feature = "python")]
-use rayon::prelude::*;
 use std::collections::HashMap;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -972,10 +968,9 @@ pub(crate) fn run_sa_inventory_core(run: InventoryRun<'_>) -> (Vec<(u8, u8)>, f6
                        n_iter, 100.0, 0.5, seed)
     };
 
-    #[cfg(feature = "python")]
-    let results: Vec<(Vec<(u8, u8)>, f64)> =
-        (0..restarts).into_par_iter().map(restart_fn).collect();
-    #[cfg(not(feature = "python"))]
+    // Restarts run sequentially in the WASM build (rayon isn't available
+    // in wasm32-unknown-unknown without thread-pool plumbing). The browser
+    // is single-threaded anyway and the SPA already shards across workers.
     let results: Vec<(Vec<(u8, u8)>, f64)> =
         (0..restarts).map(restart_fn).collect();
 
@@ -984,101 +979,3 @@ pub(crate) fn run_sa_inventory_core(run: InventoryRun<'_>) -> (Vec<(u8, u8)>, f6
         .expect("at least one restart")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PyO3 entry point — thin marshalling layer over run_sa_inventory_core.
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[cfg(feature = "python")]
-#[pyfunction]
-#[pyo3(signature = (
-    slots, row_peers, col_peers, surr_peers, diag_peers,
-    arcane_slot_indices, auto_place_arcane,
-    is_shiny, inventory, forced_inventory, cores,
-    n_iter, restarts,
-    mult_dir_vert, mult_dir_horiz, mult_evo_greed, mult_surr_greed,
-    mult_dir_diag_up, mult_dir_diag_down,
-    mult_pure_base, mult_pure_scale,
-    mult_equilibrium, mult_foil, mult_steadfast, mult_color,
-    mult_deluxe_flat, mult_deluxe_core_base, mult_deluxe_core_scale,
-    mult_void_core_base, mult_void_core_scale,
-    mult_archive_core,
-    greed_additive, additive_cores,
-))]
-pub fn run_sa_inventory(
-    slots:                  Vec<(i32, i32)>,
-    row_peers:              Vec<Vec<usize>>,
-    col_peers:              Vec<Vec<usize>>,
-    surr_peers:             Vec<Vec<usize>>,
-    diag_peers:             Vec<Vec<usize>>,
-    arcane_slot_indices:    Vec<usize>,
-    auto_place_arcane:      bool,
-    is_shiny:               bool,
-    inventory:              Vec<(String, String, u32)>,
-    forced_inventory:       Vec<(String, String, u32)>,
-    cores:                  Vec<(String, String, f64)>,
-    n_iter:                 usize,
-    restarts:               usize,
-    mult_dir_vert:          f64,
-    mult_dir_horiz:         f64,
-    mult_evo_greed:         f64,
-    mult_surr_greed:        f64,
-    mult_dir_diag_up:       f64,
-    mult_dir_diag_down:     f64,
-    mult_pure_base:         f64,
-    mult_pure_scale:        f64,
-    mult_equilibrium:       f64,
-    mult_foil:              f64,
-    mult_steadfast:         f64,
-    mult_color:             f64,
-    mult_deluxe_flat:       f64,
-    mult_deluxe_core_base:  f64,
-    mult_deluxe_core_scale: f64,
-    mult_void_core_base:    f64,
-    mult_void_core_scale:   f64,
-    mult_archive_core:      f64,
-    greed_additive:         bool,
-    additive_cores:         bool,
-) -> PyResult<(Vec<(String, String)>, f64)> {
-    // Pre-type inventory + cores so the orchestrator stays pure-Rust.
-    let inventory_u8: Vec<(u8, u8, u32)> = inventory.iter()
-        .map(|(t, c, n)| (card_type_from_str(t), color_from_str(c), *n))
-        .collect();
-    let forced_u8: Vec<(u8, u8, u32)> = forced_inventory.iter()
-        .map(|(t, c, n)| (card_type_from_str(t), color_from_str(c), *n))
-        .collect();
-    let cores_u8: Vec<(u8, u8, f64)> = cores.iter()
-        .map(|(t, c, o)| (core_from_str(t), color_from_str(c), *o))
-        .collect();
-
-    let cfg_mults = SimConfig {
-        mult_dir_vert, mult_dir_horiz, mult_evo_greed, mult_surr_greed,
-        mult_dir_diag_up, mult_dir_diag_down,
-        mult_pure_base, mult_pure_scale,
-        mult_equilibrium, mult_foil, mult_steadfast, mult_color,
-        mult_deluxe_flat, mult_deluxe_core_base, mult_deluxe_core_scale,
-        mult_void_core_base, mult_void_core_scale,
-        mult_archive_core,
-        greed_additive, additive_cores,
-        is_shiny,                  // overwritten by orchestrator from run.is_shiny
-        auto_place_arcane,         // overwritten too — but set here for completeness
-    };
-
-    let run = InventoryRun {
-        slots:               &slots,
-        row_peers, col_peers, surr_peers, diag_peers,
-        arcane_slot_indices,
-        auto_place_arcane,
-        is_shiny,
-        inventory:           inventory_u8,
-        forced_inventory:    forced_u8,
-        cores:               cores_u8,
-        n_iter, restarts,
-        cfg_mults,
-    };
-    let (best_asgn, best_score) = run_sa_inventory_core(run);
-
-    let result_strs: Vec<(String, String)> = best_asgn.iter()
-        .map(|&(t, c)| (card_type_to_str(t).to_owned(), color_to_str(c).to_owned()))
-        .collect();
-    Ok((result_strs, best_score))
-}
