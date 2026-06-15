@@ -14,8 +14,15 @@ import {
   MAX_CONSTRUCTION, MAX_ARCANE_CONVERT,
   type StructuralCores,
 } from "./structural";
+import {
+  emptyBuilder, deriveKey, type BuilderState, type BuilderTool,
+} from "./builder";
+import {
+  loadAllSaved, loadByKey, saveDeck as storageSaveDeck, deleteDeck as storageDeleteDeck,
+  type SavedDeck,
+} from "./savedDecks";
 
-export type Tab = "optimize" | "preview";
+export type Tab = "optimize" | "preview" | "build";
 
 export interface CoreRowState {
   enabled:  boolean;
@@ -71,6 +78,14 @@ interface AppState {
   // cfg.cores.{construction_allow, arcane_core_allow}. Their state mutates the
   // deck layout before SA runs — see lib/structural.ts.
   structural: StructuralCores;
+
+  // "Build your own deck" tab state. The canvas + name + core count + tool
+  // mode all live here; saved decks live in localStorage via lib/savedDecks.ts
+  // and are loaded on demand into `builder`. See lib/builder.ts.
+  builder: BuilderState;
+  /** Cached list of saved decks for the Builder sidebar — refreshed on
+   *  load / save / delete via reloadSavedDecks(). */
+  savedDecks: SavedDeck[];
 }
 
 function initialCoreState(): CoreRowState[] {
@@ -107,6 +122,9 @@ export const app = $state<AppState>({
   previewAssignments: new Map(),
 
   structural: emptyStructural(),
+
+  builder:    emptyBuilder(),
+  savedDecks: [],
 });
 
 /** Build the user's CoreSpec[] from the picker state. */
@@ -243,4 +261,130 @@ export function unconvertArcaneSlot(pos: Position): void {
  *  the reset (run result + preview). */
 export function resetStructural(): void {
   app.structural = emptyStructural();
+}
+
+// ─── Builder (Build your own deck) ───────────────────────────────────────────
+//
+// Every mutation flips `app.builder.dirty = true` and tears down the SA result
+// (the previous run was for the old layout). Saving / loading / starting a new
+// deck resets dirty back to false. The Build tab guards against tab-switch and
+// browser-close with this flag.
+
+const samePos = (a: Position, b: Position) => a[0] === b[0] && a[1] === b[1];
+
+function _markBuilderDirty(): void {
+  app.builder.dirty = true;
+  clearRunResult();
+}
+
+/** Place a regular `O` tile at `pos`. If the tile is already arcane, this
+ *  silently no-ops (the user must Erase first). Caller verifies the position
+ *  is inside the 9×6 canvas. */
+export function builderPlaceRegular(pos: Position): void {
+  if (app.builder.regularSlots.some((p) => samePos(p, pos))) return;
+  if (app.builder.arcaneSlots.some((p) => samePos(p, pos)))  return;
+  app.builder.regularSlots = [...app.builder.regularSlots, pos];
+  _markBuilderDirty();
+}
+
+/** Place an arcane `A` tile at `pos`. Same no-op rule as above. */
+export function builderPlaceArcane(pos: Position): void {
+  if (app.builder.regularSlots.some((p) => samePos(p, pos))) return;
+  if (app.builder.arcaneSlots.some((p) => samePos(p, pos)))  return;
+  app.builder.arcaneSlots = [...app.builder.arcaneSlots, pos];
+  _markBuilderDirty();
+}
+
+/** Remove a tile of either type at `pos`. */
+export function builderEraseTile(pos: Position): void {
+  const before =
+    app.builder.regularSlots.length + app.builder.arcaneSlots.length;
+  app.builder.regularSlots = app.builder.regularSlots.filter((p) => !samePos(p, pos));
+  app.builder.arcaneSlots  = app.builder.arcaneSlots .filter((p) => !samePos(p, pos));
+  const after =
+    app.builder.regularSlots.length + app.builder.arcaneSlots.length;
+  if (after !== before) _markBuilderDirty();
+}
+
+/** Dispatch a canvas left-click to the currently selected tool. */
+export function builderCanvasClick(pos: Position): void {
+  switch (app.builder.tool) {
+    case "regular": builderPlaceRegular(pos); break;
+    case "arcane":  builderPlaceArcane(pos);  break;
+    case "erase":   builderEraseTile(pos);    break;
+  }
+}
+
+/** Right-click anywhere on the canvas erases (parallel with the structural
+ *  cores' right-click-to-revert convention). */
+export function builderCanvasContextClick(pos: Position): void {
+  builderEraseTile(pos);
+}
+
+/** Switch the canvas tool. Pure UI state — no dirty flip. */
+export function builderSetTool(tool: BuilderTool): void {
+  app.builder.tool = tool;
+}
+
+/** Rename the in-progress deck. Marks dirty so the user gets the save prompt. */
+export function builderSetName(name: string): void {
+  if (app.builder.name === name) return;
+  app.builder.name = name;
+  _markBuilderDirty();
+}
+
+/** Adjust the core-slot count for the in-progress deck. */
+export function builderSetCoreCount(n: number): void {
+  const safe = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  if (app.builder.coreCount === safe) return;
+  app.builder.coreCount = safe;
+  _markBuilderDirty();
+}
+
+/** Start from scratch. Caller has confirmed unsaved-changes flow first. */
+export function builderNew(): void {
+  app.builder = emptyBuilder();
+  clearRunResult();
+}
+
+/** Refresh the cached saved-decks list from localStorage. */
+export function reloadSavedDecks(): void {
+  app.savedDecks = loadAllSaved();
+}
+
+/** Replace the builder state with the saved record at `key`. No-op if the key
+ *  is missing — caller should refresh the list first. */
+export function loadSavedDeck(key: string): void {
+  const rec = loadByKey(key);
+  if (rec === null) return;
+  app.builder = {
+    name:        rec.name,
+    coreCount:   rec.coreCount,
+    regularSlots: rec.regularSlots,
+    arcaneSlots:  rec.arcaneSlots,
+    tool:        "regular",
+    dirty:       false,
+    loadedKey:   rec.key,
+  };
+  clearRunResult();
+}
+
+/** Persist the builder state. If `saveAs` is true the existing-key is dropped
+ *  so a colliding name spawns a new record. Returns the resolved key. */
+export function saveBuilderDeck(saveAs: boolean = false): string {
+  const wantKey = deriveKey(app.builder.name);
+  const existing = saveAs ? null : app.builder.loadedKey;
+  const resolvedKey = storageSaveDeck(app.builder, wantKey, existing);
+  app.builder.loadedKey = resolvedKey;
+  app.builder.dirty = false;
+  reloadSavedDecks();
+  return resolvedKey;
+}
+
+/** Delete a saved deck. If the deleted entry is the one currently loaded in
+ *  the builder, the in-progress state stays but `loadedKey` is cleared. */
+export function deleteSavedDeck(key: string): void {
+  storageDeleteDeck(key);
+  if (app.builder.loadedKey === key) app.builder.loadedKey = null;
+  reloadSavedDecks();
 }

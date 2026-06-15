@@ -416,6 +416,56 @@ the layout change plus the budget cost.
 
 ---
 
+## Build-your-own-deck tab — WEB ONLY
+
+The Build tab (`wasm-port/web/src/components/BuilderPanel.svelte`) is a
+pre-SA layout factory, not a new scoring rule. The user draws an
+arbitrary 9×6 layout on a blank canvas (Regular / Arcane / Erase tools),
+names it, picks a core count, then runs the same inventory optimizer
+the Optimize tab uses. Saved decks persist in `localStorage` only —
+nothing about the SA, the scoring math, or the deck pipeline differs.
+
+Pipeline: `BuilderState` → `builderToDeck()` produces a `Deck` via the
+same `buildDeck()` constructor that JSON / YAML loads use. From there,
+the structural cores (if equipped) layer on via `effectiveDeck()`
+exactly as for a roster deck. The structural-core 9×6 cap and the
+Builder's canvas size share the same `MAX_GRID_WIDTH` / `MAX_GRID_HEIGHT`
+constants.
+
+Export is JSON-only — the modpack's deck-data shape (per
+`decks/wolds_decks.json`):
+
+```json
+{
+  "<key>": {
+    "model":       "woldsvaults:deck/<key>#inventory",
+    "name":        "<display name>",
+    "essence":     { "min": 5, "max": 5 },
+    "layout":      [ { "value": ["...", "..."], "weight": 1.0 } ],
+    "socketCount": { "min": <cores>, "max": <cores> }
+  }
+}
+```
+
+`<key>` derives from the name (lowercase, non-alphanumerics →
+underscores, strip leading digits / underscores; collisions get
+`_2`, `_3`, … suffixes when saving). `min_regular` / `max_greed` are
+**not** surfaced in the Builder — neither field exists in the modpack
+JSON shape — and they default to `-1` (unconstrained) when the built
+deck flows into the SA.
+
+The Build tab uses the same `CorePicker` and `InventoryTable` panels as
+Optimize. Saved decks **never** appear in the Optimize tab's deck
+dropdown, only in the Builder's own "Saved decks" selector — this keeps
+user experiments visually separate from the modpack's roster.
+
+There is no platform-discrepancy entry to add here: the spreadsheet CLI
+has no Build surface (panel sweeps over a fixed roster), and the WASM
+Build tab feeds its synthesized `Deck` through the exact same scoring
+pipeline as everything else.
+
+---
+
 ## Core stacking — additive vs multiplicative
 
 Controlled by `stacking.additive_cores` (**true** in Wold's, **false** in

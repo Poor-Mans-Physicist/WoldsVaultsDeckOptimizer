@@ -9,6 +9,8 @@
     resetStructural,
     addConstructionSlot, removeConstructionSlot,
     convertSlotToArcane, unconvertArcaneSlot,
+    builderCanvasClick, builderCanvasContextClick,
+    saveBuilderDeck, reloadSavedDecks,
   } from "./lib/state.svelte";
   import { loadConfigBundle, getMode } from "./lib/config";
   import { loadDecks } from "./lib/deck";
@@ -23,17 +25,24 @@
   import {
     effectiveDeck, constructionCandidates, structuralCoreCost,
   } from "./lib/structural";
+  import {
+    builderToDeck, buildModpackJson, allBuilderSlots,
+    BUILDER_GRID_WIDTH, BUILDER_GRID_HEIGHT,
+  } from "./lib/builder";
   import type { SlotBreakdown } from "./lib/breakdown";
   import type { Position, CardType } from "./lib/types";
 
-  import ModeToggle       from "./components/ModeToggle.svelte";
-  import DeckGrid         from "./components/DeckGrid.svelte";
-  import InventoryTable   from "./components/InventoryTable.svelte";
-  import CorePicker       from "./components/CorePicker.svelte";
-  import Legend           from "./components/Legend.svelte";
-  import BreakdownDialog  from "./components/BreakdownDialog.svelte";
-  import AssignDialog     from "./components/AssignDialog.svelte";
-  import StatsPanel       from "./components/StatsPanel.svelte";
+  import ModeToggle             from "./components/ModeToggle.svelte";
+  import DeckGrid               from "./components/DeckGrid.svelte";
+  import InventoryTable         from "./components/InventoryTable.svelte";
+  import CorePicker             from "./components/CorePicker.svelte";
+  import Legend                 from "./components/Legend.svelte";
+  import BreakdownDialog        from "./components/BreakdownDialog.svelte";
+  import AssignDialog           from "./components/AssignDialog.svelte";
+  import StatsPanel             from "./components/StatsPanel.svelte";
+  import BuilderPanel           from "./components/BuilderPanel.svelte";
+  import ExportJsonDialog       from "./components/ExportJsonDialog.svelte";
+  import UnsavedChangesDialog   from "./components/UnsavedChangesDialog.svelte";
 
   const baseUrl = (import.meta.env.BASE_URL ?? "/").endsWith("/")
     ? (import.meta.env.BASE_URL ?? "/")
@@ -57,19 +66,30 @@
     return m;
   });
 
-  // Effective deck — base deck mutated by structural cores (Construction Core
+  // The "base" deck for the active tab:
+  //   • Optimize / Preview  → `app.deck` (selected from the dropdown)
+  //   • Build               → a synthesized Deck built from the canvas state
+  // The structural cores then layer on top of that to produce `fxDeck`, which
+  // is what the grid shows AND what the SA scores.
+  const baseDeckForTab = $derived(
+    app.tab === "build"
+      ? (app.cfg ? builderToDeck(app.builder, app.cfg.deckmod) : null)
+      : app.deck,
+  );
+
+  // Effective deck — base mutated by structural cores (Construction Core
   // additions, Arcane Core conversions). This is what both the grid renders
   // and the optimizer scores. Returns the base reference when no structural
   // changes are active, so the existing fast path is preserved.
   const fxDeck = $derived(
-    app.deck && app.cfg
-      ? effectiveDeck(app.deck, app.structural, app.cfg.deckmod)
+    baseDeckForTab && app.cfg
+      ? effectiveDeck(baseDeckForTab, app.structural, app.cfg.deckmod)
       : null,
   );
 
   // Live Construction-Core candidates (used by DeckGrid in placement mode).
   const placementCandidates = $derived(
-    app.deck ? constructionCandidates(app.deck, app.structural) : [],
+    baseDeckForTab ? constructionCandidates(baseDeckForTab, app.structural) : [],
   );
 
   // Effective core-slot count for the SA. Three layers:
@@ -81,7 +101,7 @@
   // the structural cores push the budget below zero, run() flags an error.
   const structuralCost = $derived(structuralCoreCost(app.structural));
   const rawCoreBudget = $derived(
-    app.deck ? app.deck.base_core_slots + app.bonusCores - structuralCost : 0,
+    baseDeckForTab ? baseDeckForTab.base_core_slots + app.bonusCores - structuralCost : 0,
   );
   const effectiveCoreSlots = $derived(Math.max(0, rawCoreBudget));
 
@@ -111,7 +131,80 @@
     } catch (e) {
       app.modifiersError = e instanceof Error ? e.message : String(e);
     }
+    // Populate the Builder's saved-decks list once at boot. Refreshed by the
+    // builder helpers (save / delete) on demand thereafter.
+    reloadSavedDecks();
+
+    // Browser-close guard: warn the user if they're about to lose unsaved
+    // builder changes. The exact wording is browser-controlled — we just
+    // signal that a confirmation is desired by setting `returnValue`.
+    window.addEventListener("beforeunload", (e) => {
+      if (app.tab === "build" && app.builder.dirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    });
   });
+
+  // ─── Tab switching with unsaved-changes guard ───────────────────────────
+  //
+  // Any navigation away from the Build tab that would drop unsaved canvas
+  // state is gated through `requestNavigate`. The dialog returns one of:
+  //   • Save    → persist, then run the deferred action
+  //   • Discard → drop the dirty flag, then run the deferred action
+  //   • Cancel  → drop the deferred action entirely
+  // BuilderPanel also routes its New / Load-saved actions through the same
+  // gate so they can't quietly lose work.
+
+  let unsavedOpen = $state(false);
+  let unsavedAction: (() => void) | null = $state(null);
+
+  function requestNavigate(proceed: () => void) {
+    if (app.tab === "build" && app.builder.dirty) {
+      unsavedAction = proceed;
+      unsavedOpen = true;
+      return;
+    }
+    proceed();
+  }
+
+  function unsavedSave() {
+    if (!app.builder.name.trim() || allBuilderSlots(app.builder).length === 0) {
+      // Can't save in this state — abort the navigation and surface the issue.
+      alert("Can't save: deck needs a name and at least one slot. Save manually or Discard.");
+      return;
+    }
+    saveBuilderDeck(false);
+    unsavedOpen = false;
+    const a = unsavedAction; unsavedAction = null;
+    a?.();
+  }
+  function unsavedDiscard() {
+    app.builder.dirty = false;
+    unsavedOpen = false;
+    const a = unsavedAction; unsavedAction = null;
+    a?.();
+  }
+  function unsavedCancel() {
+    unsavedOpen = false;
+    unsavedAction = null;
+  }
+
+  function switchTab(next: "optimize" | "preview" | "build") {
+    if (app.tab === next) return;
+    requestNavigate(() => { app.tab = next; });
+  }
+
+  let exportOpen = $state(false);
+  const exportJson = $derived(buildModpackJson(app.builder));
+
+  // The structural-core grid affordances (`+` placement, click-to-convert) are
+  // shown only when the grid is rendering an actual deck/result, never during
+  // the Build tab's blank-canvas mode. In Build tab they re-enable as soon as
+  // a run finishes (mutations then apply to the built deck for the next run).
+  const structuralUiActive = $derived(
+    app.tab === "optimize" || (app.tab === "build" && app.result !== null),
+  );
 
   async function onModeChange(next: string) {
     if (!app.bundle) return;
@@ -148,14 +241,20 @@
   }
 
   async function run() {
-    if (!app.cfg || !app.deck || !fxDeck || app.running) return;
+    if (!app.cfg || !baseDeckForTab || !fxDeck || app.running) return;
+    // Build tab can run an SA against an empty canvas — that just yields a
+    // degenerate result. Catch the obvious case here with a friendlier error.
+    if (app.tab === "build" && allBuilderSlots(app.builder).length === 0) {
+      app.runError = "Place at least one slot on the canvas before running.";
+      return;
+    }
     // Hard error before we spin up the SA: structural cores ate the budget.
     // Surfaces cleanly to the user without taking down the page.
     if (rawCoreBudget < 0) {
       app.runError =
         `Structural cores need ${structuralCost} core slot(s) but the deck ` +
-        `only has ${app.deck.base_core_slots + app.bonusCores} available ` +
-        `(base ${app.deck.base_core_slots} + bonus ${app.bonusCores}). ` +
+        `only has ${baseDeckForTab.base_core_slots + app.bonusCores} available ` +
+        `(base ${baseDeckForTab.base_core_slots} + bonus ${app.bonusCores}). ` +
         `Deselect a core or raise Bonus Cores.`;
       return;
     }
@@ -272,10 +371,13 @@
     <nav class="tabs">
       <button type="button"
         class:active={app.tab === "optimize"}
-        onclick={() => (app.tab = "optimize")}>Optimize</button>
+        onclick={() => switchTab("optimize")}>Optimize</button>
       <button type="button"
         class:active={app.tab === "preview"}
-        onclick={() => (app.tab = "preview")}>Preview</button>
+        onclick={() => switchTab("preview")}>Preview</button>
+      <button type="button"
+        class:active={app.tab === "build"}
+        onclick={() => switchTab("build")}>Build</button>
     </nav>
     {#if app.bundle}
       <ModeToggle
@@ -295,8 +397,16 @@
   <main class="layout">
     <!-- ── Left: controls (shared) ────────────────────────────────── -->
     <aside class="col-left">
+      {#if app.tab === "build"}
+        <BuilderPanel
+          onRequestExport={() => (exportOpen = true)}
+          requestNavigate={requestNavigate}
+        />
+      {/if}
+
       <section class="card">
         <h3>Deck</h3>
+        {#if app.tab !== "build"}
         <div class="row">
           <select value={app.deck.key} onchange={onDeckChange}>
             {#each app.decks as d}
@@ -304,6 +414,7 @@
             {/each}
           </select>
         </div>
+        {/if}
         <div class="row">
           <label>
             Class
@@ -330,7 +441,7 @@
         </div>
       </section>
 
-      {#if app.tab === "optimize"}
+      {#if app.tab === "optimize" || app.tab === "build"}
         <section class="card">
           <h3>SA params</h3>
           <div class="row">
@@ -403,8 +514,8 @@
         perSlotNdm={perSlotNdm}
         breakdown={app.result?.breakdown.perSlot ?? null}
         onSlotClick={onSlotClick}
-        placementMode={app.structural.constructionEnabled && app.tab === "optimize"}
-        conversionMode={app.structural.arcaneCoreEnabled && app.tab === "optimize"}
+        placementMode={app.structural.constructionEnabled && structuralUiActive}
+        conversionMode={app.structural.arcaneCoreEnabled && structuralUiActive}
         placementCandidates={placementCandidates}
         addedSlots={app.structural.addedSlots}
         convertedSlots={app.structural.convertedSlots}
@@ -412,13 +523,18 @@
         onRemoveSlot={(p) => removeConstructionSlot(p)}
         onConvertSlot={(p) => convertSlotToArcane(p)}
         onUnconvertSlot={(p) => unconvertArcaneSlot(p)}
+        buildMode={app.tab === "build" && !app.result}
+        buildRows={BUILDER_GRID_HEIGHT}
+        buildCols={BUILDER_GRID_WIDTH}
+        onBuildClick={builderCanvasClick}
+        onBuildContextClick={builderCanvasContextClick}
       />
 
       <Legend />
     </section>
 
-    <!-- ── Right: inventory (Optimize only) ───────────────────────── -->
-    {#if app.tab === "optimize"}
+    <!-- ── Right: inventory (Optimize + Build use the same surface) ──── -->
+    {#if app.tab === "optimize" || app.tab === "build"}
       <aside class="col-right">
         <InventoryTable />
       </aside>
@@ -443,6 +559,19 @@
   onAssign={assignCard}
   onClear={clearAssignment}
   onClose={closeAssign}
+/>
+
+<ExportJsonDialog
+  open={exportOpen}
+  json={exportJson}
+  onClose={() => (exportOpen = false)}
+/>
+
+<UnsavedChangesDialog
+  open={unsavedOpen}
+  onSave={unsavedSave}
+  onDiscard={unsavedDiscard}
+  onCancel={unsavedCancel}
 />
 
 <style>

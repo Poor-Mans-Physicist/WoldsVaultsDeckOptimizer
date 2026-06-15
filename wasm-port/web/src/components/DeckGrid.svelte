@@ -31,6 +31,20 @@
     onRemoveSlot?:    (pos: Position) => void;
     onConvertSlot?:   (pos: Position) => void;
     onUnconvertSlot?: (pos: Position) => void;
+
+    // ─── Build-mode integration ────────────────────────────────────────────
+    //
+    // When `buildMode` is true, DeckGrid renders a fixed-size canvas (rows ×
+    // cols) instead of the deck-derived bbox. Every cell becomes interactive:
+    // left-click → `onBuildClick(pos)`, right-click → `onBuildContextClick(pos)`.
+    // The caller dispatches by current tool. Placed regular/arcane sets come
+    // from the `deck` prop (which the caller pre-synthesizes from builder
+    // state), so all rendering still goes through the same code path.
+    buildMode?:        boolean;
+    buildRows?:        number;
+    buildCols?:        number;
+    onBuildClick?:        (pos: Position) => void;
+    onBuildContextClick?: (pos: Position) => void;
   }
 
   let {
@@ -38,6 +52,8 @@
     placementMode = false, conversionMode = false,
     placementCandidates = [], addedSlots = [], convertedSlots = [],
     onPlaceSlot, onRemoveSlot, onConvertSlot, onUnconvertSlot,
+    buildMode = false, buildRows = 6, buildCols = 9,
+    onBuildClick, onBuildContextClick,
   }: Props = $props();
 
   const SLOT_PX = 64;
@@ -53,7 +69,14 @@
   // Bounding box has to cover real slots AND the construction candidate
   // placeholders — without that, candidates that extend past the existing
   // grid edge would have nowhere to render.
+  //
+  // In buildMode, the bbox is fixed to the canvas size (default 6×9) so the
+  // user always has the full 9×6 grid to work with, even when zero tiles are
+  // placed yet. The render path is otherwise identical.
   const bbox = $derived.by(() => {
+    if (buildMode) {
+      return { minR: 0, maxR: buildRows - 1, minC: 0, maxC: buildCols - 1 };
+    }
     const rs = deck.slots.map((p) => p[0]);
     const cs = deck.slots.map((p) => p[1]);
     if (placementMode) {
@@ -75,6 +98,12 @@
   }
 
   function handleSlotClick(key: string, r: number, c: number) {
+    // Build mode owns every cell — left-click → tool action (caller dispatches
+    // by app.builder.tool). No SA result or breakdown is active in this mode.
+    if (buildMode) {
+      onBuildClick?.([r, c]);
+      return;
+    }
     // Conversion mode wins over breakdown popups when active. The grid is
     // single-purpose while a structural mode is on.
     if (conversionMode) {
@@ -95,6 +124,11 @@
   }
 
   function handleSlotContext(e: MouseEvent, key: string, r: number, c: number) {
+    if (buildMode) {
+      e.preventDefault();
+      onBuildContextClick?.([r, c]);
+      return;
+    }
     if (!conversionMode && !placementMode) return;
     e.preventDefault();
     const pos: Position = [r, c];
@@ -107,6 +141,17 @@
 
   function handlePlacementClick(pos: Position) {
     onPlaceSlot?.(pos);
+  }
+
+  // Build-mode empty cells need their own click handler — `slotSet.has(key)`
+  // is false for them, so the existing path renders them as transparent.
+  // Wrap that branch in a button when buildMode is on.
+  function handleBuildEmpty(r: number, c: number) {
+    onBuildClick?.([r, c]);
+  }
+  function handleBuildEmptyContext(e: MouseEvent, r: number, c: number) {
+    e.preventDefault();
+    onBuildContextClick?.([r, c]);
   }
 </script>
 
@@ -134,6 +179,19 @@
           >
             <span class="placement-plus">+</span>
           </button>
+        {:else if buildMode}
+          <!-- Build mode: every empty cell on the 9×6 canvas is clickable.
+               Subtle hover styling so the affordance is clear without
+               looking like a placed tile. -->
+          <button
+            type="button"
+            class="build-empty"
+            style:width="{SLOT_PX}px"
+            style:height="{SLOT_PX}px"
+            onclick={() => handleBuildEmpty(r, c)}
+            oncontextmenu={(e) => handleBuildEmptyContext(e, r, c)}
+            aria-label="Empty cell at {r},{c}"
+          ></button>
         {:else}
           <div style:width="{SLOT_PX}px" style:height="{SLOT_PX}px" style:background="transparent"></div>
         {/if}
@@ -266,4 +324,17 @@
   /* In conversion mode, regular slots are interactable; lift the hover cue. */
   .slot.convert-target { cursor: pointer; }
   .slot.convert-target:hover { outline: 2px solid #A78BFA; outline-offset: -2px; }
+
+  /* Build mode: empty cells are clickable canvas tiles. */
+  .build-empty {
+    border: 1px dashed #475569;
+    background: transparent;
+    border-radius: 6px;
+    cursor: cell;
+    padding: 0;
+  }
+  .build-empty:hover {
+    background: rgba(99,102,241,0.10);
+    border-color: var(--accent);
+  }
 </style>
