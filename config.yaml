@@ -54,6 +54,15 @@ cores:
   # slot (otherwise `n_arcane_placed` is permanently 0 → multiplier is 1.0).
   archive_allow: true
   archive_core:  1.2
+  # Structural cores (WEB ONLY — outer CLI ignores these flags).
+  # Construction Core: adds up to 3 new regular `O` slots to the deck grid.
+  # Arcane Core:       converts up to 3 existing `O` slots to `A` (arcane).
+  # Both occupy one of the deck's `core_slots` budget each. They mutate the
+  # deck layout BEFORE the SA runs — the kernel never learns about them.
+  # `*_allow: false` hides the option from the picker entirely. Vanilla flips
+  # both off; Wold's allows both.
+  construction_allow: true
+  arcane_core_allow:  true
 
 deluxe:
   allow:      true
@@ -123,8 +132,10 @@ modes:
     deluxe:
       allow: false
     cores:
-      void_allow:    false
-      archive_allow: false
+      void_allow:         false
+      archive_allow:      false
+      construction_allow: false
+      arcane_core_allow:  false
     stacking:
       additive_cores: false
     shiny:

@@ -54,6 +54,11 @@ export function coreDefaultValue(opt: CoreOption, cfg: ResolvedConfig): number {
     // before Archive Core shipped — without it `undefined.toFixed(3)` in
     // coreDefaultPlaceholder would brick the entire page on first render.
     case CoreType.ARCHIVE_CORE: return cfg.cores.archive_core ?? 1.2;
+    // Structural cores never appear in CORE_OPTIONS (they have their own UI
+    // subsection in CorePicker, not a multiplier slider). Return 0 just to
+    // keep the switch exhaustive — call sites never hit these branches.
+    case CoreType.CONSTRUCTION_CORE: return 0;
+    case CoreType.ARCANE_CORE:       return 0;
   }
 }
 

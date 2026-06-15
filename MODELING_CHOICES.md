@@ -271,6 +271,133 @@ history rather than re-deriving the design here.
 
 ---
 
+## Structural cores (Construction + Arcane) — WEB ONLY
+
+Two Wold's-exclusive cores let the player **mutate the deck layout** in
+the UI before the SA runs. The SA kernel never learns about them: by the
+time `runSaInventory` is invoked, the deck it scores already has the
+extra tiles / converted arcane positions baked in.
+
+Both are wired only into the WASM web app (`wasm-port/`). The Python
+spreadsheet CLI has no equivalent surface — these cores would change the
+deck topology, which is meaningless in a panel-grid spreadsheet sweep
+that compares every deck at its stock layout.
+
+| Core              | Effect                                            | Limit | Allow flag                  | Costs core slot? |
+| ----------------- | ------------------------------------------------- | ----- | --------------------------- | ---------------- |
+| Construction Core | Add new regular (`O`) slots to the deck grid      | ≤ 3   | `cores.construction_allow`  | Yes (1)          |
+| Arcane Core       | Convert existing regular slots to arcane (`A`)    | ≤ 3   | `cores.arcane_core_allow`   | Yes (1)          |
+
+> ⚠️ **Arcane Core ≠ Archive Core.** The Archive Core (scoring
+> multiplier, `base ^ n_arcane_placed`) is unchanged. The Arcane Core
+> is a **structural** core that creates new arcane slots. They synergize
+> hard: each Arcane Core conversion bumps `n_arcane_placed` (assuming
+> the SA fills the new arcane slot), which compounds the Archive factor.
+
+### Allow flags and platform gating
+
+- Both flags default `true` (Wold's). `modes.vanilla.cores` flips both to
+  `false` so the picker entries are hidden mode-wide, mirroring how
+  `archive_allow` works. The flags live in the shared `config.yaml`; the
+  outer CLI ignores them silently.
+- The picker surface (`CorePicker.svelte`) only renders the Structural
+  subsection when at least one of the two flags is true for the active
+  mode.
+
+### Core-slot cost
+
+Each enabled structural core consumes one of the deck's core-slot budget
+**before** SA candidate enumeration sees it:
+
+```
+effective_core_slots_for_SA =
+    max(0, base_core_slots + bonusCores − structuralCost)
+```
+
+`structuralCost = (constructionEnabled ? 1 : 0) + (arcaneCoreEnabled ? 1 : 0)`.
+
+If the pre-clamp value is negative (the structural cores cost more slots
+than the deck has after Bonus Cores), `App.svelte::run` errors out
+before launching the SA. The user sees a banner; nothing crashes.
+
+The Deck-card meta line shows the cost: `… X cores (−N structural) · …`
+so the budget reduction is visible without opening the cores panel.
+
+### Construction Core — connectivity rule
+
+A construction placement is valid only at a cell that is **8-direction
+adjacent** to at least one existing slot. "Existing slot" means a slot
+in either:
+
+- the original deck (`Deck.slots`), or
+- any tile already placed by the Construction Core in this session
+  (`structural.addedSlots`).
+
+Placement chains: adding slot #1 unlocks new candidates 8-adjacent to
+#1. Adding slot #2 (which may have only been possible because #1
+existed) is fine.
+
+Removal (right-click on a construction tile) is allowed iff the
+remaining additions stay **connected** to the original layout via
+8-adjacency through originals + remaining additions. So a tile that
+later additions hang off of is locked until those later additions are
+removed first. This is the only "ordering" rule on the Construction
+Core; we don't track placement order otherwise.
+
+Implementation: `wasm-port/web/src/lib/structural.ts`:
+
+- `constructionCandidates(base, sc)` — set of cells legal for the next
+  placement (returns empty once the cap of 3 is reached).
+- `canRemoveConstructionTile(pos, base, sc)` — BFS from all originals
+  through the universe `originals ∪ (additions − {pos})`; succeeds iff
+  every remaining addition is reached.
+
+### Arcane Core — conversion rule
+
+The Arcane Core converts existing regular (`O`) slots into arcane (`A`)
+slots, up to 3 per session. Conversions can target either:
+
+- a native regular slot from the deck layout, or
+- a regular slot placed by the Construction Core in the same session.
+
+Native arcane slots (from the deck JSON/YAML) are **untouched**: they
+stay arcane and don't count against the conversion limit. Right-click on
+a converted slot reverts it back to regular.
+
+If the Construction Core is later deselected (or a specific construction
+tile is removed), any conversions that pointed at the now-deleted tiles
+are pruned automatically (`pruneConvertedSlots`).
+
+### State-clear semantics
+
+Any structural state mutation — toggling a core on/off, adding a
+construction tile, removing one, converting a slot, reverting a
+conversion — clears the prior SA result and the preview-tab assignments.
+This avoids the UI ever showing a placement that points to slots that no
+longer exist (or to a layout the SA didn't actually score).
+
+Mode flips and deck-dropdown changes call `resetStructural()` for the
+same reason — and because the coordinate space (Position values) is
+specific to the previous deck.
+
+### What the SA sees
+
+`effectiveDeck(base, sc, deckmod)` (in `structural.ts`) returns the
+mutated `Deck` used by the SA:
+
+- `slots = base.slots ∪ addedSlots`
+- `arcaneSlots = (base.arcaneSlots ∪ convertedSlots) ∩ slots`
+- `rowPeers / colPeers / surrPeers / diagPeers` recomputed from the new
+  slot set
+- `arcaneSlotIndices` rebuilt against the new ordering
+- `base_core_slots`, `min_regular`, `max_greed` unchanged
+
+The kernel + breakdown re-score then run unchanged. There is **no
+scoring multiplier associated with these cores** — their only effect is
+the layout change plus the budget cost.
+
+---
+
 ## Core stacking — additive vs multiplicative
 
 Controlled by `stacking.additive_cores` (**true** in Wold's, **false** in
@@ -363,6 +490,8 @@ identical.
 | `deluxe.allow`            | **true**       | **false**   | Vanilla disables DELUXE cards + DELUXE_CORE entirely                                                        |
 | `cores.void_allow`        | **true**       | **false**   | Vanilla has no Void core (and therefore no DEAD-card optimization)                                          |
 | `cores.archive_allow`     | **true**       | **false**   | Vanilla hides Archive Core from the picker and the enumerator regardless of whether the deck has arcane slots |
+| `cores.construction_allow` | **true**      | **false**   | Vanilla hides the structural Construction Core (web only) |
+| `cores.arcane_core_allow` | **true**       | **false**   | Vanilla hides the structural Arcane Core (web only)       |
 | `stacking.additive_cores` | **true**       | **false**   | Vanilla multiplies cores instead of summing                                                                 |
 | `decks.json_file`         | `wolds_decks.json` | `vh_decks.json` | Different deck rosters per mode                                                                             |
 
@@ -413,6 +542,8 @@ Touch points to keep in sync, by surface:
 - **Add a new card type** → update the **Card types** table + (if greedy)
   the **Greed cards** table.
 - **Add or rename a core** → **Cores** table + relevant gating sections.
+  If it's a structural (layout-mutating) core like Construction / Arcane,
+  also update **Structural cores** with the new mechanic.
 - **Change a multiplier default** in `config.yaml` → update the Wold's
   column of **Cores** / **Greed cards** + the **Wold's vs Vanilla**
   table.

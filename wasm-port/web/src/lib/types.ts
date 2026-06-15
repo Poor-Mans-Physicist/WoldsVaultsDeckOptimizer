@@ -55,6 +55,17 @@ export const CoreType = {
   // Bypasses the additive_cores switch; only enumerated when the deck has any
   // arcane slot.
   ARCHIVE_CORE: "archive_core",
+  // ── Structural cores (WEB ONLY) ───────────────────────────────────────────
+  // These never reach the SA kernel. They mutate the deck layout in the UI
+  // before optimize is dispatched and each costs one of the deck's core-slot
+  // budget. Distinct from ARCHIVE_CORE (which IS a scoring multiplier).
+  //
+  //   CONSTRUCTION_CORE — player adds ≤3 new regular (`O`) slots to the grid,
+  //                       each 8-adjacency-connected to the existing structure.
+  //   ARCANE_CORE       — player converts ≤3 existing `O` slots to `A` (arcane).
+  //                       Synergizes with ARCHIVE_CORE via raised n_arcane_placed.
+  CONSTRUCTION_CORE: "construction_core",
+  ARCANE_CORE:       "arcane_core",
 } as const;
 export type CoreType = typeof CoreType[keyof typeof CoreType];
 

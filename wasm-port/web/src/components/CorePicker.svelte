@@ -1,7 +1,11 @@
 <script lang="ts">
-  import { app, setAllCores } from "../lib/state.svelte";
+  import {
+    app, setAllCores,
+    toggleConstructionCore, toggleArcaneCore,
+  } from "../lib/state.svelte";
   import { CORE_OPTIONS, coreLabel, coreDefaultPlaceholder } from "../lib/coreOptions";
   import { hiddenCoreTypes } from "../lib/visibility";
+  import { MAX_CONSTRUCTION, MAX_ARCANE_CONVERT } from "../lib/structural";
 
   function setOverride(i: number, raw: string): void {
     const v = raw.trim();
@@ -13,6 +17,18 @@
   const hidden = $derived(
     app.cfg ? hiddenCoreTypes(app.mode, app.cfg) : new Set(),
   );
+
+  // Structural-cores subsection visibility. Only render the whole panel when
+  // at least one of the two structural cores is allowed in this mode.
+  const showConstruction = $derived(app.cfg?.cores.construction_allow ?? false);
+  const showArcaneCore   = $derived(app.cfg?.cores.arcane_core_allow  ?? false);
+  const showStructural   = $derived(showConstruction || showArcaneCore);
+
+  // Live counters — "placements left" / "conversions left". These wire into
+  // the deck grid (it gates the "+" candidates and convert clicks on the same
+  // numbers), so showing them here is informational only.
+  const placementsLeft   = $derived(MAX_CONSTRUCTION   - app.structural.addedSlots.length);
+  const conversionsLeft  = $derived(MAX_ARCANE_CONVERT - app.structural.convertedSlots.length);
 </script>
 
 <div class="card">
@@ -90,6 +106,64 @@
       bind:value={app.bonusCores}
     />
   </div>
+
+  <!-- ── Structural cores (Construction + Arcane Core) ────────────────────
+       Web-only cores that mutate the deck layout in the UI before SA runs.
+       Each costs one of the deck's core-slot budget — the meta line in the
+       Deck card shows the effective post-cost number. Toggling either core
+       on or off wipes any placed cards (handled in state.toggle* helpers).
+  -->
+  {#if showStructural}
+    <div class="struct-section">
+      <div class="struct-head">Structural</div>
+
+      {#if showConstruction}
+        <div class="row">
+          <label class="check">
+            <input
+              type="checkbox"
+              checked={app.structural.constructionEnabled}
+              onchange={(e) => toggleConstructionCore((e.currentTarget as HTMLInputElement).checked)}
+            />
+            <span>Construction Core</span>
+          </label>
+          {#if app.structural.constructionEnabled}
+            <span class="counter" class:done={placementsLeft === 0}>
+              {placementsLeft} left
+            </span>
+          {/if}
+        </div>
+        {#if app.structural.constructionEnabled}
+          <div class="hint">
+            Click a <span class="hint-plus">+</span> tile to add it · right-click an added tile to remove.
+          </div>
+        {/if}
+      {/if}
+
+      {#if showArcaneCore}
+        <div class="row">
+          <label class="check">
+            <input
+              type="checkbox"
+              checked={app.structural.arcaneCoreEnabled}
+              onchange={(e) => toggleArcaneCore((e.currentTarget as HTMLInputElement).checked)}
+            />
+            <span>Arcane Core</span>
+          </label>
+          {#if app.structural.arcaneCoreEnabled}
+            <span class="counter" class:done={conversionsLeft === 0}>
+              {conversionsLeft} left
+            </span>
+          {/if}
+        </div>
+        {#if app.structural.arcaneCoreEnabled}
+          <div class="hint">
+            Click a regular slot to convert to arcane · right-click to revert.
+          </div>
+        {/if}
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -216,5 +290,47 @@
     padding: 1px 4px;
     border-radius: 3px;
     font-size: 11px;
+  }
+
+  /* Structural cores subsection — visually separated from the rest. */
+  .struct-section {
+    padding-top: 10px;
+    margin-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .struct-head {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+  }
+  .counter {
+    font-size: 11px;
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--bg-hover);
+  }
+  .counter.done { color: var(--text-muted); }
+  .hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 0 0 4px 22px;
+    line-height: 1.4;
+  }
+  .hint-plus {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    line-height: 12px;
+    text-align: center;
+    background: #4B5563;
+    color: #F1F5F9;
+    border-radius: 3px;
+    font-weight: 600;
+    font-size: 10px;
   }
 </style>

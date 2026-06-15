@@ -36,6 +36,13 @@ export interface ResolvedConfig {
     // additionally gates on the deck having any arcane slot.
     archive_allow: boolean;
     archive_core: number;
+    // Structural cores (WEB ONLY — not threaded through the kernel). Each costs
+    // one of the deck's core-slot budget. `*_allow` gates the picker.
+    //   construction: lets the user place ≤3 new regular slots on the grid
+    //                 (8-adjacency to any existing slot, transitively).
+    //   arcane_core:  lets the user convert ≤3 existing regular slots to arcane.
+    construction_allow: boolean;
+    arcane_core_allow:  boolean;
   };
 
   deluxe: {

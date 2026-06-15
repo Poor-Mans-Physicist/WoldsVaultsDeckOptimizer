@@ -6,6 +6,9 @@
   import { onMount } from "svelte";
   import {
     app, clearRunResult, clearPreviewAssignments, selectedCores,
+    resetStructural,
+    addConstructionSlot, removeConstructionSlot,
+    convertSlotToArcane, unconvertArcaneSlot,
   } from "./lib/state.svelte";
   import { loadConfigBundle, getMode } from "./lib/config";
   import { loadDecks } from "./lib/deck";
@@ -17,6 +20,9 @@
     isAssignableSlot, slotFamily, resetAssignmentsOnRun,
   } from "./lib/preview";
   import { classSelectLabel, hiddenInventoryTypes } from "./lib/visibility";
+  import {
+    effectiveDeck, constructionCandidates, structuralCoreCost,
+  } from "./lib/structural";
   import type { SlotBreakdown } from "./lib/breakdown";
   import type { Position, CardType } from "./lib/types";
 
@@ -51,13 +57,33 @@
     return m;
   });
 
-  // Effective core-slot count: deck's raw value + the user-adjustable Bonus
-  // Cores delta, clamped to ≥ 0. Used for both the meta display in the Deck
-  // card and the optimizer payload below — so the number the user sees and
-  // the number the SA enumerates against are always the same.
-  const effectiveCoreSlots = $derived(
-    app.deck ? Math.max(0, app.deck.base_core_slots + app.bonusCores) : 0,
+  // Effective deck — base deck mutated by structural cores (Construction Core
+  // additions, Arcane Core conversions). This is what both the grid renders
+  // and the optimizer scores. Returns the base reference when no structural
+  // changes are active, so the existing fast path is preserved.
+  const fxDeck = $derived(
+    app.deck && app.cfg
+      ? effectiveDeck(app.deck, app.structural, app.cfg.deckmod)
+      : null,
   );
+
+  // Live Construction-Core candidates (used by DeckGrid in placement mode).
+  const placementCandidates = $derived(
+    app.deck ? constructionCandidates(app.deck, app.structural) : [],
+  );
+
+  // Effective core-slot count for the SA. Three layers:
+  //   raw            = deck.base_core_slots
+  //   + bonusCores   = user-adjustable delta (defaults to mode's deckmod)
+  //   − structural   = one slot per active structural core (Construction +
+  //                    Arcane Core), since each occupies a real core slot
+  // Clamped to ≥ 0 so a negative user delta doesn't break the SA — but if
+  // the structural cores push the budget below zero, run() flags an error.
+  const structuralCost = $derived(structuralCoreCost(app.structural));
+  const rawCoreBudget = $derived(
+    app.deck ? app.deck.base_core_slots + app.bonusCores - structuralCost : 0,
+  );
+  const effectiveCoreSlots = $derived(Math.max(0, rawCoreBudget));
 
   const VERIFY_TOL = 1e-6;
 
@@ -100,6 +126,8 @@
     app.bonusCores = app.cfg.deckmod ?? 0;
     app.decks = await loadDecks(baseUrl, app.cfg.deckmod, next);
     app.deck  = (prevName && app.decks.find((d) => d.name === prevName)) || app.decks[0] || null;
+    // Structural cores may be disallowed in the new mode; clear them outright.
+    resetStructural();
     clearRunResult();
     clearPreviewAssignments();
   }
@@ -107,6 +135,8 @@
   function onDeckChange(e: Event) {
     const key = (e.currentTarget as HTMLSelectElement).value;
     app.deck = app.decks.find((d) => d.key === key) ?? app.deck;
+    // Coordinates from the previous deck don't apply to the new one.
+    resetStructural();
     clearRunResult();
     clearPreviewAssignments();
   }
@@ -118,7 +148,17 @@
   }
 
   async function run() {
-    if (!app.cfg || !app.deck || app.running) return;
+    if (!app.cfg || !app.deck || !fxDeck || app.running) return;
+    // Hard error before we spin up the SA: structural cores ate the budget.
+    // Surfaces cleanly to the user without taking down the page.
+    if (rawCoreBudget < 0) {
+      app.runError =
+        `Structural cores need ${structuralCost} core slot(s) but the deck ` +
+        `only has ${app.deck.base_core_slots + app.bonusCores} available ` +
+        `(base ${app.deck.base_core_slots} + bonus ${app.bonusCores}). ` +
+        `Deselect a core or raise Bonus Cores.`;
+      return;
+    }
     app.running = true;
     app.runError = null;
     app.result = null;
@@ -139,11 +179,11 @@
       const { kept: invKept } = filterInventoryByHidden(invSnap, hidden);
       const { kept: fcKept  } = filterInventoryByHidden(fcSnap,  hidden);
 
-      // Override `core_slots` with the user-adjusted Bonus Cores total. The
-      // deck object's `core_slots` field still holds base+deckmod (set at
-      // load time) for legacy callers; we splice in `effectiveCoreSlots` for
-      // the optimizer so the SA enumerates the right candidate count.
-      const deckSnap = $state.snapshot(app.deck);
+      // The SA sees the structural-modified deck (Construction additions +
+      // Arcane conversions baked into slots / arcaneSlots / peers). We then
+      // splice in the post-structural-cost core budget so candidate
+      // enumeration sees the right number of slots to fill.
+      const deckSnap = $state.snapshot(fxDeck);
       deckSnap.core_slots = effectiveCoreSlots;
 
       // $state.snapshot() unwraps Svelte 5 reactive proxies so structured-clone
@@ -284,7 +324,9 @@
           </label>
         </div>
         <div class="meta">
-          {app.deck.slots.length} slots · {effectiveCoreSlots} cores · {app.deck.arcaneSlots.length} arcane
+          {(fxDeck ?? app.deck).slots.length} slots ·
+          {effectiveCoreSlots} cores{structuralCost > 0 ? ` (−${structuralCost} structural)` : ""} ·
+          {(fxDeck ?? app.deck).arcaneSlots.length} arcane
         </div>
       </section>
 
@@ -348,11 +390,20 @@
       {/if}
 
       <DeckGrid
-        deck={app.deck}
+        deck={fxDeck ?? app.deck}
         assignment={app.result?.assignment ?? null}
         perSlotNdm={perSlotNdm}
         breakdown={app.result?.breakdown.perSlot ?? null}
         onSlotClick={onSlotClick}
+        placementMode={app.structural.constructionEnabled && app.tab === "optimize"}
+        conversionMode={app.structural.arcaneCoreEnabled && app.tab === "optimize"}
+        placementCandidates={placementCandidates}
+        addedSlots={app.structural.addedSlots}
+        convertedSlots={app.structural.convertedSlots}
+        onPlaceSlot={(p) => addConstructionSlot(p)}
+        onRemoveSlot={(p) => removeConstructionSlot(p)}
+        onConvertSlot={(p) => convertSlotToArcane(p)}
+        onUnconvertSlot={(p) => unconvertArcaneSlot(p)}
       />
 
       <Legend />

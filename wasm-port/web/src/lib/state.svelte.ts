@@ -2,13 +2,18 @@
 // components read/mutate fields on `app`. Mirrors the `_AppState` dataclass
 // in src/gui.py plus the parts we keep purely client-side (no shutdown).
 
-import { CardClass, type CoreSpec } from "./types";
+import { CardClass, type CoreSpec, type Position } from "./types";
 import type { Deck } from "./deck";
 import type { ResolvedConfig, ConfigBundle } from "./config";
 import type { OptimizeResult } from "./optimize";
 import { CORE_OPTIONS } from "./coreOptions";
 import type { CardEntry } from "./modifiers";
 import type { AssignmentKey, AssignmentVal } from "./preview";
+import {
+  emptyStructural, pruneConvertedSlots, canRemoveConstructionTile,
+  MAX_CONSTRUCTION, MAX_ARCANE_CONVERT,
+  type StructuralCores,
+} from "./structural";
 
 export type Tab = "optimize" | "preview";
 
@@ -61,6 +66,11 @@ interface AppState {
   modifiers: Map<string, CardEntry> | null;
   modifiersError: string | null;
   previewAssignments: Map<AssignmentKey, AssignmentVal>;
+
+  // Structural cores (Construction + Arcane Core). Web-only, mode-gated by
+  // cfg.cores.{construction_allow, arcane_core_allow}. Their state mutates the
+  // deck layout before SA runs — see lib/structural.ts.
+  structural: StructuralCores;
 }
 
 function initialCoreState(): CoreRowState[] {
@@ -95,6 +105,8 @@ export const app = $state<AppState>({
   modifiers: null,
   modifiersError: null,
   previewAssignments: new Map(),
+
+  structural: emptyStructural(),
 });
 
 /** Build the user's CoreSpec[] from the picker state. */
@@ -146,4 +158,89 @@ export function clearRunResult(): void {
 /** Drop every preview-mode assignment (deck/class swap, manual clear). */
 export function clearPreviewAssignments(): void {
   app.previewAssignments = new Map();
+}
+
+// ─── Structural cores (Construction + Arcane Core) ───────────────────────────
+//
+// Every mutation here clears card placements + run result so the player never
+// looks at a stale layout. The cores cost one of the deck's `core_slots` each
+// (see structuralCoreCost in lib/structural.ts).
+
+function _resetForStructuralChange(): void {
+  clearRunResult();
+  clearPreviewAssignments();
+}
+
+/** Toggle the Construction Core on/off. Off → drop every placed tile (which in
+ *  turn may invalidate arcane conversions, so prune those too). */
+export function toggleConstructionCore(on: boolean): void {
+  if (app.structural.constructionEnabled === on) return;
+  app.structural.constructionEnabled = on;
+  if (!on) {
+    app.structural.addedSlots = [];
+    if (app.deck) {
+      app.structural.convertedSlots = pruneConvertedSlots(app.deck, app.structural);
+    } else {
+      app.structural.convertedSlots = [];
+    }
+  }
+  _resetForStructuralChange();
+}
+
+/** Toggle the Arcane Core on/off. Off → drop every conversion. */
+export function toggleArcaneCore(on: boolean): void {
+  if (app.structural.arcaneCoreEnabled === on) return;
+  app.structural.arcaneCoreEnabled = on;
+  if (!on) app.structural.convertedSlots = [];
+  _resetForStructuralChange();
+}
+
+/** Add a construction tile. Caller must have verified `pos` is in
+ *  constructionCandidates(); we still cap at MAX_CONSTRUCTION here. */
+export function addConstructionSlot(pos: Position): void {
+  if (!app.structural.constructionEnabled) return;
+  if (app.structural.addedSlots.length >= MAX_CONSTRUCTION) return;
+  if (app.structural.addedSlots.some((p) => p[0] === pos[0] && p[1] === pos[1])) return;
+  app.structural.addedSlots = [...app.structural.addedSlots, pos];
+  _resetForStructuralChange();
+}
+
+/** Remove a construction tile if doing so keeps the addition graph connected
+ *  (canRemoveConstructionTile). Returns true on success. */
+export function removeConstructionSlot(pos: Position): boolean {
+  if (!app.deck) return false;
+  if (!canRemoveConstructionTile(pos, app.deck, app.structural)) return false;
+  app.structural.addedSlots = app.structural.addedSlots.filter(
+    (p) => !(p[0] === pos[0] && p[1] === pos[1]),
+  );
+  // The removed tile may have been converted; prune.
+  app.structural.convertedSlots = pruneConvertedSlots(app.deck, app.structural);
+  _resetForStructuralChange();
+  return true;
+}
+
+/** Convert a regular slot to arcane. Caller verifies the position is a current
+ *  slot and isn't already arcane (native or converted). Cap at MAX_ARCANE_CONVERT. */
+export function convertSlotToArcane(pos: Position): void {
+  if (!app.structural.arcaneCoreEnabled) return;
+  if (app.structural.convertedSlots.length >= MAX_ARCANE_CONVERT) return;
+  if (app.structural.convertedSlots.some((p) => p[0] === pos[0] && p[1] === pos[1])) return;
+  app.structural.convertedSlots = [...app.structural.convertedSlots, pos];
+  _resetForStructuralChange();
+}
+
+/** Revert an arcane conversion (right-click on a converted slot). */
+export function unconvertArcaneSlot(pos: Position): void {
+  const before = app.structural.convertedSlots.length;
+  app.structural.convertedSlots = app.structural.convertedSlots.filter(
+    (p) => !(p[0] === pos[0] && p[1] === pos[1]),
+  );
+  if (app.structural.convertedSlots.length !== before) _resetForStructuralChange();
+}
+
+/** Mode/deck flip: zero out the structural cores (allow flags may have changed
+ *  and the previous deck's coords don't carry over). Caller handles the rest of
+ *  the reset (run result + preview). */
+export function resetStructural(): void {
+  app.structural = emptyStructural();
 }

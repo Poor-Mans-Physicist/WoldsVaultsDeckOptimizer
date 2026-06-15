@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CardType, type Color } from "../lib/types";
+  import { CardType, type Color, type Position } from "../lib/types";
   import type { Deck } from "../lib/deck";
   import type { Placed } from "../lib/types";
   import type { SlotBreakdown } from "../lib/breakdown";
@@ -11,18 +11,54 @@
     perSlotNdm?: Map<string, number> | null;
     breakdown?: Map<string, SlotBreakdown> | null;
     onSlotClick?: (key: string, bd: SlotBreakdown) => void;
+
+    // ─── Structural-cores integration (optional) ───────────────────────────
+    //
+    // When `placementMode` is true, dark-grey "+" placeholders appear on every
+    // cell in `placementCandidates`; left-click promotes to a real slot, and
+    // right-click on a position in `addedSlots` removes it (callers gate the
+    // removal validity — DeckGrid just forwards intent).
+    //
+    // When `conversionMode` is true, left-click on a real slot that isn't
+    // already arcane fires `onConvertSlot`; right-click on a position in
+    // `convertedSlots` fires `onUnconvertSlot`.
+    placementMode?:        boolean;
+    conversionMode?:       boolean;
+    placementCandidates?:  Position[];
+    addedSlots?:           Position[];
+    convertedSlots?:       Position[];
+    onPlaceSlot?:     (pos: Position) => void;
+    onRemoveSlot?:    (pos: Position) => void;
+    onConvertSlot?:   (pos: Position) => void;
+    onUnconvertSlot?: (pos: Position) => void;
   }
 
-  let { deck, assignment = null, perSlotNdm = null, breakdown = null, onSlotClick }: Props = $props();
+  let {
+    deck, assignment = null, perSlotNdm = null, breakdown = null, onSlotClick,
+    placementMode = false, conversionMode = false,
+    placementCandidates = [], addedSlots = [], convertedSlots = [],
+    onPlaceSlot, onRemoveSlot, onConvertSlot, onUnconvertSlot,
+  }: Props = $props();
 
   const SLOT_PX = 64;
   const GAP_PX  = 6;
 
-  // Derived bounding box for the grid (deck slots can have negative offsets;
-  // we render every cell in the rect but only paint actual slot positions).
+  const slotSet  = $derived(new Set(deck.slots.map((p) => `${p[0]},${p[1]}`)));
+  // Position-key set for arcane slots — used to render the purple border.
+  const arcaneSet = $derived(new Set(deck.arcaneSlots.map((p) => `${p[0]},${p[1]}`)));
+  const candidateSet = $derived(new Set(placementCandidates.map((p) => `${p[0]},${p[1]}`)));
+  const addedSet     = $derived(new Set(addedSlots.map((p) => `${p[0]},${p[1]}`)));
+  const convertedSet = $derived(new Set(convertedSlots.map((p) => `${p[0]},${p[1]}`)));
+
+  // Bounding box has to cover real slots AND the construction candidate
+  // placeholders — without that, candidates that extend past the existing
+  // grid edge would have nowhere to render.
   const bbox = $derived.by(() => {
     const rs = deck.slots.map((p) => p[0]);
     const cs = deck.slots.map((p) => p[1]);
+    if (placementMode) {
+      for (const [r, c] of placementCandidates) { rs.push(r); cs.push(c); }
+    }
     return {
       minR: Math.min(...rs), maxR: Math.max(...rs),
       minC: Math.min(...cs), maxC: Math.max(...cs),
@@ -31,10 +67,6 @@
   const width  = $derived(bbox.maxC - bbox.minC + 1);
   const height = $derived(bbox.maxR - bbox.minR + 1);
 
-  const slotSet  = $derived(new Set(deck.slots.map((p) => `${p[0]},${p[1]}`)));
-  // Position-key set for arcane slots — used to render the purple border.
-  const arcaneSet = $derived(new Set(deck.arcaneSlots.map((p) => `${p[0]},${p[1]}`)));
-
   function placedAt(r: number, c: number): { t: CardType; color: Color | null } {
     if (!assignment) return { t: CardType.EMPTY, color: null };
     const p = assignment.get(`${r},${c}`);
@@ -42,10 +74,39 @@
     return { t: p[0], color: p[1] };
   }
 
-  function handleClick(key: string) {
+  function handleSlotClick(key: string, r: number, c: number) {
+    // Conversion mode wins over breakdown popups when active. The grid is
+    // single-purpose while a structural mode is on.
+    if (conversionMode) {
+      const pos: Position = [r, c];
+      if (convertedSet.has(key)) {
+        // Already converted → left-click also reverts (matches the spec's
+        // intent that the action is reversible without a modifier key).
+        onUnconvertSlot?.(pos);
+      } else if (!arcaneSet.has(key)) {
+        onConvertSlot?.(pos);
+      }
+      return;
+    }
+    if (placementMode) return;   // breakdown popup is suppressed in placement mode
     if (!onSlotClick || !breakdown) return;
     const bd = breakdown.get(key);
     if (bd) onSlotClick(key, bd);
+  }
+
+  function handleSlotContext(e: MouseEvent, key: string, r: number, c: number) {
+    if (!conversionMode && !placementMode) return;
+    e.preventDefault();
+    const pos: Position = [r, c];
+    if (conversionMode && convertedSet.has(key)) {
+      onUnconvertSlot?.(pos);
+    } else if (placementMode && addedSet.has(key)) {
+      onRemoveSlot?.(pos);
+    }
+  }
+
+  function handlePlacementClick(pos: Position) {
+    onPlaceSlot?.(pos);
   }
 </script>
 
@@ -61,22 +122,42 @@
       {@const c = bbox.minC + ci}
       {@const key = `${r},${c}`}
       {#if !slotSet.has(key)}
-        <div style:width="{SLOT_PX}px" style:height="{SLOT_PX}px" style:background="transparent"></div>
+        {#if placementMode && candidateSet.has(key)}
+          <!-- Construction Core: dark-grey "+" placeholder. Left-click adds. -->
+          <button
+            type="button"
+            class="placement-cell"
+            style:width="{SLOT_PX}px"
+            style:height="{SLOT_PX}px"
+            onclick={() => handlePlacementClick([r, c])}
+            aria-label="Add slot at {r},{c}"
+          >
+            <span class="placement-plus">+</span>
+          </button>
+        {:else}
+          <div style:width="{SLOT_PX}px" style:height="{SLOT_PX}px" style:background="transparent"></div>
+        {/if}
       {:else}
         {@const { t, color } = placedAt(r, c)}
         {@const ndm = perSlotNdm?.get(key)}
-        {@const clickable = !!(breakdown?.get(key) && onSlotClick)}
+        {@const clickable = !!(breakdown?.get(key) && onSlotClick) || conversionMode}
         {@const isArcane = arcaneSet.has(key)}
+        {@const isAdded = addedSet.has(key)}
+        {@const isConverted = convertedSet.has(key)}
         <button
           type="button"
           class="slot"
           class:clickable
           class:arcane={isArcane}
+          class:added={isAdded}
+          class:converted={isConverted}
+          class:convert-target={conversionMode && !isArcane}
           style:width="{SLOT_PX}px"
           style:height="{SLOT_PX}px"
           style:background={t === CardType.EMPTY ? "var(--bg-empty-slot)" : slotBg(t)}
-          onclick={() => handleClick(key)}
-          aria-label="Slot {r},{c} — {t}{isArcane ? ' (arcane)' : ''}"
+          onclick={() => handleSlotClick(key, r, c)}
+          oncontextmenu={(e) => handleSlotContext(e, key, r, c)}
+          aria-label="Slot {r},{c} — {t}{isArcane ? ' (arcane)' : ''}{isAdded ? ' (added)' : ''}"
         >
           <span class="glyph">
             {#if t === CardType.EMPTY}
@@ -145,4 +226,44 @@
     border-radius: 50%;
     border: 1px solid rgba(0,0,0,.2);
   }
+
+  /* ─── Structural-core states ───────────────────────────────────────────── */
+
+  /* Construction Core: a dark-grey "+" placeholder cell. */
+  .placement-cell {
+    border: 2px dashed #6B7280;
+    background: #374151;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    opacity: 0.85;
+  }
+  .placement-cell:hover {
+    background: #4B5563;
+    opacity: 1;
+  }
+  .placement-plus {
+    font-size: 28px;
+    font-weight: 600;
+    color: #D1D5DB;
+    line-height: 1;
+  }
+
+  /* Newly added construction tile — faint accent ring so the player can
+     pick it out when right-clicking to remove. */
+  .slot.added {
+    box-shadow: 0 0 0 2px rgba(99,102,241,0.55);
+  }
+  /* A converted arcane slot — purple border same as a native arcane, but
+     subtly different inner glow to show the player it's reversible. */
+  .slot.converted {
+    border: 2px solid #A78BFA;
+    box-shadow: inset 0 0 0 1px rgba(167,139,250,0.35);
+  }
+  /* In conversion mode, regular slots are interactable; lift the hover cue. */
+  .slot.convert-target { cursor: pointer; }
+  .slot.convert-target:hover { outline: 2px solid #A78BFA; outline-offset: -2px; }
 </style>
