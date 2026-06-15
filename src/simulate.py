@@ -59,14 +59,10 @@ def _get_placeable(card_class: CardClass) -> List[CardType]:
         return [CardType.TYPELESS] + result
     return list(PLACEABLE)
 
-try:
-    import ndm_core as _ndm_core
-    _RUST_AVAILABLE = True
-except ImportError:
-    _ndm_core = None
-    _RUST_AVAILABLE = False
-    print("[ndm] Rust extension not found — using pure Python SA "
-          "(run with 'uv run --extra rust optimize' to enable the Rust core).")
+# Rust kernel is mandatory after the channel-consolidation refactor. Install
+# via `uv sync --extra rust` (or just `uv run --extra rust optimize`, which
+# triggers the build on first run via [tool.uv].cache-keys in pyproject.toml).
+import ndm_core as _ndm_core
 
 def _apply_greed(boost: Dict[Position, float], pos: Position, amount: float) -> None:
     # New additive rule: boost is a raw sum of the greed multipliers pointing
@@ -409,170 +405,7 @@ def _peers_as_indices(
     ]
 
 
-# ── Pure-Python SA (renamed from old sa_optimize) ─────────────────────────────
-def _sa_optimize_python(
-    deck:       Deck,
-    card_class: CardClass,
-    cores:      FrozenSet[CoreType],
-    n_iter:     int,
-    T_start:    float = 100.0,
-    T_end:      float = 0.5,
-) -> Tuple[Dict[Position, CardType], float]:
-    # Live read so set_mode() flips on the GUI side propagate. Classic CLI
-    # never flips at runtime so this is essentially a constant there.
-    from . import config as _cfg
-    auto_place_arcane = _cfg.AUTO_PLACE_ARCANE
-
-    slots       = list(deck.slots)
-    arcane_set  = deck.arcane_slots
-    regular_slots = [p for p in slots if p not in arcane_set]
-    placeable   = _get_placeable(card_class)
-    default_t   = (CardType.TYPELESS
-                   if card_class == CardClass.SHINY and not SHINY_POSITIONAL
-                   else CardType.SURR)
-
-    best_positional = _precompute_best_positional(deck)
-
-    # Seed REGULAR slots only; arcane slots are pre-filled with ARCANE below.
-    if deck.min_regular > 0 and deck.min_regular < len(regular_slots):
-        shuffled = list(regular_slots)
-        random.shuffle(shuffled)
-        asgn: Dict[Position, CardType] = {
-            p: (default_t if i < deck.min_regular else CardType.SURR_GREED)
-            for i, p in enumerate(shuffled)
-        }
-    else:
-        asgn = {p: default_t for p in regular_slots}
-
-    # Pre-fill every arcane slot with ARCANE — strictly dominant in classic
-    # except when SA later flips to DEAD for void-core (auto_place_arcane=false).
-    for p in arcane_set:
-        asgn[p] = CardType.ARCANE
-
-    score      = simulate(deck, asgn, card_class, cores)
-    best_score = score
-    best_asgn  = dict(asgn)
-    log_cool   = math.log(T_end / T_start)
-
-    SCORING_TYPES = REGULAR_TYPES | TYPELESS_TYPES
-    if DELUXE_COUNTED_AS_REGULAR:
-        SCORING_TYPES = SCORING_TYPES | DELUXE_TYPES
-
-    n_greed_cur = sum(1 for t in asgn.values() if t in GREED_TYPES)
-    n_reg_cur   = sum(1 for t in asgn.values() if t in SCORING_TYPES)
-
-    min_reg_active = (
-        deck.min_regular >= 0
-        and not (deck.max_greed >= 0
-                 and deck.min_regular + deck.max_greed > len(deck.slots))
-    )
-
-    def _valid() -> bool:
-        if deck.max_greed >= 0 and n_greed_cur > deck.max_greed:
-            return False
-        if min_reg_active and n_reg_cur < deck.min_regular:
-            return False
-        return True
-
-    def _counter_update(old: CardType, new: CardType) -> None:
-        nonlocal n_greed_cur, n_reg_cur
-        if old in GREED_TYPES:   n_greed_cur -= 1
-        if old in SCORING_TYPES: n_reg_cur   -= 1
-        if new in GREED_TYPES:   n_greed_cur += 1
-        if new in SCORING_TYPES: n_reg_cur   += 1
-
-    def _resolve(p: Position, t: CardType) -> CardType:
-        return best_positional[p] if t in REGULAR_TYPES else t
-
-    for i in range(n_iter):
-        T = T_start * math.exp(log_cool * i / n_iter)
-
-        if len(slots) < 2 or random.random() < 0.80:
-            p   = random.choice(slots)
-            # Arcane-slot rule: under auto-place ON, arcane slots are locked.
-            # Under OFF, the only legal swap is ARCANE↔DEAD.
-            if p in arcane_set:
-                if auto_place_arcane:
-                    continue
-                old = asgn[p]
-                new = CardType.DEAD if old == CardType.ARCANE else CardType.ARCANE
-                # ARCANE/DEAD are neither greed nor scoring; constraint deltas
-                # are zero so we skip the counter dance.
-                asgn[p] = new
-                new_score = simulate(deck, asgn, card_class, cores)
-                delta = new_score - score
-                if delta >= 0 or random.random() < math.exp(delta / T):
-                    score = new_score
-                    if score > best_score:
-                        best_score = score; best_asgn = dict(asgn)
-                else:
-                    asgn[p] = old
-                continue
-
-            old = asgn[p]
-            new = _resolve(p, random.choice(placeable))
-            if new == old:
-                continue
-            # Regular slot may never receive ARCANE.
-            if new == CardType.ARCANE:
-                continue
-            _counter_update(old, new)
-            asgn[p] = new
-            if not _valid():
-                _counter_update(new, old)
-                asgn[p] = old
-                continue
-            new_score = simulate(deck, asgn, card_class, cores)
-            delta     = new_score - score
-            if delta >= 0 or random.random() < math.exp(delta / T):
-                score = new_score
-                if score > best_score:
-                    best_score = score; best_asgn = dict(asgn)
-            else:
-                _counter_update(new, old)
-                asgn[p] = old
-        else:
-            p1, p2 = random.sample(slots, 2)
-            if asgn[p1] == asgn[p2]:
-                continue
-            # Reject swaps that would violate the arcane-slot rule. Also reject
-            # any swap involving an arcane slot under auto_place_arcane.
-            a1 = p1 in arcane_set
-            a2 = p2 in arcane_set
-            if auto_place_arcane and (a1 or a2):
-                continue
-            # `legal_at(p, v)`: ARCANE only allowed in arcane slots; arcane
-            # slots accept only ARCANE or DEAD.
-            def _legal(is_arc: bool, v: CardType) -> bool:
-                if is_arc: return v in (CardType.ARCANE, CardType.DEAD)
-                return v != CardType.ARCANE
-            if not _legal(a1, asgn[p2]) or not _legal(a2, asgn[p1]):
-                continue
-
-            old1, old2 = asgn[p1], asgn[p2]
-            _counter_update(old1, old2)
-            _counter_update(old2, old1)
-            asgn[p1], asgn[p2] = old2, old1
-            if not _valid():
-                _counter_update(old2, old1)
-                _counter_update(old1, old2)
-                asgn[p1], asgn[p2] = old1, old2
-                continue
-            new_score = simulate(deck, asgn, card_class, cores)
-            delta     = new_score - score
-            if delta >= 0 or random.random() < math.exp(delta / T):
-                score = new_score
-                if score > best_score:
-                    best_score = score; best_asgn = dict(asgn)
-            else:
-                _counter_update(old2, old1)
-                _counter_update(old1, old2)
-                asgn[p1], asgn[p2] = old1, old2
-
-    return best_asgn, best_score
-
-
-# ── Public sa_optimize: tries Rust, falls back to Python ──────────────────────
+# ── Public sa_optimize: marshals inputs to the Rust kernel ──────────────────
 def sa_optimize(
     deck:       Deck,
     card_class: CardClass,
@@ -581,10 +414,6 @@ def sa_optimize(
     T_start:    float = 100.0,
     T_end:      float = 0.5,
 ) -> Tuple[Dict[Position, CardType], float]:
-
-    if not _RUST_AVAILABLE:
-        return _sa_optimize_python(deck, card_class, cores, n_iter, T_start, T_end)
-
     # ── Convert inputs for Rust ───────────────────────────────────────────────
     slots_list = list(deck.slots)                        # consistent ordering
     slot_order = {p: i for i, p in enumerate(slots_list)}

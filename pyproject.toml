@@ -11,17 +11,13 @@ requires-python = ">=3.9"
 dependencies = [
     "openpyxl>=3.1",
     "pyyaml>=6.0",
+    # Rust SA kernel — mandatory after the channel-consolidation refactor.
+    # Built locally by uv from the in-tree crate; needs a Rust toolchain.
+    "ndm_core",
 ]
-
-# Opt-in Rust core. Enable it with `uv run --extra rust optimize`.
-# Users without a Rust toolchain can still use `uv run optimize-py` out of the
-# box — `ndm_core` will simply not be built.
-[project.optional-dependencies]
-rust = ["ndm_core"]
 
 [project.scripts]
 optimize = "optimizer:main"
-optimize-py = "optimizer:main_no_rust"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["optimizer.py", "src"]
