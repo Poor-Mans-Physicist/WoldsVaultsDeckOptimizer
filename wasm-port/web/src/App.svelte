@@ -365,6 +365,16 @@
         {@const r = app.result}
         {@const delta = Math.abs(r.wasmScore - r.tsScore)}
         {@const ok = delta <= VERIFY_TOL}
+        <!-- Structural cores aren't in r.coresUsed (they never reach the SA);
+             surface them in the cores chip alongside the SA-picked ones. -->
+        {@const structLabels = [
+          ...(app.structural.constructionEnabled ? [`construction_core×${app.structural.addedSlots.length}`] : []),
+          ...(app.structural.arcaneCoreEnabled   ? [`arcane_core×${app.structural.convertedSlots.length}`]   : []),
+        ]}
+        {@const allCoreLabels = [
+          ...r.coresUsed.map((c) => c.color ? `${c.core_type}(${c.color})` : c.core_type),
+          ...structLabels,
+        ]}
         <div class="result-bar">
           <span class="score">NDM <strong>{r.wasmScore.toFixed(3)}</strong></span>
           <span class="badge" class:ok class:bad={!ok}>
@@ -375,10 +385,8 @@
           {#if app.elapsedMs !== null}
             <span class="time">{app.elapsedMs.toFixed(0)} ms</span>
           {/if}
-          {#if r.coresUsed.length}
-            <span class="cores">
-              cores: {r.coresUsed.map((c) => c.color ? `${c.core_type}(${c.color})` : c.core_type).join(", ")}
-            </span>
+          {#if allCoreLabels.length}
+            <span class="cores">cores: {allCoreLabels.join(", ")}</span>
           {/if}
         </div>
       {/if}

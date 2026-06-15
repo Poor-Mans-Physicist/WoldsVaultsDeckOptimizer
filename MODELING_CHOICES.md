@@ -344,10 +344,28 @@ later additions hang off of is locked until those later additions are
 removed first. This is the only "ordering" rule on the Construction
 Core; we don't track placement order otherwise.
 
+#### Hard footprint cap — 9 × 6
+
+The bounding box of all placeable slots (native + construction-added
+`O`/`A` positions) is capped at **9 cells wide × 6 cells tall**. The
+Construction Core never surfaces a candidate that would push the bbox
+past those dimensions. This matches the engine's hard ceiling on deck
+size — you cannot construct your way past the largest legal deck.
+
+A candidate is filtered iff:
+
+- adding it would make the new max-col − min-col + 1 > 9, OR
+- adding it would make the new max-row − min-row + 1 > 6.
+
+Candidates *inside* the current bbox are always safe (the bbox doesn't
+grow). A deck already at 9×6 only sees candidates in its current
+bbox (i.e. infilling holes between existing slots).
+
 Implementation: `wasm-port/web/src/lib/structural.ts`:
 
 - `constructionCandidates(base, sc)` — set of cells legal for the next
-  placement (returns empty once the cap of 3 is reached).
+  placement, filtered by both 8-adjacency and the 9×6 bbox cap.
+  Returns empty once the cap of 3 is reached.
 - `canRemoveConstructionTile(pos, base, sc)` — BFS from all originals
   through the universe `originals ∪ (additions − {pos})`; succeeds iff
   every remaining addition is reached.

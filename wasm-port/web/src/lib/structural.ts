@@ -40,6 +40,13 @@ export interface StructuralCores {
 export const MAX_CONSTRUCTION = 3;
 export const MAX_ARCANE_CONVERT = 3;
 
+// Hard cap on a deck's footprint — the bounding box of all placeable slots
+// (`O` ∪ `A`, native + construction-added) must fit inside this rectangle.
+// 9 wide × 6 tall is the engine-side limit; the Construction Core cannot
+// push the bbox past it.
+export const MAX_GRID_WIDTH  = 9;
+export const MAX_GRID_HEIGHT = 6;
+
 export function emptyStructural(): StructuralCores {
   return {
     constructionEnabled: false,
@@ -88,14 +95,32 @@ export function effectiveDeck(base: Deck, sc: StructuralCores, deckmod: number):
   return buildDeck(raw, deckmod);
 }
 
+/** Bounding box of the union of original + added slots. */
+function slotsBbox(base: Deck, sc: StructuralCores): {
+  minR: number; maxR: number; minC: number; maxC: number;
+} {
+  const all: Position[] = [
+    ...base.slots, ...sc.addedSlots,
+  ];
+  let minR = Infinity, maxR = -Infinity, minC = Infinity, maxC = -Infinity;
+  for (const [r, c] of all) {
+    if (r < minR) minR = r;
+    if (r > maxR) maxR = r;
+    if (c < minC) minC = c;
+    if (c > maxC) maxC = c;
+  }
+  return { minR, maxR, minC, maxC };
+}
+
 /** All cells adjacent (8-direction) to any existing slot (original or added)
- *  that aren't themselves already slots. These are the legal placement
- *  positions for the next Construction Core tile.
- *
- *  Returns [] once the cap is reached so the UI won't surface candidates. */
+ *  that aren't themselves already slots AND don't push the slot bbox past
+ *  MAX_GRID_WIDTH × MAX_GRID_HEIGHT. Returns [] once the placement cap is
+ *  reached so the UI won't surface candidates. */
 export function constructionCandidates(base: Deck, sc: StructuralCores): Position[] {
   if (!sc.constructionEnabled) return [];
   if (sc.addedSlots.length >= MAX_CONSTRUCTION) return [];
+
+  const bb = slotsBbox(base, sc);
 
   const occupied = new Set<string>([
     ...base.slots.map(posKey),
@@ -107,9 +132,18 @@ export function constructionCandidates(base: Deck, sc: StructuralCores): Positio
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
         if (dr === 0 && dc === 0) continue;
-        const np: Position = [r + dr, c + dc];
-        const nk = posKey(np);
+        const nr = r + dr;
+        const nc = c + dc;
+        const nk = `${nr},${nc}`;
         if (occupied.has(nk)) continue;
+        // Reject anything that would push the slot bbox past the 9×6 cap.
+        // A candidate that lies INSIDE the current bbox is always fine
+        // regardless of these checks (the union with current bbox doesn't
+        // grow), and anything outside has to satisfy the width/height limit.
+        const newW = Math.max(bb.maxC, nc) - Math.min(bb.minC, nc) + 1;
+        const newH = Math.max(bb.maxR, nr) - Math.min(bb.minR, nr) + 1;
+        if (newW > MAX_GRID_WIDTH)  continue;
+        if (newH > MAX_GRID_HEIGHT) continue;
         candidates.add(nk);
       }
     }
