@@ -29,6 +29,10 @@ export interface ResolvedConfig {
     void_allow: boolean;
     void_base: number;
     void_scale: number;
+    // Archive core: per-arcane base. Final mult = `archive_core ^ n_arcane_placed`.
+    // Applied OUTSIDE the per-card core_mult (bypasses the additive_cores
+    // switch). Only enumerated when the deck has any arcane slot.
+    archive_core: number;
   };
 
   deluxe: {

@@ -60,6 +60,7 @@ from .config import (
     MULT_SURR_GREED,
     MULT_VOID_CORE_BASE,
     MULT_VOID_CORE_SCALE,
+    MULT_ARCHIVE_CORE,
 )
 
 
@@ -252,28 +253,42 @@ def _void_core_mult(spec: CoreSpec, n_dead: int) -> float:
     return MULT_VOID_CORE_BASE + scale * n_dead
 
 
+def _archive_core_mult(spec: CoreSpec, n_arcane_placed: int) -> float:
+    """ARCHIVE_CORE multiplier given runtime ``n_arcane_placed``. ``override``
+    replaces the per-arcane *base* (not the final multiplier), so the final
+    value is ``override ** n_arcane_placed``."""
+    base = spec.override if spec.override is not None else MULT_ARCHIVE_CORE
+    return base ** n_arcane_placed
+
+
 def _classify_cores(
     cores:      FrozenSet[CoreSpec],
     card_class: CardClass,
     n_ns:       int,
     n_deluxe:   int,
     n_dead:     int,
+    n_arcane_placed: int,
 ) -> Tuple[
     List["CoreComponent"],
     Optional["CoreComponent"],
     Optional["CoreComponent"],
     Optional["CoreComponent"],
+    Optional["CoreComponent"],
     List["ExcludedCore"],
 ]:
-    """Sort cores into baseline / color / deluxe / void buckets.
+    """Sort cores into baseline / color / deluxe / void / archive buckets.
 
-    Returns ``(baseline, color_comp, deluxe_comp, void_comp, class_excluded)``:
+    Returns ``(baseline, color_comp, deluxe_comp, void_comp, archive_comp,
+    class_excluded)``:
       * ``baseline`` — cores that apply to every non-greed scoring card
         regardless of color (PURE, FOIL, plus EQUI/STEAD when class is SHINY).
       * ``color_comp`` — the active COLOR core, if any. Gates per-card by color.
       * ``deluxe_comp`` — the active DELUXE_CORE, if any. Excludes deluxe cards.
       * ``void_comp`` — the active VOID_CORE, if any. Excludes dead cards
         (dead cards score 0 anyway; this is only used for breakdown symmetry).
+      * ``archive_comp`` — the active ARCHIVE_CORE, if any. **Applied outside**
+        the per-card core_mult (bypasses the additive_cores stacking switch).
+        Value = base ** n_arcane_placed.
       * ``class_excluded`` — cores excluded by the card-class rule (EQUI/STEAD
         on EVO). Precomputed once for the run.
     """
@@ -281,6 +296,7 @@ def _classify_cores(
     color_comp: Optional[CoreComponent]  = None
     deluxe_comp: Optional[CoreComponent] = None
     void_comp:  Optional[CoreComponent]  = None
+    archive_comp: Optional[CoreComponent] = None
     class_excluded: List[ExcludedCore]   = []
 
     for spec in cores:
@@ -316,8 +332,11 @@ def _classify_cores(
         elif spec.core_type == CoreType.VOID_CORE:
             v = _void_core_mult(spec, n_dead)
             void_comp = CoreComponent(CoreType.VOID_CORE, None, v, is_override)
+        elif spec.core_type == CoreType.ARCHIVE_CORE:
+            v = _archive_core_mult(spec, n_arcane_placed)
+            archive_comp = CoreComponent(CoreType.ARCHIVE_CORE, None, v, is_override)
 
-    return baseline, color_comp, deluxe_comp, void_comp, class_excluded
+    return baseline, color_comp, deluxe_comp, void_comp, archive_comp, class_excluded
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -398,8 +417,9 @@ def simulate_inventory(
     # All cores fold into ONE per-card ``core_mult``. Precompute the baseline
     # (cores that apply to every non-greed card) and the color-/deluxe-/void-
     # gated addends so each card's multiplier is a cheap constant-time combo.
-    baseline, color_comp, deluxe_comp, void_comp, _ex = _classify_cores(
-        cores, card_class, n_ns, n_deluxe, n_dead,
+    # Archive core is precomputed separately and applied *outside* core_mult.
+    baseline, color_comp, deluxe_comp, void_comp, archive_comp, _ex = _classify_cores(
+        cores, card_class, n_ns, n_deluxe, n_dead, len(arcane),
     )
     baseline_sum  = sum(c.value - 1.0 for c in baseline)
     baseline_prod = math.prod(c.value for c in baseline) if baseline else 1.0
@@ -410,6 +430,8 @@ def simulate_inventory(
     deluxe_factor = deluxe_comp.value         if deluxe_comp is not None else 1.0
     void_addend   = (void_comp.value - 1.0)   if void_comp   is not None else 0.0
     void_factor   = void_comp.value           if void_comp   is not None else 1.0
+    # Archive multiplier — applied as a final outside-the-stack factor.
+    archive_mult  = archive_comp.value         if archive_comp is not None else 1.0
 
     def _card_core_mult(card_type: CardType, card_color: Optional[Color]) -> float:
         """Combined per-card core multiplier — color, deluxe, and void cores
@@ -492,15 +514,15 @@ def simulate_inventory(
         else:  # SURR
             pos_val = sum(1 for q in deck._surr_peers[p] if colored.get(q) == c)
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += pos_val * _card_core_mult(t, c) * b
+        ndm += pos_val * _card_core_mult(t, c) * b * archive_mult
 
     for p, (_t, c) in deluxe.items():
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += MULT_DELUXE_FLAT * _card_core_mult(CardType.DELUXE, c) * b
+        ndm += MULT_DELUXE_FLAT * _card_core_mult(CardType.DELUXE, c) * b * archive_mult
 
     for p, (_t, c) in typeless.items():
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += 1.0 * _card_core_mult(CardType.TYPELESS, c) * b
+        ndm += 1.0 * _card_core_mult(CardType.TYPELESS, c) * b * archive_mult
 
     return ndm
 
@@ -560,9 +582,12 @@ def simulate_inventory_breakdown(
 
     # Classify cores once. The breakdown for each slot picks from these buckets
     # depending on the slot's color and whether it's a deluxe / dead card.
-    baseline, color_comp, deluxe_comp, void_comp, class_excluded = _classify_cores(
-        cores, card_class, n_ns, n_deluxe, n_dead,
+    baseline, color_comp, deluxe_comp, void_comp, archive_comp, class_excluded = _classify_cores(
+        cores, card_class, n_ns, n_deluxe, n_dead, len(arcane),
     )
+    # Archive multiplier is applied as a final outside-the-stack factor on top
+    # of each per-card score; it bypasses the additive_cores switch entirely.
+    archive_mult = archive_comp.value if archive_comp is not None else 1.0
 
     scorable_positions = set(positional) | set(deluxe) | set(typeless)
     # Mirror simulate_inventory: additive starts at 0 (floored to 1 at use),
@@ -715,7 +740,7 @@ def simulate_inventory_breakdown(
             base_explain = f"surrounding same-color peers (color {c.value if c else '—'}) = {pos_val}"
         applied, excluded, cm, formula = _card_breakdown(t, c)
         b   = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        v   = pos_val * cm * b
+        v   = pos_val * cm * b * archive_mult
         per_slot_breakdown[p] = SlotBreakdown(
             card_type=t, color=c,
             base_value=float(pos_val), base_explain=base_explain,
@@ -729,7 +754,7 @@ def simulate_inventory_breakdown(
     for p, (t, c) in deluxe.items():
         applied, excluded, cm, formula = _card_breakdown(CardType.DELUXE, c)
         b  = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        v  = MULT_DELUXE_FLAT * cm * b
+        v  = MULT_DELUXE_FLAT * cm * b * archive_mult
         per_slot_breakdown[p] = SlotBreakdown(
             card_type=t, color=c,
             base_value=float(MULT_DELUXE_FLAT), base_explain=f"deluxe flat value = {MULT_DELUXE_FLAT}",
@@ -743,7 +768,7 @@ def simulate_inventory_breakdown(
     for p, (t, c) in typeless.items():
         applied, excluded, cm, formula = _card_breakdown(CardType.TYPELESS, c)
         b  = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        v  = 1.0 * cm * b
+        v  = 1.0 * cm * b * archive_mult
         per_slot_breakdown[p] = SlotBreakdown(
             card_type=t, color=c,
             base_value=1.0, base_explain="typeless flat value = 1.0",
@@ -944,6 +969,12 @@ def candidate_cores_inventory(
     void_core_spec   = (by_type.get(CoreType.VOID_CORE)   or [None])[0]
     if not _cfg.ALLOW_VOID:
         void_core_spec = None
+    # Archive core is geometry-gated: only enumerated when the deck has any
+    # arcane slot (otherwise n_arcane_placed is permanently 0 and the
+    # multiplier is permanently 1.0).
+    archive_core_spec = (by_type.get(CoreType.ARCHIVE_CORE) or [None])[0]
+    if not deck.arcane_slots:
+        archive_core_spec = None
     foil_spec        = (by_type.get(CoreType.FOIL)        or [None])[0]
     equi_spec        = (by_type.get(CoreType.EQUILIBRIUM) or [None])[0]
     stead_spec       = (by_type.get(CoreType.STEADFAST)   or [None])[0]
@@ -979,9 +1010,10 @@ def candidate_cores_inventory(
             return best_c
 
         var_pool: List[CoreSpec] = []
-        if pure_spec        is not None: var_pool.append(pure_spec)
-        if deluxe_core_spec is not None: var_pool.append(deluxe_core_spec)
-        if void_core_spec   is not None: var_pool.append(void_core_spec)
+        if pure_spec         is not None: var_pool.append(pure_spec)
+        if deluxe_core_spec  is not None: var_pool.append(deluxe_core_spec)
+        if void_core_spec    is not None: var_pool.append(void_core_spec)
+        if archive_core_spec is not None: var_pool.append(archive_core_spec)
 
         for color_pick in color_choices:
             for size in range(0, len(var_pool) + 1):
@@ -1034,9 +1066,11 @@ def candidate_cores_inventory(
     deluxe_var: List[CoreSpec] = [deluxe_core_spec] if deluxe_core_spec is not None else []
     # VOID joins the variable pool in both EVO groups (n_dead unknown pre-SA).
     void_var: List[CoreSpec] = [void_core_spec] if void_core_spec is not None else []
+    # ARCHIVE joins both EVO groups when the deck has any arcane slots.
+    archive_var: List[CoreSpec] = [archive_core_spec] if archive_core_spec is not None else []
 
     # Group A: no FOIL (PURE is static)
-    var_pool_a = list(deluxe_var) + list(void_var)
+    var_pool_a = list(deluxe_var) + list(void_var) + list(archive_var)
     for color_pick in color_choices:
         for size in range(0, len(var_pool_a) + 1):
             for var_combo in (combinations(var_pool_a, size) if size > 0 else [()]):
@@ -1053,9 +1087,10 @@ def candidate_cores_inventory(
     # Group B: with FOIL (PURE is variable)
     if foil_spec is not None:
         var_pool_b: List[CoreSpec] = []
-        if pure_spec        is not None: var_pool_b.append(pure_spec)
-        if deluxe_core_spec is not None: var_pool_b.append(deluxe_core_spec)
-        if void_core_spec   is not None: var_pool_b.append(void_core_spec)
+        if pure_spec         is not None: var_pool_b.append(pure_spec)
+        if deluxe_core_spec  is not None: var_pool_b.append(deluxe_core_spec)
+        if void_core_spec    is not None: var_pool_b.append(void_core_spec)
+        if archive_core_spec is not None: var_pool_b.append(archive_core_spec)
 
         for color_pick in color_choices:
             for size in range(0, len(var_pool_b) + 1):
@@ -1444,6 +1479,7 @@ def _run_one_combo_rust(
         mult_deluxe_core_scale = MULT_DELUXE_CORE_SCALE,
         mult_void_core_base    = MULT_VOID_CORE_BASE,
         mult_void_core_scale   = MULT_VOID_CORE_SCALE,
+        mult_archive_core      = MULT_ARCHIVE_CORE,
         # Flags — read via _cfg so a runtime set_mode() takes effect on the
         # next Rust call without re-importing this module.
         greed_additive = GREED_ADDITIVE,

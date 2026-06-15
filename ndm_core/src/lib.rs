@@ -41,6 +41,8 @@ const CORE_COLOR: u8       = 3;
 const CORE_FOIL: u8        = 4;
 const CORE_DELUXE: u8      = 5;
 const CORE_VOID: u8        = 6;
+// Archive core: base ** n_arcane_placed, applied *outside* per-card core_mult.
+const CORE_ARCHIVE: u8     = 7;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String ↔ u8 conversions (used only at the Python boundary, not in hot path)
@@ -105,6 +107,7 @@ fn core_from_str(s: &str) -> u8 {
         "foil"        => CORE_FOIL,
         "deluxe_core" => CORE_DELUXE,
         "void_core"   => CORE_VOID,
+        "archive_core" => CORE_ARCHIVE,
         other         => panic!("Unknown core type string: {}", other),
     }
 }
@@ -181,6 +184,8 @@ struct SimConfig {
     mult_deluxe_core_scale: f64,
     mult_void_core_base: f64,
     mult_void_core_scale: f64,
+    /// Archive core per-arcane base; final mult = `base ^ n_arcane_placed`.
+    mult_archive_core: f64,
     greed_additive: bool,
     additive_cores: bool,
     is_shiny: bool,
@@ -284,6 +289,7 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
     let mut baseline_c: Vec<f64> = Vec::with_capacity(6);
     let mut deluxe_core_value: Option<f64> = None;
     let mut void_core_value:   Option<f64> = None;
+    let mut archive_present = false;
 
     for &core in cores {
         match core {
@@ -305,9 +311,18 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
                     cfg.mult_void_core_base + cfg.mult_void_core_scale * n_dead as f64,
                 );
             }
+            CORE_ARCHIVE => { archive_present = true; }
             _ => {}
         }
     }
+
+    // Archive core — applied *outside* the per-card core_mult below. Bypasses
+    // the additive_cores stacking switch entirely.
+    let archive_mult: f64 = if archive_present {
+        cfg.mult_archive_core.powi(n_arcane_placed as i32)
+    } else {
+        1.0
+    };
 
     let (regular_core_mult, deluxe_card_core_mult, typeless_core_mult) = if cfg.additive_cores {
         let baseline_sum:  f64 = baseline_c.iter().map(|v| v - 1.0).sum();
@@ -441,13 +456,13 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
                 _    => 0,
             };
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
-            ndm += contrib(pos as f64 * regular_core_mult * b);
+            ndm += contrib(pos as f64 * regular_core_mult * b * archive_mult);
         } else if is_deluxe[i] {
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
-            ndm += contrib(cfg.mult_deluxe_flat * deluxe_card_core_mult * b);
+            ndm += contrib(cfg.mult_deluxe_flat * deluxe_card_core_mult * b * archive_mult);
         } else if is_typeless[i] {
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
-            ndm += contrib(1.0_f64 * typeless_core_mult * b);
+            ndm += contrib(1.0_f64 * typeless_core_mult * b * archive_mult);
         }
     }
 
@@ -704,6 +719,7 @@ fn run_sa_optimize(
     mult_deluxe_core_scale: f64,
     mult_void_core_base: f64,
     mult_void_core_scale: f64,
+    mult_archive_core: f64,
     // Flags
     greed_additive: bool,
     additive_cores: bool,
@@ -814,6 +830,7 @@ fn run_sa_optimize(
         mult_deluxe_core_scale,
         mult_void_core_base,
         mult_void_core_scale,
+        mult_archive_core,
         greed_additive,
         additive_cores,
         is_shiny,

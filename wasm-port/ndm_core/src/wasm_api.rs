@@ -68,9 +68,15 @@ pub struct WasmInventoryInput {
     pub mult_void_core_base:    f64,
     #[serde(default)]
     pub mult_void_core_scale:   f64,
+    /// Archive core per-arcane base; final mult = `base ^ n_arcane_placed`.
+    /// Default 1.0 → core is inert if accidentally selected.
+    #[serde(default = "default_archive_base")]
+    pub mult_archive_core:      f64,
     pub greed_additive:         bool,
     pub additive_cores:         bool,
 }
+
+fn default_archive_base() -> f64 { 1.0 }
 
 #[derive(Serialize)]
 pub struct WasmInventoryResult {
@@ -114,6 +120,7 @@ pub fn run_sa_inventory_wasm(input: JsValue) -> Result<JsValue, JsValue> {
         mult_deluxe_core_scale: inp.mult_deluxe_core_scale,
         mult_void_core_base:    inp.mult_void_core_base,
         mult_void_core_scale:   inp.mult_void_core_scale,
+        mult_archive_core:      inp.mult_archive_core,
         greed_additive:         inp.greed_additive,
         additive_cores:         inp.additive_cores,
         is_shiny:               inp.is_shiny,

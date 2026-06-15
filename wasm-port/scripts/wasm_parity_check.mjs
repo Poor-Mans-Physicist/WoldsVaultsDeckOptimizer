@@ -98,6 +98,7 @@ function buildPayload(mode, deck, opts) {
     mult_deluxe_core_scale: cfg.deluxe.core_scale,
     mult_void_core_base:    cfg.cores.void_base ?? 0,
     mult_void_core_scale:   cfg.cores.void_scale ?? 0,
+    mult_archive_core:      cfg.cores.archive_core ?? 1.0,
     greed_additive:         cfg.stacking.greed_additive,
     additive_cores:         cfg.stacking.additive_cores,
   };

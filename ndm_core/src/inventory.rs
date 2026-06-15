@@ -57,6 +57,8 @@ const CORE_COLOR:       u8 = 3;
 const CORE_FOIL:        u8 = 4;
 const CORE_DELUXE:      u8 = 5;
 const CORE_VOID:        u8 = 6;
+// Archive core: base ** n_arcane_placed, applied *outside* the per-card core_mult.
+const CORE_ARCHIVE:     u8 = 7;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String ↔ u8 conversions (Python boundary only — never on the hot path)
@@ -141,6 +143,7 @@ fn core_from_str(s: &str) -> u8 {
         "foil"        => CORE_FOIL,
         "deluxe_core" => CORE_DELUXE,
         "void_core"   => CORE_VOID,
+        "archive_core" => CORE_ARCHIVE,
         other         => panic!("Unknown core type: {}", other),
     }
 }
@@ -211,6 +214,8 @@ struct SimConfig {
     mult_deluxe_core_scale: f64,
     mult_void_core_base: f64,
     mult_void_core_scale: f64,
+    /// Archive core per-arcane base; final mult = `base ^ n_arcane_placed`.
+    mult_archive_core: f64,
     greed_additive: bool,
     additive_cores: bool,
     is_shiny: bool,
@@ -332,6 +337,11 @@ fn simulate(
     let mut void_addend   = 0.0f64;
     let mut void_factor   = 1.0f64;
     let mut void_present  = false;
+    // Archive core: per-arcane base; final multiplier is base ** n_arcane_placed.
+    // Applied *outside* the per-card core_mult, so it bypasses the additive_cores
+    // stacking switch.
+    let mut archive_base    = 1.0f64;
+    let mut archive_present = false;
     let color_core_color = cores.color_core_color;
 
     for s in &cores.list {
@@ -377,9 +387,20 @@ fn simulate(
                 void_factor   = v;
                 void_present  = true;
             }
+            CORE_ARCHIVE => {
+                archive_base    = if s.has_override() { s.override_ } else { cfg.mult_archive_core };
+                archive_present = true;
+            }
             _ => {}
         }
     }
+
+    // Archive multiplier — applied outside the per-card core_mult.
+    let archive_mult: f64 = if archive_present {
+        archive_base.powi(n_arcane as i32)
+    } else {
+        1.0
+    };
 
     // Per-card core multiplier — picks color/deluxe/void addends per
     // applicability. (Dead cards are skipped before this is called; gating is
@@ -492,11 +513,11 @@ fn simulate(
                     _ => 0.0,
                 }
             };
-            ndm += pos_val * card_core_mult(t, c) * b;
+            ndm += pos_val * card_core_mult(t, c) * b * archive_mult;
         } else if t == DELUXE {
-            ndm += cfg.mult_deluxe_flat * card_core_mult(t, c) * b;
+            ndm += cfg.mult_deluxe_flat * card_core_mult(t, c) * b * archive_mult;
         } else if t == TYPELESS {
-            ndm += 1.0 * card_core_mult(t, c) * b;
+            ndm += 1.0 * card_core_mult(t, c) * b * archive_mult;
         }
         // GREED / DEAD contribute nothing.
     }
@@ -832,6 +853,7 @@ fn sa_one_restart(
     mult_equilibrium, mult_foil, mult_steadfast, mult_color,
     mult_deluxe_flat, mult_deluxe_core_base, mult_deluxe_core_scale,
     mult_void_core_base, mult_void_core_scale,
+    mult_archive_core,
     greed_additive, additive_cores,
 ))]
 pub fn run_sa_inventory(
@@ -865,6 +887,7 @@ pub fn run_sa_inventory(
     mult_deluxe_core_scale: f64,
     mult_void_core_base:    f64,
     mult_void_core_scale:   f64,
+    mult_archive_core:      f64,
     greed_additive:         bool,
     additive_cores:         bool,
 ) -> PyResult<(Vec<(String, String)>, f64)> {
@@ -922,6 +945,7 @@ pub fn run_sa_inventory(
         mult_equilibrium, mult_foil, mult_steadfast, mult_color,
         mult_deluxe_flat, mult_deluxe_core_base, mult_deluxe_core_scale,
         mult_void_core_base, mult_void_core_scale,
+        mult_archive_core,
         greed_additive, additive_cores, is_shiny,
         auto_place_arcane,
     };

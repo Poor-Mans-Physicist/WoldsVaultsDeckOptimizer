@@ -51,6 +51,10 @@ export const CoreType = {
   DELUXE_CORE: "deluxe_core",
   // Void core: base + scale × n_dead. Applies to every non-DEAD scoring card.
   VOID_CORE:   "void_core",
+  // Archive core: base ** n_arcane_placed, applied *outside* per-card core_mult.
+  // Bypasses the additive_cores switch; only enumerated when the deck has any
+  // arcane slot.
+  ARCHIVE_CORE: "archive_core",
 } as const;
 export type CoreType = typeof CoreType[keyof typeof CoreType];
 

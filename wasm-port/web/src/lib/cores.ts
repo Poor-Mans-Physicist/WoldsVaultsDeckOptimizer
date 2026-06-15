@@ -36,6 +36,13 @@ export function voidCoreMult(spec: CoreSpec, n_dead: number, cfg: ResolvedConfig
   return cfg.cores.void_base + scale * n_dead;
 }
 
+/** ARCHIVE_CORE multiplier given runtime `n_arcane_placed`. `override`
+ *  replaces the per-arcane *base*; final mult = `base ^ n_arcane_placed`. */
+export function archiveCoreMult(spec: CoreSpec, n_arcane_placed: number, cfg: ResolvedConfig): number {
+  const base = spec.override !== null ? spec.override : cfg.cores.archive_core;
+  return Math.pow(base, n_arcane_placed);
+}
+
 // ── Classified-core output (for breakdown re-score) ───────────────────────────
 
 export interface CoreComponent {
@@ -53,11 +60,11 @@ export interface ExcludedCore {
 
 /**
  * Mirror `_classify_cores`: split cores into baseline / color / deluxe / void
- * / excluded buckets.
+ * / archive / excluded buckets.
  *
- * `n_arcane` is NOT used here (the old Pure-core fudge is gone; arcane cards
- * count via the assignment-derived `n_ns` instead). `n_dead` is used by the
- * void core's variable-multiplier computation.
+ * `n_arcane_placed` feeds Archive Core's `base ^ n` formula. `n_dead` is used
+ * by the void core. The old Pure-core fudge is gone — arcane cards count via
+ * the assignment-derived `n_ns` instead.
  */
 export function classifyCores(
   cores:      readonly CoreSpec[],
@@ -65,18 +72,21 @@ export function classifyCores(
   n_ns:       number,
   n_deluxe:   number,
   n_dead:     number,
+  n_arcane_placed: number,
   cfg:        ResolvedConfig,
 ): {
   baseline:   CoreComponent[];
   colorComp:  CoreComponent | null;
   deluxeComp: CoreComponent | null;
   voidComp:   CoreComponent | null;
+  archiveComp: CoreComponent | null;
   classExcluded: ExcludedCore[];
 } {
   const baseline: CoreComponent[] = [];
   let colorComp:  CoreComponent | null = null;
   let deluxeComp: CoreComponent | null = null;
   let voidComp:   CoreComponent | null = null;
+  let archiveComp: CoreComponent | null = null;
   const classExcluded: ExcludedCore[] = [];
 
   for (const spec of cores) {
@@ -120,9 +130,14 @@ export function classifyCores(
         voidComp = { core_type: CoreType.VOID_CORE, color: null, value: v, override: isOverride };
         break;
       }
+      case CoreType.ARCHIVE_CORE: {
+        const v = archiveCoreMult(spec, n_arcane_placed, cfg);
+        archiveComp = { core_type: CoreType.ARCHIVE_CORE, color: null, value: v, override: isOverride };
+        break;
+      }
     }
   }
-  return { baseline, colorComp, deluxeComp, voidComp, classExcluded };
+  return { baseline, colorComp, deluxeComp, voidComp, archiveComp, classExcluded };
 }
 
 // ── Set-like dedup for CoreSpec collections ──────────────────────────────────
@@ -163,6 +178,7 @@ export function candidateCoresInventory(
   card_class:  CardClass,
   core_slots:  number,
   deck_n_slots: number,
+  deck_n_arcane_slots: number,
   cfg:         ResolvedConfig,
 ): CoreSpec[][] {
   const k = core_slots;
@@ -178,6 +194,10 @@ export function candidateCoresInventory(
   // Void core is mode-gated. Vanilla disables it via cfg.cores.void_allow.
   let voidCoreSpec  = byType.get(CoreType.VOID_CORE)?.[0]  ?? null;
   if (!cfg.cores.void_allow) voidCoreSpec = null;
+  // Archive core: only enumerated when the deck has any arcane slot (otherwise
+  // n_arcane_placed is permanently 0 and the multiplier is permanently 1.0).
+  let archiveCoreSpec = byType.get(CoreType.ARCHIVE_CORE)?.[0] ?? null;
+  if (deck_n_arcane_slots === 0) archiveCoreSpec = null;
   const foilSpec       = byType.get(CoreType.FOIL)?.[0]        ?? null;
   const equiSpec       = byType.get(CoreType.EQUILIBRIUM)?.[0] ?? null;
   const steadSpec      = byType.get(CoreType.STEADFAST)?.[0]   ?? null;
@@ -224,9 +244,10 @@ export function candidateCoresInventory(
     };
 
     const varPool: CoreSpec[] = [];
-    if (pureSpec)       varPool.push(pureSpec);
-    if (deluxeCoreSpec) varPool.push(deluxeCoreSpec);
-    if (voidCoreSpec)   varPool.push(voidCoreSpec);
+    if (pureSpec)        varPool.push(pureSpec);
+    if (deluxeCoreSpec)  varPool.push(deluxeCoreSpec);
+    if (voidCoreSpec)    varPool.push(voidCoreSpec);
+    if (archiveCoreSpec) varPool.push(archiveCoreSpec);
 
     for (const colorPick of colorChoices) {
       for (let size = 0; size <= varPool.length; size++) {
@@ -282,9 +303,11 @@ export function candidateCoresInventory(
   // Void joins the EVO variable pool too (its multiplier depends on n_dead,
   // unknown pre-SA). Gated by cfg.cores.void_allow above.
   const voidVar:   CoreSpec[] = voidCoreSpec ? [voidCoreSpec] : [];
+  // Archive joins both EVO groups when the deck has any arcane slots.
+  const archiveVar: CoreSpec[] = archiveCoreSpec ? [archiveCoreSpec] : [];
 
   // Group A: no FOIL (PURE is static)
-  const varPoolA: CoreSpec[] = [...deluxeVar, ...voidVar];
+  const varPoolA: CoreSpec[] = [...deluxeVar, ...voidVar, ...archiveVar];
   for (const colorPick of colorChoices) {
     for (let size = 0; size <= varPoolA.length; size++) {
       for (const varCombo of combinations(varPoolA, size)) {
@@ -302,9 +325,10 @@ export function candidateCoresInventory(
   // Group B: with FOIL (PURE is variable)
   if (foilSpec) {
     const varPoolB: CoreSpec[] = [];
-    if (pureSpec)       varPoolB.push(pureSpec);
-    if (deluxeCoreSpec) varPoolB.push(deluxeCoreSpec);
-    if (voidCoreSpec)   varPoolB.push(voidCoreSpec);
+    if (pureSpec)        varPoolB.push(pureSpec);
+    if (deluxeCoreSpec)  varPoolB.push(deluxeCoreSpec);
+    if (voidCoreSpec)    varPoolB.push(voidCoreSpec);
+    if (archiveCoreSpec) varPoolB.push(archiveCoreSpec);
 
     for (const colorPick of colorChoices) {
       for (let size = 0; size <= varPoolB.length; size++) {

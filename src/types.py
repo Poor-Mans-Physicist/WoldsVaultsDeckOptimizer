@@ -105,3 +105,8 @@ class CoreType(Enum):
     # candidate (treated like PURE in the permutator). Excluded from dead cards
     # themselves; otherwise applies to every non-greed scoring card.
     VOID_CORE   = "void_core"
+    # Archive core: base ** n_arcane_placed, applied *outside* the per-card
+    # core_mult (so it bypasses the additive_cores stacking switch). Only
+    # enumerated when the deck has ≥ 1 arcane slot. Boosts every non-greed
+    # scoring card (regulars, deluxe, typeless); arcane/dead score 0 anyway.
+    ARCHIVE_CORE = "archive_core"

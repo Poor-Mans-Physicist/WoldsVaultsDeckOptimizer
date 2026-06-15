@@ -16,6 +16,7 @@ export const CORE_OPTIONS: readonly CoreOption[] = [
   { coreType: CoreType.FOIL,        color: null },
   { coreType: CoreType.DELUXE_CORE, color: null },
   { coreType: CoreType.VOID_CORE,   color: null },
+  { coreType: CoreType.ARCHIVE_CORE, color: null },
   { coreType: CoreType.COLOR,       color: Color.RED },
   { coreType: CoreType.COLOR,       color: Color.GREEN },
   { coreType: CoreType.COLOR,       color: Color.BLUE },
@@ -47,6 +48,9 @@ export function coreDefaultValue(opt: CoreOption, cfg: ResolvedConfig): number {
     case CoreType.STEADFAST:   return cfg.cores.steadfast;
     case CoreType.FOIL:        return cfg.cores.foil;
     case CoreType.COLOR:       return cfg.cores.color;
+    // Archive override replaces the per-arcane BASE (not the final mult). So
+    // a user override of 1.5 → 1.5 ^ n_arcane_placed.
+    case CoreType.ARCHIVE_CORE: return cfg.cores.archive_core;
   }
 }
 

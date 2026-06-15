@@ -47,14 +47,20 @@ deck slots, then computes one NDM value.
 3. **Build the per-card-type core multipliers.** Three variants exist —
    `regular_core_mult`, `deluxe_card_core_mult`, `typeless_core_mult` —
    because DELUXE_CORE skips deluxe cards.
-4. **Greed boosts.** Every greed card applies its target-specific boost
+4. **Compute `archive_mult`** — a single deck-wide factor of
+   `archive_core_base ^ n_arcane_placed` when ARCHIVE_CORE is picked,
+   else `1.0`. Bypasses the additive-vs-multiplicative stacking switch
+   entirely; applied as a final outside-the-stack factor on every
+   scoring card. See **Archive core** below.
+5. **Greed boosts.** Every greed card applies its target-specific boost
    to a `boost: position → float` map (only scorable targets receive it).
-5. **Sum NDM per category:**
-   - regular: `pos_count × regular_core_mult × boost`
-   - deluxe:  `MULT_DELUXE_FLAT × deluxe_card_core_mult × boost`
-   - typeless: `1.0 × typeless_core_mult × boost`
+6. **Sum NDM per category:**
+   - regular: `pos_count × regular_core_mult × boost × archive_mult`
+   - deluxe:  `MULT_DELUXE_FLAT × deluxe_card_core_mult × boost × archive_mult`
+   - typeless: `1.0 × typeless_core_mult × boost × archive_mult`
    - arcane: 0 (never scores directly, but counts in row/col peer
-     counts for adjacent positionals, and counts in `n_ns`).
+     counts for adjacent positionals, counts in `n_ns`, and counts in
+     ARCHIVE's exponent).
    - dead: 0 (consumed by void core only).
 
 ---
@@ -180,10 +186,49 @@ every scoring call.
 | `FOIL`        | **2.8**                           | regulars, deluxe cards (baseline), typeless                             | greed                                    | Flat                                                     | Universal;**also flips EVO's `n_ns` to the SHINY formula** (see below) |
 | `DELUXE_CORE` | base**1.0**, scale **0.2**  | regulars, typeless                                                      | **deluxe cards themselves**, greed | `deluxe_core_base + deluxe_core_scale × n_deluxe`     | Universal; gated by `deluxe.allow` (off in vanilla)                          |
 | `VOID_CORE`   | base**1.0**, scale **0.3**  | regulars, deluxe cards, typeless                                        | dead cards themselves, greed             | `void_base + void_scale × n_dead`                     | Universal; gated by `cores.void_allow` (off in vanilla)                      |
+| `ARCHIVE_CORE` | per-arcane base **1.2**           | regulars, deluxe cards, typeless                                        | greed (arcane/dead score 0 anyway)       | `archive_core ^ n_arcane_placed` — applied **outside** the per-card `core_mult` (see callout below) | Universal; **enumerated as a candidate only when the deck has ≥ 1 arcane slot** |
 
 Cores **never** apply to greed cards. They never apply to ARCANE cards
 (arcane = 0 NDM, fixed). DEAD cards score 0 regardless and so are not
 affected.
+
+### Archive core — the only "outside-the-stack" core
+
+Every other core folds into one per-card `core_mult` that respects the
+`stacking.additive_cores` flag (sum in Wold's, product in Vanilla).
+Archive does **not**. After all the other math, each scoring card's
+contribution is multiplied by an Archive factor of
+`archive_core ^ n_arcane_placed`:
+
+```
+final_ndm_per_card = base × core_mult × greed_boost × archive_mult
+                                                     ^^^^^^^^^^^^
+                                                    where archive_mult =
+                                                      base_value ^ n_arcane_placed
+                                                      (1.0 when Archive isn't picked)
+```
+
+Worked example (Wold's default `archive_core: 1.2`):
+
+| Arcane cards placed | Archive factor on every scoring card |
+| --- | --- |
+| 0 | 1.0  |
+| 1 | 1.2  |
+| 2 | 1.44 |
+| 3 | 1.728 |
+| 4 | 2.0736 |
+
+Override semantics: when the user sets an override on Archive, the
+override replaces the **per-arcane base**, not the final multiplier. So
+an override of `1.5` yields a final factor of `1.5 ^ n_arcane_placed`.
+Mirrors PURE / DELUXE_CORE / VOID_CORE, where the override replaces the
+per-N scale term rather than the resolved value.
+
+Geometry gating: candidate enumeration only proposes ARCHIVE_CORE when
+the deck has at least one arcane slot. Otherwise `n_arcane_placed` is
+permanently 0, the factor is permanently 1.0, and the core would waste a
+slot. This is the only candidate-enumeration gate that depends on deck
+geometry rather than mode flags.
 
 ### Pure core's `n_ns` formula
 

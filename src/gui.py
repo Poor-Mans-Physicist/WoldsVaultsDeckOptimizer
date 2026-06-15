@@ -105,6 +105,7 @@ _CORE_OPTIONS: List[Tuple[CoreType, Optional[Color]]] = [
     (CoreType.FOIL,        None),
     (CoreType.DELUXE_CORE, None),
     (CoreType.VOID_CORE,   None),
+    (CoreType.ARCHIVE_CORE, None),
     (CoreType.COLOR,       Color.RED),
     (CoreType.COLOR,       Color.GREEN),
     (CoreType.COLOR,       Color.BLUE),

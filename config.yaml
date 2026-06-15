@@ -45,6 +45,12 @@ cores:
   void_allow:  true
   void_base:   1.0
   void_scale:  0.3
+  # Archive core (special — applies its `base^n_arcane_placed` multiplier on top
+  # of the per-card `core_mult × greed_boost × base_value`, NOT folded into
+  # `core_mult`). So it bypasses the additive_cores stacking switch entirely.
+  # Only enumerated as a candidate when the deck has ≥ 1 arcane slot; otherwise
+  # `n_arcane_placed` is permanently 0 and the multiplier is permanently 1.0.
+  archive_core: 1.2
 
 deluxe:
   allow:      true

@@ -21,6 +21,7 @@ from .config import (
     GREED_ADDITIVE,
     HEATMAP_DISPLAY,
     HNS_Q,
+    MULT_ARCHIVE_CORE,
     MULT_COLOR,
     MULT_DELUXE_CORE_BASE,
     MULT_DELUXE_CORE_SCALE,
@@ -132,6 +133,10 @@ def compute_heatmap(
         core_mult        = math.prod(core_contributions)        if core_contributions        else 1.0
         deluxe_core_mult = math.prod(deluxe_core_contributions) if deluxe_core_contributions else 1.0
 
+    # Archive core — applied *outside* core_mult (bypasses the additive_cores
+    # switch). Multiplier = base ** n_arcane_placed.
+    archive_mult = MULT_ARCHIVE_CORE ** len(arcane) if CoreType.ARCHIVE_CORE in cores else 1.0
+
     row_count: Dict[int, int] = {}
     col_count: Dict[int, int] = {}
     for r, c in filled:
@@ -191,15 +196,15 @@ def compute_heatmap(
                                            if q in filled) + 1
         else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
         b          = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        heatmap[p] = _contrib(pos * core_mult * deluxe_core_mult * b)
+        heatmap[p] = _contrib(pos * core_mult * deluxe_core_mult * b * archive_mult)
 
     for p in deluxe:
         b          = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        heatmap[p] = _contrib(MULT_DELUXE_FLAT * core_mult * b)
+        heatmap[p] = _contrib(MULT_DELUXE_FLAT * core_mult * b * archive_mult)
 
     for p in typeless:
         b          = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        heatmap[p] = _contrib(1.0 * core_mult * deluxe_core_mult * b)
+        heatmap[p] = _contrib(1.0 * core_mult * deluxe_core_mult * b * archive_mult)
 
     return heatmap
 

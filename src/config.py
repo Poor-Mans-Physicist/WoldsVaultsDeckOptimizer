@@ -86,6 +86,8 @@ MULT_COLOR:       float = _CFG["cores"]["color"]
 ALLOW_VOID:           bool  = _CFG["cores"]["void_allow"]
 MULT_VOID_CORE_BASE:  float = _CFG["cores"]["void_base"]
 MULT_VOID_CORE_SCALE: float = _CFG["cores"]["void_scale"]
+# Archive core: per-arcane-card base; final multiplier = base ** n_arcane_placed.
+MULT_ARCHIVE_CORE:    float = _CFG["cores"]["archive_core"]
 
 ALLOW_DELUXE:           bool  = _CFG["deluxe"]["allow"]
 MULT_DELUXE_FLAT:       float = _CFG["deluxe"]["flat"]
@@ -478,6 +480,7 @@ def set_mode(name: str) -> None:
     global MULT_DIR_GREED_DIAG_UP, MULT_DIR_GREED_DIAG_DOWN
     global MULT_PURE_BASE, MULT_PURE_SCALE, MULT_EQUILIBRIUM, MULT_FOIL, MULT_STEADFAST, MULT_COLOR
     global ALLOW_VOID, MULT_VOID_CORE_BASE, MULT_VOID_CORE_SCALE
+    global MULT_ARCHIVE_CORE
     global ALLOW_DELUXE, MULT_DELUXE_FLAT, MULT_DELUXE_CORE_BASE, MULT_DELUXE_CORE_SCALE
     global AUTO_PLACE_ARCANE
     global GREED_ADDITIVE, ADDITIVE_CORES, SHINY_POSITIONAL
@@ -512,6 +515,7 @@ def set_mode(name: str) -> None:
     ALLOW_VOID               = _CFG["cores"]["void_allow"]
     MULT_VOID_CORE_BASE      = _CFG["cores"]["void_base"]
     MULT_VOID_CORE_SCALE     = _CFG["cores"]["void_scale"]
+    MULT_ARCHIVE_CORE        = _CFG["cores"]["archive_core"]
     ALLOW_DELUXE             = _CFG["deluxe"]["allow"]
     MULT_DELUXE_FLAT         = _CFG["deluxe"]["flat"]
     MULT_DELUXE_CORE_BASE    = _CFG["deluxe"]["core_base"]

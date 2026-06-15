@@ -39,6 +39,7 @@ from .config import (
     MULT_DIR_GREED_VERT,
     MULT_EQUILIBRIUM,
     MULT_EVO_GREED,
+    MULT_ARCHIVE_CORE,
     MULT_FOIL,
     MULT_PURE_BASE,
     MULT_PURE_SCALE,
@@ -143,6 +144,14 @@ def simulate(
         elif core == CoreType.VOID_CORE:
             void_core_value   = MULT_VOID_CORE_BASE   + MULT_VOID_CORE_SCALE   * n_dead
 
+    # Archive core (special — applied *outside* the per-card core_mult; bypasses
+    # the additive_cores stacking switch). Final multiplier is base ** N where
+    # N is the count of placed ARCANE cards. Skipped entirely when not in the
+    # candidate set.
+    archive_mult = 1.0
+    if CoreType.ARCHIVE_CORE in cores:
+        archive_mult = MULT_ARCHIVE_CORE ** len(arcane)
+
     if ADDITIVE_CORES:
         baseline_sum  = sum(v - 1.0 for v in baseline_contribs)
         deluxe_addend = (deluxe_core_value - 1.0) if deluxe_core_value is not None else 0.0
@@ -216,15 +225,15 @@ def simulate(
         elif t == CardType.DIAG: pos = sum(1 for q in deck._diag_peers[p] if q in filled) + 1
         else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += _contrib(pos * regular_core_mult * b)
+        ndm += _contrib(pos * regular_core_mult * b * archive_mult)
 
     for p in deluxe:
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += _contrib(MULT_DELUXE_FLAT * deluxe_card_core_mult * b)
+        ndm += _contrib(MULT_DELUXE_FLAT * deluxe_card_core_mult * b * archive_mult)
 
     for p in typeless:
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += _contrib(1.0 * typeless_core_mult * b)
+        ndm += _contrib(1.0 * typeless_core_mult * b * archive_mult)
 
     return ndm
 
@@ -267,12 +276,17 @@ def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreTyp
             return best_c
 
         # VOID_CORE is always variable (n_dead is unknown pre-SA), so it joins
-        # the variable pool like PURE and (when allowed) DELUXE_CORE.
+        # the variable pool like PURE and (when allowed) DELUXE_CORE. ARCHIVE
+        # also joins when the deck has any arcane slots (its multiplier is a
+        # function of n_arcane_placed which depends on SA choices in
+        # auto_place=OFF + void mode, and is constant otherwise).
         var_pool = [CoreType.PURE]
         if ALLOW_VOID:
             var_pool.append(CoreType.VOID_CORE)
         if ALLOW_DELUXE:
             var_pool.append(CoreType.DELUXE_CORE)
+        if deck.arcane_slots:
+            var_pool.append(CoreType.ARCHIVE_CORE)
 
         candidates: List[FrozenSet[CoreType]] = []
         seen: set = set()
@@ -328,11 +342,13 @@ def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreTyp
     # VOID_CORE joins the variable pool in both EVO groups (n_dead is unknown)
     # — but only when the mode allows it.
     void_var = [CoreType.VOID_CORE] if ALLOW_VOID else []
+    # ARCHIVE joins both EVO groups when the deck has any arcane slots.
+    archive_var = [CoreType.ARCHIVE_CORE] if deck.arcane_slots else []
     candidates = []
     seen       = set()
 
     # Group A: no FOIL
-    var_pool_a = list(deluxe_var) + list(void_var)
+    var_pool_a = list(deluxe_var) + list(void_var) + list(archive_var)
     for size in range(0, len(var_pool_a) + 1):
         for var_combo in (combinations(var_pool_a, size) if size > 0 else [()]):
             var = frozenset(var_combo) if size > 0 else frozenset()
@@ -342,7 +358,7 @@ def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreTyp
             add_candidate(candidates, seen, combo)
 
     # Group B: with FOIL — PURE is variable
-    var_pool_b = [CoreType.PURE] + deluxe_var + list(void_var)
+    var_pool_b = [CoreType.PURE] + deluxe_var + list(void_var) + list(archive_var)
     for size in range(0, len(var_pool_b) + 1):
         for var_combo in (combinations(var_pool_b, size) if size > 0 else [()]):
             var   = frozenset(var_combo) if size > 0 else frozenset()
@@ -621,6 +637,7 @@ def sa_optimize(
         mult_deluxe_core_scale = MULT_DELUXE_CORE_SCALE,
         mult_void_core_base    = MULT_VOID_CORE_BASE,
         mult_void_core_scale   = MULT_VOID_CORE_SCALE,
+        mult_archive_core      = MULT_ARCHIVE_CORE,
         # Flags
         greed_additive            = GREED_ADDITIVE,
         additive_cores            = ADDITIVE_CORES,

@@ -153,7 +153,8 @@ export function enumerateCandidates(input: OptimizeInput): CandidateBundle {
   }
 
   let candidates = candidateCoresInventory(
-    cores, cardClass, deck.core_slots, deck.slots.length, cfg,
+    cores, cardClass, deck.core_slots, deck.slots.length,
+    deck.arcaneSlots.length, cfg,
   );
   if (candidates.length === 0) candidates = [[]];   // run with no cores
 
@@ -209,6 +210,7 @@ function buildBasePayload(input: OptimizeInput) {
     mult_deluxe_core_scale: cfg.deluxe.core_scale,
     mult_void_core_base:    cfg.cores.void_base,
     mult_void_core_scale:   cfg.cores.void_scale,
+    mult_archive_core:      cfg.cores.archive_core,
     greed_additive:         cfg.stacking.greed_additive,
     additive_cores:         cfg.stacking.additive_cores,
   };
