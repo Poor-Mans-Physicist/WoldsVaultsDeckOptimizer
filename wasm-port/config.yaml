@@ -48,9 +48,12 @@ cores:
   # Archive core (special — applies its `base^n_arcane_placed` multiplier on top
   # of the per-card `core_mult × greed_boost × base_value`, NOT folded into
   # `core_mult`). So it bypasses the additive_cores stacking switch entirely.
-  # Only enumerated as a candidate when the deck has ≥ 1 arcane slot; otherwise
-  # `n_arcane_placed` is permanently 0 and the multiplier is permanently 1.0.
-  archive_core: 1.2
+  # `allow: true` lets the candidate enumerator and the core picker surface it;
+  # vanilla sets false so the row is hidden mode-wide regardless of geometry.
+  # Even with allow=true, enumeration still gates on the deck having ≥ 1 arcane
+  # slot (otherwise `n_arcane_placed` is permanently 0 → multiplier is 1.0).
+  archive_allow: true
+  archive_core:  1.2
 
 deluxe:
   allow:      true
@@ -118,7 +121,8 @@ modes:
     deluxe:
       allow: false
     cores:
-      void_allow: false
+      void_allow:    false
+      archive_allow: false
     stacking:
       additive_cores: false
     shiny:

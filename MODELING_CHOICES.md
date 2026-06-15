@@ -186,7 +186,7 @@ every scoring call.
 | `FOIL`        | **2.8**                           | regulars, deluxe cards (baseline), typeless                             | greed                                    | Flat                                                     | Universal;**also flips EVO's `n_ns` to the SHINY formula** (see below) |
 | `DELUXE_CORE` | base**1.0**, scale **0.2**  | regulars, typeless                                                      | **deluxe cards themselves**, greed | `deluxe_core_base + deluxe_core_scale × n_deluxe`     | Universal; gated by `deluxe.allow` (off in vanilla)                          |
 | `VOID_CORE`   | base**1.0**, scale **0.3**  | regulars, deluxe cards, typeless                                        | dead cards themselves, greed             | `void_base + void_scale × n_dead`                     | Universal; gated by `cores.void_allow` (off in vanilla)                      |
-| `ARCHIVE_CORE` | per-arcane base **1.2**           | regulars, deluxe cards, typeless                                        | greed (arcane/dead score 0 anyway)       | `archive_core ^ n_arcane_placed` — applied **outside** the per-card `core_mult` (see callout below) | Universal; **enumerated as a candidate only when the deck has ≥ 1 arcane slot** |
+| `ARCHIVE_CORE` | per-arcane base **1.2**           | regulars, deluxe cards, typeless                                        | greed (arcane/dead score 0 anyway)       | `archive_core ^ n_arcane_placed` — applied **outside** the per-card `core_mult` (see callout below) | Gated by `cores.archive_allow` (off in vanilla); when on, additionally **enumerated only when the deck has ≥ 1 arcane slot** |
 
 Cores **never** apply to greed cards. They never apply to ARCANE cards
 (arcane = 0 NDM, fixed). DEAD cards score 0 regardless and so are not
@@ -224,11 +224,17 @@ an override of `1.5` yields a final factor of `1.5 ^ n_arcane_placed`.
 Mirrors PURE / DELUXE_CORE / VOID_CORE, where the override replaces the
 per-N scale term rather than the resolved value.
 
-Geometry gating: candidate enumeration only proposes ARCHIVE_CORE when
-the deck has at least one arcane slot. Otherwise `n_arcane_placed` is
-permanently 0, the factor is permanently 1.0, and the core would waste a
-slot. This is the only candidate-enumeration gate that depends on deck
-geometry rather than mode flags.
+Two-stage gating:
+
+1. **Mode gate** — `cores.archive_allow` (vanilla off). When false, the
+   Archive Core row is hidden in the core picker and the candidate
+   enumerator never considers it, regardless of deck shape.
+2. **Geometry gate** — even with `archive_allow: true`, enumeration only
+   proposes ARCHIVE_CORE when the deck has at least one arcane slot.
+   Otherwise `n_arcane_placed` is permanently 0, the factor is
+   permanently 1.0, and the core would waste a slot. This is the only
+   candidate-enumeration gate that depends on deck *geometry* (the mode
+   gate is the standard cfg-flag pattern).
 
 ### Pure core's `n_ns` formula
 
@@ -352,6 +358,7 @@ identical.
 | `shiny.positional`        | **true**       | **false**   | Vanilla SHINY decks have no positional cards — typeless-only ("Stat" decks)                                |
 | `deluxe.allow`            | **true**       | **false**   | Vanilla disables DELUXE cards + DELUXE_CORE entirely                                                        |
 | `cores.void_allow`        | **true**       | **false**   | Vanilla has no Void core (and therefore no DEAD-card optimization)                                          |
+| `cores.archive_allow`     | **true**       | **false**   | Vanilla hides Archive Core from the picker and the enumerator regardless of whether the deck has arcane slots |
 | `stacking.additive_cores` | **true**       | **false**   | Vanilla multiplies cores instead of summing                                                                 |
 | `decks.json_file`         | `wolds_decks.json` | `vh_decks.json` | Different deck rosters per mode                                                                             |
 

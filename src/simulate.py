@@ -23,6 +23,7 @@ from .config import (
     ADDITIVE_CORES,
     ALLOW_DELUXE,
     ALLOW_VOID,
+    ALLOW_ARCHIVE,
     Deck,
     DELUXE_COUNTED_AS_REGULAR,
     ENABLE_EXPERIMENTAL_EXPONENT,
@@ -285,7 +286,7 @@ def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreTyp
             var_pool.append(CoreType.VOID_CORE)
         if ALLOW_DELUXE:
             var_pool.append(CoreType.DELUXE_CORE)
-        if deck.arcane_slots:
+        if ALLOW_ARCHIVE and deck.arcane_slots:
             var_pool.append(CoreType.ARCHIVE_CORE)
 
         candidates: List[FrozenSet[CoreType]] = []
@@ -342,8 +343,8 @@ def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreTyp
     # VOID_CORE joins the variable pool in both EVO groups (n_dead is unknown)
     # — but only when the mode allows it.
     void_var = [CoreType.VOID_CORE] if ALLOW_VOID else []
-    # ARCHIVE joins both EVO groups when the deck has any arcane slots.
-    archive_var = [CoreType.ARCHIVE_CORE] if deck.arcane_slots else []
+    # ARCHIVE joins both EVO groups when allowed AND the deck has any arcane slots.
+    archive_var = [CoreType.ARCHIVE_CORE] if (ALLOW_ARCHIVE and deck.arcane_slots) else []
     candidates = []
     seen       = set()
 

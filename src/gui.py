@@ -1034,7 +1034,7 @@ def _hidden_inventory_types(mode: str, card_class: CardClass) -> "set[CardType]"
 def _hidden_core_types(mode: str) -> "set[CoreType]":
     """Core options that should be hidden + ignored at Run time."""
     if mode == "vanilla":
-        return {CoreType.DELUXE_CORE, CoreType.VOID_CORE}
+        return {CoreType.DELUXE_CORE, CoreType.VOID_CORE, CoreType.ARCHIVE_CORE}
     return set()
 
 

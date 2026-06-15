@@ -41,8 +41,9 @@ export function hiddenInventoryTypes(
  */
 export function hiddenCoreTypes(_mode: string, cfg: ResolvedConfig): Set<CoreType> {
   const hidden = new Set<CoreType>();
-  if (!cfg.deluxe.allow)     hidden.add(CoreType.DELUXE_CORE);
-  if (!cfg.cores.void_allow) hidden.add(CoreType.VOID_CORE);
+  if (!cfg.deluxe.allow)        hidden.add(CoreType.DELUXE_CORE);
+  if (!cfg.cores.void_allow)    hidden.add(CoreType.VOID_CORE);
+  if (!cfg.cores.archive_allow) hidden.add(CoreType.ARCHIVE_CORE);
   return hidden;
 }
 

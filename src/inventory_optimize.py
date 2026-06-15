@@ -969,10 +969,12 @@ def candidate_cores_inventory(
     void_core_spec   = (by_type.get(CoreType.VOID_CORE)   or [None])[0]
     if not _cfg.ALLOW_VOID:
         void_core_spec = None
-    # Archive core is geometry-gated: only enumerated when the deck has any
-    # arcane slot (otherwise n_arcane_placed is permanently 0 and the
-    # multiplier is permanently 1.0).
+    # Archive core: mode-gated by cfg.cores.archive_allow (vanilla off), then
+    # geometry-gated on the deck having any arcane slot (otherwise
+    # n_arcane_placed is permanently 0 and the multiplier is permanently 1.0).
     archive_core_spec = (by_type.get(CoreType.ARCHIVE_CORE) or [None])[0]
+    if not _cfg.ALLOW_ARCHIVE:
+        archive_core_spec = None
     if not deck.arcane_slots:
         archive_core_spec = None
     foil_spec        = (by_type.get(CoreType.FOIL)        or [None])[0]

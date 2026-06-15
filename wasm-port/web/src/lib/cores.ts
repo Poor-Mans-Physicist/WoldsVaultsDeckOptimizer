@@ -194,9 +194,11 @@ export function candidateCoresInventory(
   // Void core is mode-gated. Vanilla disables it via cfg.cores.void_allow.
   let voidCoreSpec  = byType.get(CoreType.VOID_CORE)?.[0]  ?? null;
   if (!cfg.cores.void_allow) voidCoreSpec = null;
-  // Archive core: only enumerated when the deck has any arcane slot (otherwise
-  // n_arcane_placed is permanently 0 and the multiplier is permanently 1.0).
+  // Archive core: mode-gated by cfg.cores.archive_allow (vanilla off), then
+  // geometry-gated on the deck having any arcane slot (otherwise n_arcane_placed
+  // is permanently 0 and the multiplier is permanently 1.0).
   let archiveCoreSpec = byType.get(CoreType.ARCHIVE_CORE)?.[0] ?? null;
+  if (!cfg.cores.archive_allow)  archiveCoreSpec = null;
   if (deck_n_arcane_slots === 0) archiveCoreSpec = null;
   const foilSpec       = byType.get(CoreType.FOIL)?.[0]        ?? null;
   const equiSpec       = byType.get(CoreType.EQUILIBRIUM)?.[0] ?? null;

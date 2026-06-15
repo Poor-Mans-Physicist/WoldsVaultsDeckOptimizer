@@ -31,7 +31,10 @@ export interface ResolvedConfig {
     void_scale: number;
     // Archive core: per-arcane base. Final mult = `archive_core ^ n_arcane_placed`.
     // Applied OUTSIDE the per-card core_mult (bypasses the additive_cores
-    // switch). Only enumerated when the deck has any arcane slot.
+    // switch). `archive_allow` gates picker visibility *and* candidate
+    // enumeration (vanilla turns this off). When allow=true, enumeration
+    // additionally gates on the deck having any arcane slot.
+    archive_allow: boolean;
     archive_core: number;
   };
 
