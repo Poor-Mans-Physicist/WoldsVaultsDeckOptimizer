@@ -11,6 +11,7 @@
     convertSlotToArcane, unconvertArcaneSlot,
     builderCanvasClick, builderCanvasContextClick,
     saveBuilderDeck, reloadSavedDecks,
+    captureSnapshot, saveSnapshot, restoreSnapshot, reloadSnapshots,
   } from "./lib/state.svelte";
   import { loadConfigBundle, getMode } from "./lib/config";
   import { loadDecks } from "./lib/deck";
@@ -29,6 +30,7 @@
     builderToDeck, buildModpackJson, allBuilderSlots,
     BUILDER_GRID_WIDTH, BUILDER_GRID_HEIGHT,
   } from "./lib/builder";
+  import { defaultLabel as snapshotDefaultLabel, type Snapshot } from "./lib/snapshots";
   import type { SlotBreakdown } from "./lib/breakdown";
   import type { Position, CardType } from "./lib/types";
 
@@ -43,6 +45,8 @@
   import BuilderPanel           from "./components/BuilderPanel.svelte";
   import ExportJsonDialog       from "./components/ExportJsonDialog.svelte";
   import UnsavedChangesDialog   from "./components/UnsavedChangesDialog.svelte";
+  import SnapshotsTab           from "./components/SnapshotsTab.svelte";
+  import SaveSnapshotDialog     from "./components/SaveSnapshotDialog.svelte";
 
   const baseUrl = (import.meta.env.BASE_URL ?? "/").endsWith("/")
     ? (import.meta.env.BASE_URL ?? "/")
@@ -134,6 +138,7 @@
     // Populate the Builder's saved-decks list once at boot. Refreshed by the
     // builder helpers (save / delete) on demand thereafter.
     reloadSavedDecks();
+    reloadSnapshots();
 
     // Browser-close guard: warn the user if they're about to lose unsaved
     // builder changes. The exact wording is browser-controlled — we just
@@ -190,9 +195,50 @@
     unsavedAction = null;
   }
 
-  function switchTab(next: "optimize" | "preview" | "build") {
+  function switchTab(next: "optimize" | "preview" | "build" | "snapshots") {
     if (app.tab === next) return;
     requestNavigate(() => { app.tab = next; });
+  }
+
+  // ─── Snapshots ─────────────────────────────────────────────────────────
+  // Save: small modal asks for a label (auto-prefilled), persists on confirm.
+  // Load (from SnapshotsTab): mode-switch if needed (which may re-fetch decks
+  // for the new mode), then restore the captured inputs + result and flip to
+  // the Optimize tab so the user sees the grid populated.
+
+  let saveSnapshotOpen = $state(false);
+
+  function openSaveSnapshot() {
+    if (!app.result || !app.deck) return;
+    saveSnapshotOpen = true;
+  }
+  function confirmSaveSnapshot(label: string) {
+    const snap = captureSnapshot(label);
+    if (snap === null) { saveSnapshotOpen = false; return; }
+    saveSnapshot(snap);
+    saveSnapshotOpen = false;
+  }
+  function cancelSaveSnapshot() { saveSnapshotOpen = false; }
+
+  const saveSnapshotDefaultLabel = $derived(
+    app.deck ? snapshotDefaultLabel(app.deck.name, app.cardClass) : "Snapshot",
+  );
+
+  async function onLoadSnapshot(snap: Snapshot) {
+    if (!app.bundle) return;
+    // Mode-switch may be needed (snapshot is mode-locked). Funnel through the
+    // unsaved-builder guard so dirty work isn't lost silently.
+    requestNavigate(async () => {
+      if (snap.mode !== app.mode) {
+        app.mode = snap.mode;
+        app.cfg  = getMode(app.bundle!, snap.mode);
+        app.autoPlaceArcane = app.cfg.arcane?.auto_place ?? true;
+        app.bonusCores = app.cfg.deckmod ?? 0;
+        app.decks = await loadDecks(baseUrl, app.cfg.deckmod, snap.mode);
+      }
+      restoreSnapshot(snap);
+      app.tab = "optimize";
+    });
   }
 
   let exportOpen = $state(false);
@@ -378,6 +424,9 @@
       <button type="button"
         class:active={app.tab === "build"}
         onclick={() => switchTab("build")}>Build</button>
+      <button type="button"
+        class:active={app.tab === "snapshots"}
+        onclick={() => switchTab("snapshots")}>Snapshots</button>
     </nav>
     {#if app.bundle}
       <ModeToggle
@@ -393,6 +442,10 @@
   <div class="banner err">Boot failed: {app.bootError}</div>
 {:else if !app.cfg || !app.deck}
   <div class="banner">Loading…</div>
+{:else if app.tab === "snapshots"}
+  <main class="layout-wide">
+    <SnapshotsTab onLoad={onLoadSnapshot} />
+  </main>
 {:else}
   <main class="layout">
     <!-- ── Left: controls (shared) ────────────────────────────────── -->
@@ -454,9 +507,19 @@
               <input type="number" min="1" max="64" step="1" bind:value={app.restarts} />
             </label>
           </div>
-          <button class="run" type="button" onclick={run} disabled={app.running}>
-            {app.running ? "Optimizing…" : "Run"}
-          </button>
+          <div class="run-row">
+            <button class="run" type="button" onclick={run} disabled={app.running}>
+              {app.running ? "Optimizing…" : "Run"}
+            </button>
+            {#if app.result}
+              <!-- Manual snapshot save — only meaningful when a result exists.
+                   Opens a label-entry modal; persisting refreshes the
+                   Snapshots tab list. -->
+              <button class="snap" type="button" onclick={openSaveSnapshot} title="Save this run as a snapshot">
+                📷 Save snapshot
+              </button>
+            {/if}
+          </div>
           {#if app.runError}
             <div class="err small">{app.runError}</div>
           {/if}
@@ -472,7 +535,7 @@
 
     <!-- ── Center: deck grid + result bar ─────────────────────────── -->
     <section class="col-center">
-      {#if app.result && app.tab === "optimize"}
+      {#if app.result && (app.tab === "optimize" || app.tab === "build")}
         {@const r = app.result}
         {@const delta = Math.abs(r.wasmScore - r.tsScore)}
         {@const ok = delta <= VERIFY_TOL}
@@ -574,6 +637,13 @@
   onCancel={unsavedCancel}
 />
 
+<SaveSnapshotDialog
+  open={saveSnapshotOpen}
+  defaultLabel={saveSnapshotDefaultLabel}
+  onConfirm={confirmSaveSnapshot}
+  onCancel={cancelSaveSnapshot}
+/>
+
 <style>
   /* ── Theme tokens ────────────────────────────────────────────────────
      Single dark-theme palette (set via data-theme on documentElement in
@@ -671,6 +741,12 @@
   @media (max-width: 1100px) {
     .layout { grid-template-columns: 1fr; }
   }
+  /* Snapshots tab is full-width — no side panels. */
+  .layout-wide {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 16px 24px;
+  }
 
   .col-left, .col-right { display: flex; flex-direction: column; gap: 12px; }
   .col-center { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
@@ -726,6 +802,25 @@
   .run:disabled { opacity: .6; cursor: not-allowed; }
   .err { color: #FCA5A5; }
   .err.small { font-size: 12px; margin-top: 6px; }
+
+  /* Run + Save-snapshot button row. Snapshot button shrinks to label-width. */
+  .run-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .run-row .run { margin-top: 0; flex-grow: 1; }
+  .snap {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .snap:hover { background: var(--bg-hover); border-color: var(--accent); color: var(--accent); }
 
   .result-bar {
     display: flex;

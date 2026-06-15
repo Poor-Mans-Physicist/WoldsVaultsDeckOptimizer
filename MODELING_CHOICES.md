@@ -466,6 +466,67 @@ pipeline as everything else.
 
 ---
 
+## Snapshots tab — WEB ONLY
+
+The Snapshots tab is a localStorage-backed history of past Runs. Each
+snapshot is **self-contained**: the deck layout is embedded directly in
+the record (rather than stored by roster key), so renames or removals
+of modpack decks never orphan a saved capture. Snapshots are also
+**mode-locked** — each record stores the mode it was taken in, and
+loading auto-switches `app.mode` (with the unsaved-builder guard
+in front) before restoring.
+
+### What's captured
+
+`captureSnapshot()` in `lib/state.svelte.ts` mirrors live `app.*` state:
+
+| Field | Source |
+| --- | --- |
+| `deck` | `app.deck` — slots / arcaneSlots / base_core_slots / etc. |
+| `mode` | `app.mode` (e.g. `"wolds"`) |
+| `cardClass`, `bonusCores`, `autoPlaceArcane` | `app.*` |
+| `inventoryCounts`, `forcedCounts` | `app.*` (shallow-copied) |
+| `cores` | `app.result.coresUsed` — the SA-chosen combo, **not** the picker state |
+| `structural` | `app.structural` (including `addedSlots` + `convertedSlots`) |
+| `assignment` | `app.result.assignment`, serialized parallel to `deck.slots` |
+| `wasmScore` | `app.result.wasmScore` |
+
+The breakdown is **not** stored — it's recomputed via
+`simulateInventoryBreakdown()` on restore so the click-for-breakdown
+popup just works.
+
+### Restore semantics
+
+`restoreSnapshot()` rebuilds `app.deck` via the same `buildDeck()`
+constructor JSON/YAML loads use, repopulates every input field, syncs
+the CorePicker checkboxes from `snap.cores`, then synthesizes a fresh
+`OptimizeResult` (assignment + recomputed breakdown). The user is then
+flipped to the Optimize tab.
+
+**No edit-after-load round-trip.** Loading a snapshot disassociates
+from it — once loaded, the user is editing live `app.*` state. Saving a
+new snapshot creates a new record; there is no "modified snapshot"
+dirty-flag flow.
+
+### What's not captured
+
+- No SA params (`nIter`, `restarts`) — these are tuning, not part of
+  the captured result. Restored snapshots show the SA's actual output;
+  re-running uses the current SA-params values.
+- No `tab` state — snapshots load into Optimize regardless of which tab
+  they were taken in. The `isBuiltDeck` flag is preserved purely as a
+  visual badge in the Snapshots list.
+
+### Storage
+
+`localStorage` key `wvdo.snapshots.v1`. Single JSON array;
+`loadAllSnapshots()` rewrites the whole array on every CRUD call.
+Parse failures fall back to `[]` with a `console.error` rather than
+bricking the tab. Per-record size is ~1-3 KB; the typical 5 MB quota
+holds hundreds of snapshots.
+
+---
+
 ## Core stacking — additive vs multiplicative
 
 Controlled by `stacking.additive_cores` (**true** in Wold's, **false** in

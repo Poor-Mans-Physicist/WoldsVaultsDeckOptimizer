@@ -21,8 +21,17 @@ import {
   loadAllSaved, loadByKey, saveDeck as storageSaveDeck, deleteDeck as storageDeleteDeck,
   type SavedDeck,
 } from "./savedDecks";
+import {
+  loadAllSnapshots, persistSnapshot, deleteSnapshot as storageDeleteSnapshot,
+  makeSnapshotId,
+  type Snapshot,
+} from "./snapshots";
+import { buildDeck } from "./deck";
+import type { RawDeck } from "./deck";
+import { CardType, type Placed } from "./types";
+import { simulateInventoryBreakdown } from "./breakdown";
 
-export type Tab = "optimize" | "preview" | "build";
+export type Tab = "optimize" | "preview" | "build" | "snapshots";
 
 export interface CoreRowState {
   enabled:  boolean;
@@ -86,6 +95,10 @@ interface AppState {
   /** Cached list of saved decks for the Builder sidebar — refreshed on
    *  load / save / delete via reloadSavedDecks(). */
   savedDecks: SavedDeck[];
+
+  /** Cached list of optimization snapshots — refreshed on save/delete. The
+   *  Snapshots tab reads this; lib/snapshots.ts owns the storage. */
+  snapshots: Snapshot[];
 }
 
 function initialCoreState(): CoreRowState[] {
@@ -125,6 +138,7 @@ export const app = $state<AppState>({
 
   builder:    emptyBuilder(),
   savedDecks: [],
+  snapshots:  [],
 });
 
 /** Build the user's CoreSpec[] from the picker state. */
@@ -387,4 +401,166 @@ export function deleteSavedDeck(key: string): void {
   storageDeleteDeck(key);
   if (app.builder.loadedKey === key) app.builder.loadedKey = null;
   reloadSavedDecks();
+}
+
+// ─── Snapshots ───────────────────────────────────────────────────────────────
+//
+// A snapshot is a self-contained capture of one Run: the deck layout, every
+// input that fed the SA, and the SA's output (assignment + NDM). It embeds the
+// deck so renames or removals in the modpack roster never orphan a record. It
+// also locks to the mode it was taken in — cross-mode loads are refused
+// (loadSnapshot() switches mode silently when needed; the call site is
+// expected to confirm if doing so loses other work).
+
+export function reloadSnapshots(): void {
+  app.snapshots = loadAllSnapshots();
+}
+
+/** Capture the live `app` state (post-run) into a Snapshot record. Returns
+ *  null when prerequisites aren't met (no result, no cfg, no deck). */
+export function captureSnapshot(label: string): Snapshot | null {
+  if (!app.cfg || !app.deck || !app.result) return null;
+  // The deck we want to embed is whatever the SA actually scored — that's the
+  // structural-cores-mutated deck (additions baked in). Recover it by
+  // resolving deck.slots at the call site; we re-snapshot the current deck's
+  // raw geometry (slots + arcaneSlots) which is the post-structural shape.
+  const deckSrc = app.deck;
+  const snap: Snapshot = {
+    id:        makeSnapshotId(),
+    label,
+    createdAt: Date.now(),
+    mode:      app.mode,
+    deck: {
+      isBuiltDeck:     app.tab === "build",
+      key:             deckSrc.key,
+      name:            deckSrc.name,
+      slots:           deckSrc.slots.map(([r, c]) => [r, c]),
+      arcaneSlots:     deckSrc.arcaneSlots.map(([r, c]) => [r, c]),
+      base_core_slots: deckSrc.base_core_slots,
+      min_regular:     deckSrc.min_regular,
+      max_greed:       deckSrc.max_greed,
+    },
+    cardClass:       app.cardClass,
+    bonusCores:      app.bonusCores,
+    autoPlaceArcane: app.autoPlaceArcane,
+    inventoryCounts: { ...app.inventoryCounts },
+    forcedCounts:    { ...app.forcedCounts },
+    cores:           app.result.coresUsed.map((c) => ({ ...c })),
+    structural: {
+      constructionEnabled: app.structural.constructionEnabled,
+      arcaneCoreEnabled:   app.structural.arcaneCoreEnabled,
+      addedSlots:          app.structural.addedSlots.map(([r, c]) => [r, c] as Position),
+      convertedSlots:      app.structural.convertedSlots.map(([r, c]) => [r, c] as Position),
+    },
+    assignment: _serializeAssignment(deckSrc.slots, app.result.assignment),
+    wasmScore:  app.result.wasmScore,
+  };
+  return snap;
+}
+
+/** Walk deck.slots in canonical order and pull (type, color) per slot from the
+ *  result's Map. Matches SliceResult.assignment so we re-use the existing
+ *  finalize path on restore. */
+function _serializeAssignment(slots: readonly Position[], asgn: Map<string, Placed>): [string, string][] {
+  const out: [string, string][] = [];
+  for (const [r, c] of slots) {
+    const p = asgn.get(`${r},${c}`);
+    if (p === undefined) {
+      // Should not happen — every slot is assigned by the SA. Fill with EMPTY
+      // so the array stays parallel.
+      out.push([CardType.EMPTY, ""]);
+    } else {
+      out.push([p[0], p[1] ?? ""]);
+    }
+  }
+  return out;
+}
+
+/** Persist a captured snapshot. Updates the cached list. */
+export function saveSnapshot(snap: Snapshot): void {
+  persistSnapshot(snap);
+  reloadSnapshots();
+}
+
+export function deleteSnapshotById(id: string): void {
+  storageDeleteSnapshot(id);
+  reloadSnapshots();
+}
+
+/** Reverse the capture — slot a snapshot back into `app.*` and reconstruct an
+ *  `OptimizeResult` so the deck grid + breakdown popup paint exactly what was
+ *  captured. Caller must have already switched `app.mode` + `app.cfg` to the
+ *  snapshot's mode and resolved the new config bundle. */
+export function restoreSnapshot(snap: Snapshot): void {
+  if (!app.cfg) return;
+
+  // Rebuild the Deck via the same constructor JSON/YAML loads use, so peer
+  // sets are computed fresh.
+  const raw: RawDeck = {
+    key:             snap.deck.key,
+    name:            snap.deck.name,
+    slots:           snap.deck.slots,
+    arcane_slots:    snap.deck.arcaneSlots,
+    base_core_slots: snap.deck.base_core_slots,
+    min_regular:     snap.deck.min_regular,
+    max_greed:       snap.deck.max_greed,
+  };
+  const deck = buildDeck(raw, app.cfg.deckmod);
+
+  // Inputs.
+  app.deck            = deck;
+  app.cardClass       = snap.cardClass;
+  app.bonusCores      = snap.bonusCores;
+  app.autoPlaceArcane = snap.autoPlaceArcane;
+  app.inventoryCounts = { ...snap.inventoryCounts };
+  app.forcedCounts    = { ...snap.forcedCounts };
+  // Structural cores — same shape, just clone so reactive proxies don't share.
+  app.structural = {
+    constructionEnabled: snap.structural.constructionEnabled,
+    arcaneCoreEnabled:   snap.structural.arcaneCoreEnabled,
+    addedSlots:          snap.structural.addedSlots.map(([r, c]) => [r, c] as Position),
+    convertedSlots:      snap.structural.convertedSlots.map(([r, c]) => [r, c] as Position),
+  };
+
+  // Update the CorePicker checkboxes from `snap.cores` — match by (type, color)
+  // and stash the override, ignoring static-vs-variable differences.
+  const wanted = new Map<string, { override: number | null }>();
+  for (const c of snap.cores) {
+    const k = `${c.core_type}|${c.color ?? ""}`;
+    wanted.set(k, { override: c.override });
+  }
+  for (let i = 0; i < CORE_OPTIONS.length; i++) {
+    const opt = CORE_OPTIONS[i];
+    const k = `${opt.coreType}|${opt.color ?? ""}`;
+    const w = wanted.get(k);
+    if (w) {
+      app.coreState[i].enabled  = true;
+      app.coreState[i].override = w.override;
+    } else {
+      app.coreState[i].enabled  = false;
+      app.coreState[i].override = null;
+    }
+  }
+
+  // Rebuild the OptimizeResult from the serialized assignment so the grid
+  // paints + the breakdown popup works on click.
+  const asgnMap = new Map<string, Placed>();
+  for (let i = 0; i < deck.slots.length; i++) {
+    const [tStr, cStr] = snap.assignment[i] ?? [CardType.EMPTY, ""];
+    asgnMap.set(
+      `${deck.slots[i][0]},${deck.slots[i][1]}`,
+      [tStr as any, (cStr ? cStr : null) as any],
+    );
+  }
+  const breakdown = simulateInventoryBreakdown(deck, asgnMap, snap.cardClass, snap.cores, app.cfg);
+  app.result = {
+    assignment: asgnMap,
+    wasmScore:  snap.wasmScore,
+    tsScore:    breakdown.total,
+    coresUsed:  snap.cores.map((c) => ({ ...c })),
+    breakdown,
+  };
+  app.elapsedMs = null;
+  app.runError  = null;
+  clearPreviewAssignments();
 }
