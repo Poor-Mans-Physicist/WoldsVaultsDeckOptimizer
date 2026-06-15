@@ -5,11 +5,15 @@ Deck Optimizer scores a deck**. It pins down every multiplier, every
 class-gating rule, every counting rule for cores and cards.
 
 Authoritative behavior described here = the **WASM web app**
-(`wasm-port/web/` + `wasm-port/ndm_core/src/inventory.rs`). The desktop
-Python+Rust spreadsheet CLI and the desktop NiceGUI inventory tool track
-the same model except where called out under **Platform discrepancies**
-at the bottom. Anything not under that section is identical across all
-three.
+(`wasm-port/web/` + `wasm-port/ndm_core/src/inventory.rs`). The Python
+spreadsheet CLI (outer `src/` + outer `ndm_core/`) tracks the same model
+except where called out under **Platform discrepancies** at the bottom.
+Anything not under that section is identical across both channels.
+
+> The desktop NiceGUI inventory tool referenced in earlier revisions of
+> this doc was deleted in the channel-consolidation refactor. Any
+> "NiceGUI" callouts below are stale and apply only if a future caller
+> resurrects an inventory-aware Python entry point.
 
 **This document is a maintenance contract.** When you change scoring
 logic, multiplier values, `n_ns` rules, core gating, greed mechanics,
@@ -115,10 +119,10 @@ count for positional peer scans.
   boosted by anything), and any other placement is strictly better.
 - With VOID_CORE on, DEAD feeds `n_dead` and so the SA may choose to
   sacrifice slots to feed the void scaling.
-- The arcane-auto-place=OFF toggle (web app / NiceGUI) expands the
-  inventory SA's per-arcane-slot proposal alphabet to include DEAD as
-  well — useful when void is on. When auto-place is ON, arcane slots
-  stay locked to ARCANE (with color-only swaps allowed).
+- The arcane-auto-place=OFF toggle (web app) expands the inventory SA's
+  per-arcane-slot proposal alphabet to include DEAD as well — useful
+  when void is on. When auto-place is ON, arcane slots stay locked to
+  ARCANE (with color-only swaps allowed).
 
 ---
 
@@ -376,56 +380,29 @@ The UI also relabels in Vanilla: SHINY → "Stat" in class pickers
 Everything above describes the **WASM web app**. Anything not listed here
 is identical across all three platforms.
 
-### 1. `n_ns` for EVO-no-FOIL (status: aligned — historical drift)
+### 1. Color-aware vs color-blind scoring
 
-Until the `web app n_ns matches classic kernel` commit, the WASM web app
-counted a **wider** set under EVO-no-FOIL than the classic CLI:
-
-| Path                                                                                                                           | EVO-no-FOIL `n_ns`                                   |
-| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
-| WASM web app + classic CLI + classic Rust                                                                                      | regulars + arcane + greed                              |
-| **NiceGUI desktop** (`src/inventory_optimize.py::simulate_inventory` + `_breakdown`) | regulars +**deluxe + typeless** + arcane + greed |
-
-The NiceGUI still uses the wider formula. To align it, drop `deluxe.size`
-and `typeless.size` from both n_ns lines in `inventory_optimize.py`.
-(Pending — see follow-up in the unification task.)
-
-### 2. Color-aware vs color-blind scoring
-
-The **WASM web app and the desktop NiceGUI** use the inventory-color-aware
-optimizer (`wasm-port/ndm_core/src/inventory.rs` and
-`src/inventory_optimize.py`). In that model:
+The **WASM web app** uses the inventory-color-aware optimizer
+(`wasm-port/ndm_core/src/inventory.rs`). In that model:
 
 - Positional peer counts (`row_count`, `col_count`, surr/diag) consider
   **only same-color cards** in scan range.
 - `COLOR` core only boosts cards whose color matches the core's color
   selection.
 
-The **classic spreadsheet CLI** (`src/simulate.py` + `ndm_core/src/lib.rs`)
-is **color-blind**: every filled neighbor counts for positional peers
+The **spreadsheet CLI** (`src/simulate.py` + `ndm_core/src/lib.rs`) is
+**color-blind**: every filled neighbor counts for positional peers
 regardless of color, and COLOR's `1.75×` applies to every scorable card
 flat. This is a real semantic difference in the SA's optimum, not a bug —
 the CLI predates the color-aware model and serves as the simpler
 spec-style implementation.
 
-### 3. `wasm-port/ndm_core/src/batch.rs` arcane model (status: vestigial)
-
-This file uses the older "arcane = deck-level slot count" model with an
-explicit `+ deck.n_arcane` fudge inside the Pure-core arm — instead of
-counting placed ARCANE cards as real placements. Numerically equivalent
-for now, but it's the pre-arcane-card design. It's not on the live web
-app path (live runs go through `inventory.rs::runSaInventory`). Will be
-reconciled with the canonical model during the wasm-port unification
-follow-up.
-
-### 4. `wasm-port/src/` Python copies (status: vestigial)
-
-`wasm-port/src/simulate.py`, `wasm-port/src/report.py`,
-`wasm-port/src/inventory_optimize.py` are pre-arcane snapshots from when
-`wasm-port/` was a sibling fork. They lack arcane-card handling entirely
-and predate the void/arcane work. None of them are used by anything
-live (the web app uses TypeScript; the desktop uses outer `src/`). Will
-be deleted during the unification follow-up.
+> **Historical note (now obsolete):** Earlier revisions of this doc
+> tracked an EVO-no-FOIL `n_ns` drift between the WASM web app and the
+> desktop NiceGUI tool, plus vestigial `batch.rs` and `wasm-port/src/`
+> copies. Those have all been deleted in the channel-consolidation
+> refactor — the only remaining discrepancy is color-aware vs
+> color-blind, called out above.
 
 ---
 

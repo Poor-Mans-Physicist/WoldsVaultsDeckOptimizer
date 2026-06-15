@@ -26,47 +26,74 @@ Finally, we have "deluxe" type cards, which are similar to T cards but have a fl
 - Create easily maintainable workflows by splitting files up effectively, avoiding hard to approach monoliths
 - **Maintain [MODELING_CHOICES.md](MODELING_CHOICES.md) as the source-of-truth for scoring behavior.** Any code change that touches scoring logic, multiplier values, the `n_ns` formula, core gating, greed mechanics, card categorization, slot rules, stacking modes, or constraint handling must update `MODELING_CHOICES.md` in the **same commit**. The file itself lists which sections to touch under each kind of change. The point is to never have to re-derive intended behavior from the code — if it's not documented there, the change isn't complete.
 
+## Two channels
+
+After the channel-consolidation refactor, this repo ships exactly two user-facing channels — both backed by the same `config.yaml`, `decks/`, and `modifiers.json` at the repo root:
+
+1. **Spreadsheet CLI** (`uv run optimize`) — outer Python orchestrator + outer `ndm_core/` Rust kernel (PyO3). Runs every deck in parallel via multiprocessing and emits `Panel_*.xlsx`.
+2. **WASM web app** (`wasm-port/web/`, deployed to GitHub Pages) — Svelte 5 SPA + `wasm-port/ndm_core/` Rust kernel (wasm-bindgen). Interactive, inventory-aware, color-aware.
+
+The two Rust crates share no source (different binding layers — PyO3 vs wasm-bindgen) but mirror the same scoring math. `MODELING_CHOICES.md` is the cross-platform spec; `src/simulate.py::simulate()` is kept as a runnable Python reference for the same math even though nothing in production calls it.
+
 ## Running
 
 Everything is driven by `uv`. **Never invoke `python` directly** — always go through `uv run`.
 
 | Command | Notes |
 | --- | --- |
-| `uv run optimize-py` | Pure-Python SA (no Rust toolchain needed). Default mode is `wolds`. |
-| `uv run optimize-py --mode vanilla` | Vanilla preset (multiplicative cores, no positional shiny, no deluxe). |
-| `uv run --extra rust optimize` | Same optimizer, but uses the Rust core (`ndm_core`) — much faster. First run compiles the extension. |
-| `uv run optimize-py --help` | CLI help (only flag is `--mode`). |
+| `uv run optimize` | Spreadsheet CLI, default mode `wolds`. First run compiles the Rust extension. |
+| `uv run optimize --mode vanilla` | Vanilla preset (multiplicative cores, no positional shiny, no deluxe, no void/archive). |
+| `uv run optimize --help` | CLI help (only flag is `--mode`). |
+| `uv run python wasm-port/scripts/build_data.py` | Regenerates `wasm-port/web/public/{config,decks,modifiers}.json`. CI does this automatically on push. |
 
-The Rust extension is rebuilt automatically by `uv` whenever `ndm_core/Cargo.{toml,lock}` or `ndm_core/src/**/*.rs` change (see `[tool.uv].cache-keys` in [pyproject.toml](pyproject.toml)).
+The Rust extension is rebuilt automatically by `uv` whenever `ndm_core/Cargo.{toml,lock}` or `ndm_core/src/**/*.rs` change (see `[tool.uv].cache-keys` in `pyproject.toml`).
 
-There are no tests, no lint config, no CI. The optimizer is the only entry point.
+There are no tests, no lint config. CI is one workflow (`.github/workflows/deploy.yml`) that builds + deploys the WASM web app to GitHub Pages.
 
-> The optimizer skips spreadsheet export if `Panel_WV_Decks_ndm_simulation.xlsx` already exists. Delete or rename the previous run before re-running if you want a new file.
+> The CLI skips spreadsheet export if `Panel_WV_Decks_ndm_simulation.xlsx` already exists. Delete or rename the previous run before re-running.
 
 ## Architecture
 
-### Module layout (Python)
+### Spreadsheet CLI (outer)
 
 ```
-optimizer.py     thin CLI shims: optimize / optimize-py (the latter sets
-                 sys.modules["ndm_core"] = None to force the pure-Python path)
+optimizer.py     thin CLI shim: optimize → src.main.main
 src/
-  config.py      parses --mode, loads config.yaml + decks/*, exposes UPPERCASE
-                 module constants, defines the Deck class
-  types.py       CardType / CardClass / CoreType enums + PLACEABLE list
+  config.py      parses --mode, loads ../config.yaml + ../decks/*,
+                 exposes UPPERCASE module constants, defines Deck
+  types.py       CardType / CardClass / CoreType enums + PLACEABLE
                  (PLACEABLE is mutated at import time when ALLOW_DELUXE)
-  simulate.py    simulate() scoring kernel, candidate_cores() enumerator,
-                 sa_optimize() (Rust-or-Python dispatcher), _sa_optimize_python()
-  main.py        optimize() orchestrator + multiprocessing entry point (main())
+  simulate.py    candidate_cores() enumerator, sa_optimize() (Rust call),
+                 simulate() scoring kernel (runnable spec — unused at runtime)
+  main.py        optimize() orchestrator + multiprocessing entry (main())
   report.py      terminal heatmaps, HNS metric, openpyxl spreadsheet export
-ndm_core/        PyO3 Rust crate exposing run_sa_optimize(); single file lib.rs.
-                 Built via maturin, declared as an optional extra in pyproject.
+ndm_core/        PyO3 Rust crate exposing run_sa_optimize().
+                 Built via maturin, declared as a regular dep in pyproject.
 decks/           *.yaml (hand-curated) and/or *.json (game-data dumps).
                  See decks/README.md for schema and collision rules.
 config.yaml      every tunable (greed/core multipliers, stacking modes,
-                 test panel configs, etc.). `modes.<name>` deep-merges over
-                 the defaults when --mode <name> is selected.
+                 etc.). `modes.<name>` deep-merges over the defaults when
+                 --mode <name> is selected.
+modifiers.json   gear-modifier data, used by the WASM web app's Preview panel.
 ```
+
+### WASM web app
+
+```
+wasm-port/
+  scripts/
+    build_data.py    reads ../config.yaml + ../decks/ + ../modifiers.json,
+                     emits web/public/{config,decks,modifiers}.json
+    wasm_*.mjs       perf / parity smoke tests (Node-target wasm build)
+  ndm_core/          wasm-bindgen Rust crate; wasm32-unknown-unknown only.
+                     inventory.rs is the pure-Rust kernel; wasm_api.rs is
+                     the wasm-bindgen entry layer.
+  web/               Svelte 5 + Vite SPA. Lib code under src/lib/ re-scores
+                     the chosen assignment in TypeScript for the breakdown
+                     popup (parity-check against the WASM kernel's score).
+```
+
+CI workflow (`.github/workflows/deploy.yml`) runs `build_data.py` from the repo root, builds the wasm crate, builds the SPA, and uploads to GitHub Pages.
 
 ### Import-time side effects (important)
 
@@ -78,15 +105,13 @@ config.yaml      every tunable (greed/core multipliers, stacking modes,
 4. If `ALLOW_DELUXE` is true, appends `CardType.DELUXE` to the shared `PLACEABLE` list in `types.py`.
 5. Scans `decks/` and builds `DECKS: List[Deck]` (YAML first, then JSON — JSON entries are dropped if their `<key>` collides with a YAML filename stem stripped of any `NN_` prefix).
 
-When adding a new tunable: add it to `config.yaml`, read it in `config.py` as a module constant, import it where needed. If the Rust core needs it, also thread it through the kwargs of `_ndm_core.run_sa_optimize(...)` in `src/simulate.py` and the matching signature in `ndm_core/src/lib.rs`.
+When adding a new tunable: add it to `config.yaml`, read it in `config.py` as a module constant, import it where needed. If the Rust core needs it, also thread it through the kwargs of `_ndm_core.run_sa_optimize(...)` in `src/simulate.py` and the matching signature in `ndm_core/src/lib.rs`. For the web app you also need to add it to `wasm-port/web/src/lib/config.ts` (ResolvedConfig type) and wire it through the optimizer/breakdown paths + the WASM kernel in `wasm-port/ndm_core/`.
 
-### Python ↔ Rust dispatch
+### Python ↔ Rust bridge
 
-`src/simulate.py` tries `import ndm_core` at module load. On success `_RUST_AVAILABLE = True`; on `ImportError` it prints a fallback notice and uses `_sa_optimize_python`. The pure-Python path is the spec — when changing scoring rules, update both `simulate()` (Python) and the equivalent code in `ndm_core/src/lib.rs`. Card-type and core-type **string values must stay in sync** between `CardType`/`CoreType` enums and the `card_type_from_str` / `core_type_from_str` matchers in `lib.rs`.
+`src/simulate.py` imports `ndm_core` at module load (mandatory dep — no fallback). Card-type and core-type **string values must stay in sync** between `CardType`/`CoreType` enums and the `card_type_from_str` / `core_type_from_str` matchers in `ndm_core/src/lib.rs`. The same constraint applies between the outer and wasm Rust crates (their `u8` constants and matcher strings must match).
 
-`optimize-py` disables the Rust core by stuffing `sys.modules["ndm_core"] = None` **before** importing `src.main` (which transitively imports `src.simulate`). Preserve this ordering if you refactor the entry points.
-
-### Execution model
+### Execution model (spreadsheet CLI)
 
 `src/main.py::main` runs each deck on its own process via `multiprocessing.Pool` (one worker per deck, capped at CPU count). Each worker iterates `_get_test_configs(deck)` (panel configs from `config.yaml`, or the deck's own `min_regular`/`max_greed` if `testing.full_panel: false`) and calls `optimize()`, which itself runs `candidate_cores × restarts` SA invocations per `CardClass`. Per-worker `random.seed()` is called for randomized starts. Reporting/spreadsheet generation happens back in the parent after all workers return.
 
@@ -96,4 +121,4 @@ Drop a `*.yaml` (or game-data `*.json`) into `decks/`. Layout grid: `O` = placea
 
 ### Adding a new card type
 
-Touch points: `CardType` enum + categorize via `GREED_TYPES`/`REGULAR_TYPES`/`DELUXE_TYPES`/`TYPELESS_TYPES` and the `PLACEABLE` list in `src/types.py`; greed effect handling in `simulate()` in `src/simulate.py`; display char in `Deck._CHAR` in `src/config.py`; matching `u8` constant + `card_type_from_str` arm + greed/scoring arms in `ndm_core/src/lib.rs` (header comment lists the exact spots to touch).
+Touch points (in order): `CardType` enum + categorize via `GREED_TYPES`/`REGULAR_TYPES`/`DELUXE_TYPES`/`TYPELESS_TYPES` and the `PLACEABLE` list in `src/types.py`; display char in `Deck._CHAR` in `src/config.py`; greed effect handling in `simulate()` in `src/simulate.py` (the runnable spec); matching `u8` constant + `card_type_from_str` arm + greed/scoring arms in both `ndm_core/src/lib.rs` (outer) AND `wasm-port/ndm_core/src/inventory.rs` (wasm); TypeScript mirror in `wasm-port/web/src/lib/types.ts` + the type-dispatch sites in `cores.ts`, `breakdown.ts`, `optimize.ts`.
