@@ -78,7 +78,11 @@ let _bundle: ConfigBundle | null = null;
 /** Fetch and cache the build-time config bundle. */
 export async function loadConfigBundle(baseUrl: string): Promise<ConfigBundle> {
   if (_bundle) return _bundle;
-  const res = await fetch(`${baseUrl}config.json`);
+  // `no-cache`: revalidate with the server (ETag / If-Modified-Since) every
+  // load. GitHub Pages serves long max-age on /config.json otherwise, so
+  // Safari happily holds onto a stale copy that's missing new fields. The
+  // 304 path makes the overhead negligible when nothing has changed.
+  const res = await fetch(`${baseUrl}config.json`, { cache: "no-cache" });
   if (!res.ok) throw new Error(`Failed to load config.json: ${res.status}`);
   _bundle = await res.json();
   return _bundle!;

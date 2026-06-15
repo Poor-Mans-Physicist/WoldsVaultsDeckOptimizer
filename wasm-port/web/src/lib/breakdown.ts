@@ -23,17 +23,22 @@ export interface GreedSource {
 }
 
 export interface SlotBreakdown {
-  cardType:        CardType;
-  color:           Color | null;
-  baseValue:       number;
-  baseExplain:     string;
-  appliedCores:    CoreComponent[];
-  excludedCores:   ExcludedCore[];
-  coreMult:        number;
-  coreMultFormula: string;
-  boost:           number;
-  boostSources:    GreedSource[];
-  finalNdm:        number;
+  cardType:            CardType;
+  color:               Color | null;
+  baseValue:           number;
+  baseExplain:         string;
+  appliedCores:        CoreComponent[];
+  excludedCores:       ExcludedCore[];
+  coreMult:            number;
+  coreMultFormula:     string;
+  boost:               number;
+  boostSources:        GreedSource[];
+  // Archive core (applied OUTSIDE core_mult). = 1.0 when archive isn't picked
+  // or doesn't apply to this card class.
+  archiveMult:         number;
+  archiveArcaneCount:  number;
+  archiveBase:         number;       // per-arcane base used (default or override)
+  finalNdm:            number;
 }
 
 export interface BreakdownResult {
@@ -110,6 +115,12 @@ export function simulateInventoryBreakdown(
   // Archive multiplier — applied *outside* the per-card core_mult (bypasses
   // the additive_cores stacking switch). Value = base ^ n_arcane_placed.
   const archiveMult = archiveComp !== null ? archiveComp.value : 1.0;
+  // Pull the picked spec so we can show "base ^ n = mult" in the popup.
+  const archiveSpec = cores.find((s) => s.core_type === CoreType.ARCHIVE_CORE) ?? null;
+  const archiveBase = archiveSpec === null
+    ? 1.0
+    : (archiveSpec.override !== null ? archiveSpec.override : cfg.cores.archive_core);
+  const archiveArcaneCount = arcane.size;
 
   // ── Greed → boost (with provenance) ──────────────────────────────────────
   // Additive starts at 0 (use-site floors at 1); multiplicative starts at 1.
@@ -225,6 +236,7 @@ export function simulateInventoryBreakdown(
     appliedCores: [], excludedCores: [],
     coreMult: 1.0, coreMultFormula: "(not scored)",
     boost: 1.0, boostSources: [],
+    archiveMult: 1.0, archiveArcaneCount, archiveBase,
     finalNdm: 0.0,
   });
 
@@ -277,6 +289,7 @@ export function simulateInventoryBreakdown(
       appliedCores: applied, excludedCores: excluded,
       coreMult: mult, coreMultFormula: formula,
       boost: b, boostSources: boostSources.get(k) ?? [],
+      archiveMult, archiveArcaneCount, archiveBase,
       finalNdm: v,
     });
     total += v;
@@ -293,6 +306,7 @@ export function simulateInventoryBreakdown(
       appliedCores: applied, excludedCores: excluded,
       coreMult: mult, coreMultFormula: formula,
       boost: b, boostSources: boostSources.get(k) ?? [],
+      archiveMult, archiveArcaneCount, archiveBase,
       finalNdm: v,
     });
     total += v;
@@ -309,6 +323,7 @@ export function simulateInventoryBreakdown(
       appliedCores: applied, excludedCores: excluded,
       coreMult: mult, coreMultFormula: formula,
       boost: b, boostSources: boostSources.get(k) ?? [],
+      archiveMult, archiveArcaneCount, archiveBase,
       finalNdm: v,
     });
     total += v;

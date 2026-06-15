@@ -61,7 +61,17 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
   out.push(`  → boost = ×${b.boost.toFixed(3)}`);
   out.push("");
 
-  out.push(`Final: ${stripFloat(b.baseValue)} × ${b.coreMult.toFixed(3)} × ${b.boost.toFixed(3)}`);
+  // Archive core — applied OUTSIDE the per-card core_mult stack, so shown as
+  // its own factor. Only render when archive is actually contributing.
+  const showArchive = b.archiveMult !== 1.0;
+  if (showArchive) {
+    out.push("Archive core (outside core stack):");
+    out.push(`  • ${b.archiveArcaneCount} arcane placed → ${b.archiveBase.toFixed(3)}^${b.archiveArcaneCount} = ×${b.archiveMult.toFixed(3)}`);
+    out.push("");
+    out.push(`Final: ${stripFloat(b.baseValue)} × ${b.coreMult.toFixed(3)} × ${b.boost.toFixed(3)} × ${b.archiveMult.toFixed(3)}`);
+  } else {
+    out.push(`Final: ${stripFloat(b.baseValue)} × ${b.coreMult.toFixed(3)} × ${b.boost.toFixed(3)}`);
+  }
   out.push(`     = ${b.finalNdm.toFixed(3)}`);
   return out.join("\n");
 }

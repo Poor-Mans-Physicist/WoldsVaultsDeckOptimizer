@@ -117,7 +117,9 @@ export async function loadDecks(
   mode:    string,
 ): Promise<Deck[]> {
   if (!_decksCache) {
-    const res = await fetch(`${baseUrl}decks.json`);
+    // `no-cache` for the same reason as config.json — revalidate against
+    // the server so new decks / arcane-slot changes aren't served stale.
+    const res = await fetch(`${baseUrl}decks.json`, { cache: "no-cache" });
     if (!res.ok) throw new Error(`Failed to load decks.json: ${res.status}`);
     _decksCache = await res.json();
   }

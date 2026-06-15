@@ -50,7 +50,10 @@ export function coreDefaultValue(opt: CoreOption, cfg: ResolvedConfig): number {
     case CoreType.COLOR:       return cfg.cores.color;
     // Archive override replaces the per-arcane BASE (not the final mult). So
     // a user override of 1.5 → 1.5 ^ n_arcane_placed.
-    case CoreType.ARCHIVE_CORE: return cfg.cores.archive_core;
+    // Fallback `?? 1.2` defends against a stale cached `config.json` from
+    // before Archive Core shipped — without it `undefined.toFixed(3)` in
+    // coreDefaultPlaceholder would brick the entire page on first render.
+    case CoreType.ARCHIVE_CORE: return cfg.cores.archive_core ?? 1.2;
   }
 }
 
