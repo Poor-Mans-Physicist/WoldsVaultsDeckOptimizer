@@ -364,9 +364,14 @@ def _classify_cores(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _apply_greed(boost: Dict[Position, float], pos: Position, amount: float) -> None:
-    """Same semantics as simulate.py's _apply_greed — additive or multiplicative."""
+    """Same semantics as simulate.py's _apply_greed — additive or multiplicative.
+
+    Additive rule: boost is a raw sum of greed multipliers pointing at this
+    slot. The use-site `max(b, 1.0)` floor promotes the no-greed case back
+    to a neutral 1× boost. Multiplicative is unchanged.
+    """
     if pos in boost:
-        if GREED_ADDITIVE: boost[pos] += amount - 1
+        if GREED_ADDITIVE: boost[pos] += amount
         else:              boost[pos] *= amount
 
 
@@ -488,8 +493,10 @@ def simulate_inventory(
         return m
 
     # Greed-boost map (per target slot).
+    # Additive: start at 0 and accumulate raw multipliers; floored at 1 at
+    # use. Multiplicative: start at 1 and multiply.
     scorable_positions = set(positional) | set(deluxe) | set(typeless)
-    init = 1.0
+    init = 0.0 if GREED_ADDITIVE else 1.0
     boost: Dict[Position, float] = {p: init for p in scorable_positions}
 
     for g, (gt, _gc) in greed.items():
@@ -617,7 +624,10 @@ def simulate_inventory_breakdown(
     ) if pluto_comp is not None else (False, False)
 
     scorable_positions = set(positional) | set(deluxe) | set(typeless)
-    boost: Dict[Position, float] = {p: 1.0 for p in scorable_positions}
+    # Mirror simulate_inventory: additive starts at 0 (floored to 1 at use),
+    # multiplicative starts at 1.
+    init_boost = 0.0 if GREED_ADDITIVE else 1.0
+    boost: Dict[Position, float] = {p: init_boost for p in scorable_positions}
     # Parallel record of which greeds contributed to each scorable slot.
     boost_sources: Dict[Position, List[GreedSource]] = {p: [] for p in scorable_positions}
 

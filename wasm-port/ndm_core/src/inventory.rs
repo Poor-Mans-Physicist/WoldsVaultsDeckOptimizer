@@ -455,7 +455,10 @@ fn simulate(
     };
 
     // Greed → boost pass (same semantics as classic optimizer).
-    for v in boost[..n].iter_mut() { *v = 1.0; }
+    // Additive: reset to 0 and accumulate raw multipliers (use-site floors at 1).
+    // Multiplicative: reset to 1 and multiply.
+    let reset_boost = if cfg.greed_additive { 0.0 } else { 1.0 };
+    for v in boost[..n].iter_mut() { *v = reset_boost; }
 
     let scorable = |i: usize| -> bool {
         let t = asgn[i].0;
@@ -463,7 +466,7 @@ fn simulate(
     };
 
     let apply = |boost: &mut [f64], pos: usize, amount: f64| {
-        if cfg.greed_additive { boost[pos] += amount - 1.0; }
+        if cfg.greed_additive { boost[pos] += amount; }
         else                  { boost[pos] *= amount; }
     };
 

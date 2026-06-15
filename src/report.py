@@ -138,7 +138,9 @@ def compute_heatmap(
         row_count[r] = row_count.get(r, 0) + 1
         col_count[c] = col_count.get(c, 0) + 1
 
-    init  = 1.0
+    # Greed boost: additive accumulates raw multipliers from 0, floored at 1
+    # at use site; multiplicative starts at 1 and multiplies.
+    init  = 0.0 if GREED_ADDITIVE else 1.0
     boost = {p: init for p in scorable}
 
     for g, gt in greed.items():

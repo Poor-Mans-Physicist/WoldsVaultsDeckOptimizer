@@ -45,9 +45,12 @@ const posKey = (p: Position) => `${p[0]},${p[1]}`;
 
 /** Helper — apply greed (additive or multiplicative) into a Map<key,number>. */
 function applyGreed(boost: Map<string, number>, key: string, amount: number, additive: boolean) {
+  // Additive: boost is a raw sum of greed multipliers pointing at this slot
+  // (use-site floors at 1 via Math.max). Multiplicative: each greed scales
+  // the running boost.
   if (!boost.has(key)) return;
   const v = boost.get(key)!;
-  boost.set(key, additive ? v + (amount - 1) : v * amount);
+  boost.set(key, additive ? v + amount : v * amount);
 }
 
 export function simulateInventoryBreakdown(
@@ -112,9 +115,11 @@ export function simulateInventoryBreakdown(
     : [false, false];
 
   // ── Greed → boost (with provenance) ──────────────────────────────────────
+  // Additive starts at 0 (use-site floors at 1); multiplicative starts at 1.
   const scorable = new Set<string>([...positional.keys(), ...deluxe.keys(), ...typeless.keys()]);
   const boost = new Map<string, number>();
-  for (const k of scorable) boost.set(k, 1.0);
+  const initBoost = cfg.stacking.greed_additive ? 0.0 : 1.0;
+  for (const k of scorable) boost.set(k, initBoost);
   const boostSources = new Map<string, GreedSource[]>();
   for (const k of scorable) boostSources.set(k, []);
 

@@ -24,6 +24,7 @@ Finally, we have "deluxe" type cards, which are similar to T cards but have a fl
 - Computationally heavy files should be written in rust, while wrappers and control flow/output handling files should be written in python
 - Prefer to use separate easily modifiable config files for scripts instead of having all of the variable declarations in the scripts directly
 - Create easily maintainable workflows by splitting files up effectively, avoiding hard to approach monoliths
+- **Maintain [MODELING_CHOICES.md](MODELING_CHOICES.md) as the source-of-truth for scoring behavior.** Any code change that touches scoring logic, multiplier values, the `n_ns` formula, core gating, greed mechanics, card categorization, slot rules, stacking modes, or constraint handling must update `MODELING_CHOICES.md` in the **same commit**. The file itself lists which sections to touch under each kind of change. The point is to never have to re-derive intended behavior from the code — if it's not documented there, the change isn't complete.
 
 ## Running
 
