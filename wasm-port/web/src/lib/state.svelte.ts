@@ -11,7 +11,7 @@ import type { CardEntry } from "./modifiers";
 import type { AssignmentKey, AssignmentVal } from "./preview";
 import {
   emptyStructural, pruneConvertedSlots, canRemoveConstructionTile,
-  MAX_CONSTRUCTION, MAX_ARCANE_CONVERT,
+  maxConstruction, maxArcaneConvert,
   type StructuralCores,
 } from "./structural";
 import {
@@ -228,10 +228,10 @@ export function toggleArcaneCore(on: boolean): void {
 }
 
 /** Add a construction tile. Caller must have verified `pos` is in
- *  constructionCandidates(); we still cap at MAX_CONSTRUCTION here. */
+ *  constructionCandidates(); we still cap at the effective max here. */
 export function addConstructionSlot(pos: Position): void {
   if (!app.structural.constructionEnabled) return;
-  if (app.structural.addedSlots.length >= MAX_CONSTRUCTION) return;
+  if (app.structural.addedSlots.length >= maxConstruction(app.structural)) return;
   if (app.structural.addedSlots.some((p) => p[0] === pos[0] && p[1] === pos[1])) return;
   app.structural.addedSlots = [...app.structural.addedSlots, pos];
   _resetForStructuralChange();
@@ -252,10 +252,11 @@ export function removeConstructionSlot(pos: Position): boolean {
 }
 
 /** Convert a regular slot to arcane. Caller verifies the position is a current
- *  slot and isn't already arcane (native or converted). Cap at MAX_ARCANE_CONVERT. */
+ *  slot and isn't already arcane (native or converted). Cap at the effective
+ *  max (3 normally, 5 with Greater). */
 export function convertSlotToArcane(pos: Position): void {
   if (!app.structural.arcaneCoreEnabled) return;
-  if (app.structural.convertedSlots.length >= MAX_ARCANE_CONVERT) return;
+  if (app.structural.convertedSlots.length >= maxArcaneConvert(app.structural)) return;
   if (app.structural.convertedSlots.some((p) => p[0] === pos[0] && p[1] === pos[1])) return;
   app.structural.convertedSlots = [...app.structural.convertedSlots, pos];
   _resetForStructuralChange();
@@ -275,6 +276,16 @@ export function unconvertArcaneSlot(pos: Position): void {
  *  the reset (run result + preview). */
 export function resetStructural(): void {
   app.structural = emptyStructural();
+}
+
+/** Toggle the "Greater" structural-cores variant (experimental community
+ *  cap, 5 instead of 3). Switching off doesn't auto-prune existing
+ *  overflow tiles — the new cap takes effect only for further additions /
+ *  conversions, and the counter floors at 0 when the user is over-cap. */
+export function toggleGreaterStructural(on: boolean): void {
+  if (app.structural.greaterStructural === on) return;
+  app.structural.greaterStructural = on;
+  // No card-clear needed: a tile count change doesn't invalidate a prior run.
 }
 
 // ─── Builder (Build your own deck) ───────────────────────────────────────────
@@ -451,6 +462,7 @@ export function captureSnapshot(label: string): Snapshot | null {
       arcaneCoreEnabled:   app.structural.arcaneCoreEnabled,
       addedSlots:          app.structural.addedSlots.map(([r, c]) => [r, c] as Position),
       convertedSlots:      app.structural.convertedSlots.map(([r, c]) => [r, c] as Position),
+      greaterStructural:   app.structural.greaterStructural,
     },
     assignment: _serializeAssignment(deckSrc.slots, app.result.assignment),
     wasmScore:  app.result.wasmScore,
@@ -515,11 +527,13 @@ export function restoreSnapshot(snap: Snapshot): void {
   app.inventoryCounts = { ...snap.inventoryCounts };
   app.forcedCounts    = { ...snap.forcedCounts };
   // Structural cores — same shape, just clone so reactive proxies don't share.
+  // `greaterStructural` was added later; older snapshots default to false.
   app.structural = {
     constructionEnabled: snap.structural.constructionEnabled,
     arcaneCoreEnabled:   snap.structural.arcaneCoreEnabled,
     addedSlots:          snap.structural.addedSlots.map(([r, c]) => [r, c] as Position),
     convertedSlots:      snap.structural.convertedSlots.map(([r, c]) => [r, c] as Position),
+    greaterStructural:   snap.structural.greaterStructural ?? false,
   };
 
   // Update the CorePicker checkboxes from `snap.cores` — match by (type, color)

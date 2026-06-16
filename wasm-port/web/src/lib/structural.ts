@@ -28,17 +28,33 @@ export interface StructuralCores {
   constructionEnabled: boolean;
   /** Arcane Core toggled on in the cores picker. */
   arcaneCoreEnabled:   boolean;
-  /** Positions added by Construction Core (≤3). Order is insertion order — not
-   *  load-bearing for connectivity (removal is allowed on any tile whose absence
-   *  doesn't orphan another addition), but kept stable so the UI list is calm. */
+  /** Positions added by Construction Core (≤3, or ≤5 with Greater). Order is
+   *  insertion order — not load-bearing for connectivity (removal is allowed
+   *  on any tile whose absence doesn't orphan another addition), but kept
+   *  stable so the UI list is calm. */
   addedSlots:     Position[];
-  /** Positions originally regular that have been converted to arcane (≤3).
-   *  Members may be in either deck.slots (native) or addedSlots (construction). */
+  /** Positions originally regular that have been converted to arcane (≤3, or
+   *  ≤5 with Greater). Members may be in either deck.slots (native) or
+   *  addedSlots (construction). */
   convertedSlots: Position[];
+  /** "Greater" structural cores — experimental community variant that bumps
+   *  both caps from 3 → 5. Not in the modpack yet; the UI flags it. */
+  greaterStructural: boolean;
 }
 
-export const MAX_CONSTRUCTION = 3;
-export const MAX_ARCANE_CONVERT = 3;
+export const MAX_CONSTRUCTION_BASE    = 3;
+export const MAX_ARCANE_CONVERT_BASE  = 3;
+export const MAX_CONSTRUCTION_GREATER = 5;
+export const MAX_ARCANE_GREATER       = 5;
+
+/** Effective Construction Core cap given the Greater toggle. */
+export function maxConstruction(sc: StructuralCores): number {
+  return sc.greaterStructural ? MAX_CONSTRUCTION_GREATER : MAX_CONSTRUCTION_BASE;
+}
+/** Effective Arcane Core cap given the Greater toggle. */
+export function maxArcaneConvert(sc: StructuralCores): number {
+  return sc.greaterStructural ? MAX_ARCANE_GREATER : MAX_ARCANE_CONVERT_BASE;
+}
 
 // Hard cap on a deck's footprint — the bounding box of all placeable slots
 // (`O` ∪ `A`, native + construction-added) must fit inside this rectangle.
@@ -53,6 +69,7 @@ export function emptyStructural(): StructuralCores {
     arcaneCoreEnabled:   false,
     addedSlots:     [],
     convertedSlots: [],
+    greaterStructural: false,
   };
 }
 
@@ -118,7 +135,7 @@ function slotsBbox(base: Deck, sc: StructuralCores): {
  *  reached so the UI won't surface candidates. */
 export function constructionCandidates(base: Deck, sc: StructuralCores): Position[] {
   if (!sc.constructionEnabled) return [];
-  if (sc.addedSlots.length >= MAX_CONSTRUCTION) return [];
+  if (sc.addedSlots.length >= maxConstruction(sc)) return [];
 
   const bb = slotsBbox(base, sc);
 
