@@ -46,6 +46,9 @@ export const CoreType = {
   PURE:        "pure",
   EQUILIBRIUM: "equilibrium",
   STEADFAST:   "steadfast",
+  // Sparkling — flat SHINY-only multiplier (Wold's-only). Same gating as
+  // steadfast / equilibrium, just a different number.
+  SPARKLING:   "sparkling",
   COLOR:       "color",
   FOIL:        "foil",
   DELUXE_CORE: "deluxe_core",

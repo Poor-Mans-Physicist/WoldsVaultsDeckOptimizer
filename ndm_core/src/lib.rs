@@ -43,6 +43,8 @@ const CORE_DELUXE: u8      = 5;
 const CORE_VOID: u8        = 6;
 // Archive core: base ** n_arcane_placed, applied *outside* per-card core_mult.
 const CORE_ARCHIVE: u8     = 7;
+// Sparkling: flat SHINY-only multiplier — Wold's-only.
+const CORE_SPARKLING: u8   = 8;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String ↔ u8 conversions (used only at the Python boundary, not in hot path)
@@ -103,6 +105,7 @@ fn core_from_str(s: &str) -> u8 {
         "pure"        => CORE_PURE,
         "equilibrium" => CORE_EQUILIBRIUM,
         "steadfast"   => CORE_STEADFAST,
+        "sparkling"   => CORE_SPARKLING,
         "color"       => CORE_COLOR,
         "foil"        => CORE_FOIL,
         "deluxe_core" => CORE_DELUXE,
@@ -178,6 +181,9 @@ struct SimConfig {
     mult_equilibrium: f64,
     mult_foil: f64,
     mult_steadfast: f64,
+    /// Sparkling — flat SHINY-only multiplier (Wold's-only). Same gating as
+    /// equilibrium / steadfast.
+    mult_sparkling: f64,
     mult_color: f64,
     mult_deluxe_flat: f64,
     mult_deluxe_core_base: f64,
@@ -299,6 +305,7 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
             }
             CORE_EQUILIBRIUM if cfg.is_shiny => { baseline_c.push(cfg.mult_equilibrium); }
             CORE_STEADFAST   if cfg.is_shiny => { baseline_c.push(cfg.mult_steadfast); }
+            CORE_SPARKLING   if cfg.is_shiny => { baseline_c.push(cfg.mult_sparkling); }
             CORE_COLOR  => { baseline_c.push(cfg.mult_color); }
             CORE_FOIL   => { baseline_c.push(cfg.mult_foil); }
             CORE_DELUXE => {
@@ -714,6 +721,7 @@ fn run_sa_optimize(
     mult_equilibrium: f64,
     mult_foil: f64,
     mult_steadfast: f64,
+    mult_sparkling: f64,
     mult_color: f64,
     mult_deluxe_flat: f64,
     mult_deluxe_core_base: f64,
@@ -825,6 +833,7 @@ fn run_sa_optimize(
         mult_equilibrium,
         mult_foil,
         mult_steadfast,
+        mult_sparkling,
         mult_color,
         mult_deluxe_flat,
         mult_deluxe_core_base,

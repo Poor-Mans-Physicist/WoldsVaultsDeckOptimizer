@@ -98,6 +98,9 @@ class CoreType(Enum):
     PURE        = "pure"
     EQUILIBRIUM = "equilibrium"
     STEADFAST   = "steadfast"
+    # Sparkling: flat SHINY-only multiplier (Wold's-only). Same gating as
+    # equilibrium / steadfast; just a different default value.
+    SPARKLING   = "sparkling"
     COLOR       = "color"
     FOIL        = "foil"
     DELUXE_CORE = "deluxe_core"

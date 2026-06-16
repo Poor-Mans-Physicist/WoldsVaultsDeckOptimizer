@@ -58,6 +58,10 @@ pub struct WasmInventoryInput {
     pub mult_equilibrium:       f64,
     pub mult_foil:              f64,
     pub mult_steadfast:         f64,
+    /// Sparkling — flat SHINY-only multiplier (Wold's-only). Default 1.0
+    /// keeps the core inert if a stale payload omits the field.
+    #[serde(default = "default_sparkling")]
+    pub mult_sparkling:         f64,
     pub mult_color:             f64,
     pub mult_deluxe_flat:       f64,
     pub mult_deluxe_core_base:  f64,
@@ -77,6 +81,7 @@ pub struct WasmInventoryInput {
 }
 
 fn default_archive_base() -> f64 { 1.0 }
+fn default_sparkling()    -> f64 { 1.0 }
 
 #[derive(Serialize)]
 pub struct WasmInventoryResult {
@@ -114,6 +119,7 @@ pub fn run_sa_inventory_wasm(input: JsValue) -> Result<JsValue, JsValue> {
         mult_equilibrium:       inp.mult_equilibrium,
         mult_foil:              inp.mult_foil,
         mult_steadfast:         inp.mult_steadfast,
+        mult_sparkling:         inp.mult_sparkling,
         mult_color:             inp.mult_color,
         mult_deluxe_flat:       inp.mult_deluxe_flat,
         mult_deluxe_core_base:  inp.mult_deluxe_core_base,

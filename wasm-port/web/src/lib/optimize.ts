@@ -204,6 +204,7 @@ function buildBasePayload(input: OptimizeInput) {
     mult_equilibrium:       cfg.cores.equilibrium,
     mult_foil:              cfg.cores.foil,
     mult_steadfast:         cfg.cores.steadfast,
+    mult_sparkling:         cfg.cores.sparkling,
     mult_color:             cfg.cores.color,
     mult_deluxe_flat:       cfg.deluxe.flat,
     mult_deluxe_core_base:  cfg.deluxe.core_base,

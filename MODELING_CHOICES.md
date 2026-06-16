@@ -187,8 +187,9 @@ base, multiplicative scales it.
 | `PURE`        | base**1.0**, scale **0.07** | regulars, deluxe cards (additive baseline), typeless                    | greed                                    | `pure_base + pure_scale × n_ns` (variable per layout) | Universal                                                                      |
 | `EQUILIBRIUM` | **3.0**                           | regulars, typeless                                                      | deluxe cards (additive), greed           | Flat                                                     | **SHINY-only**                                                           |
 | `STEADFAST`   | **2.2**                           | regulars, typeless                                                      | deluxe cards, greed                      | Flat                                                     | **SHINY-only**                                                           |
+| `SPARKLING`   | **2.5**                           | regulars, typeless                                                      | deluxe cards, greed                      | Flat                                                     | **SHINY-only**; gated by `cores.sparkling_allow` (off in vanilla)        |
 | `COLOR`       | **1.75**                          | every scorable card (WASM model: only matching-color cards)             | greed                                    | Flat                                                     | Universal                                                                      |
-| `FOIL`        | **2.8**                           | regulars, deluxe cards (baseline), typeless                             | greed                                    | Flat                                                     | Universal;**also flips EVO's `n_ns` to the SHINY formula** (see below) |
+| `FOIL`        | **2.5**                           | regulars, deluxe cards (baseline), typeless                             | greed                                    | Flat                                                     | Universal;**also flips EVO's `n_ns` to the SHINY formula** (see below) |
 | `DELUXE_CORE` | base**1.0**, scale **0.2**  | regulars, typeless                                                      | **deluxe cards themselves**, greed | `deluxe_core_base + deluxe_core_scale × n_deluxe`     | Universal; gated by `deluxe.allow` (off in vanilla)                          |
 | `VOID_CORE`   | base**1.0**, scale **0.3**  | regulars, deluxe cards, typeless                                        | dead cards themselves, greed             | `void_base + void_scale × n_dead`                     | Universal; gated by `cores.void_allow` (off in vanilla)                      |
 | `ARCHIVE_CORE` | per-arcane base **1.2**           | regulars, deluxe cards, typeless                                        | greed (arcane/dead score 0 anyway)       | `archive_core ^ n_arcane_placed` — applied **outside** the per-card `core_mult` (see callout below) | Gated by `cores.archive_allow` (off in vanilla); when on, additionally **enumerated only when the deck has ≥ 1 arcane slot** |
@@ -640,12 +641,13 @@ identical.
 | `cores.archive_allow`     | **true**       | **false**   | Vanilla hides Archive Core from the picker and the enumerator regardless of whether the deck has arcane slots |
 | `cores.construction_allow` | **true**      | **false**   | Vanilla hides the structural Construction Core (web only) |
 | `cores.arcane_core_allow` | **true**       | **false**   | Vanilla hides the structural Arcane Core (web only)       |
+| `cores.sparkling_allow`   | **true**       | **false**   | Vanilla hides the SHINY-only Sparkling core               |
 | `stacking.additive_cores` | **true**       | **false**   | Vanilla multiplies cores instead of summing                                                                 |
 | `decks.json_file`         | `wolds_decks.json` | `vh_decks.json` | Different deck rosters per mode                                                                             |
 
 Greed defaults (`dir_vert: 4`, `dir_horiz: 4`, others 0) and core multipliers
-(`pure_scale: 0.07`, `equilibrium: 3.0`, `foil: 2.8`, `steadfast: 2.2`,
-`color: 1.75`, `void_scale: 0.3`, `deluxe.flat: 2`) are shared.
+(`pure_scale: 0.07`, `equilibrium: 3.0`, `foil: 2.5`, `steadfast: 2.2`,
+`sparkling: 2.5`, `color: 1.75`, `void_scale: 0.3`, `deluxe.flat: 2`) are shared.
 
 The UI also relabels in Vanilla: SHINY → "Stat" in class pickers
 (`wasm-port/web/src/lib/visibility.ts::classSelectLabel`).

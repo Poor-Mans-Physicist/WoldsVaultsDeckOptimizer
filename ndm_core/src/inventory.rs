@@ -59,6 +59,8 @@ const CORE_DELUXE:      u8 = 5;
 const CORE_VOID:        u8 = 6;
 // Archive core: base ** n_arcane_placed, applied *outside* the per-card core_mult.
 const CORE_ARCHIVE:     u8 = 7;
+// Sparkling core: flat SHINY-only multiplier — Wold's-only.
+const CORE_SPARKLING:   u8 = 8;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String ↔ u8 conversions (Python boundary only — never on the hot path)
@@ -139,6 +141,7 @@ fn core_from_str(s: &str) -> u8 {
         "pure"        => CORE_PURE,
         "equilibrium" => CORE_EQUILIBRIUM,
         "steadfast"   => CORE_STEADFAST,
+        "sparkling"   => CORE_SPARKLING,
         "color"       => CORE_COLOR,
         "foil"        => CORE_FOIL,
         "deluxe_core" => CORE_DELUXE,
@@ -208,6 +211,7 @@ struct SimConfig {
     mult_equilibrium: f64,
     mult_foil: f64,
     mult_steadfast: f64,
+    mult_sparkling: f64,
     mult_color: f64,
     mult_deluxe_flat: f64,
     mult_deluxe_core_base: f64,
@@ -360,6 +364,11 @@ fn simulate(
             }
             CORE_STEADFAST if cfg.is_shiny => {
                 let v = if s.has_override() { s.override_ } else { cfg.mult_steadfast };
+                baseline_sum  += v - 1.0;
+                baseline_prod *= v;
+            }
+            CORE_SPARKLING if cfg.is_shiny => {
+                let v = if s.has_override() { s.override_ } else { cfg.mult_sparkling };
                 baseline_sum  += v - 1.0;
                 baseline_prod *= v;
             }
@@ -853,7 +862,7 @@ fn sa_one_restart(
     mult_dir_vert, mult_dir_horiz, mult_evo_greed, mult_surr_greed,
     mult_dir_diag_up, mult_dir_diag_down,
     mult_pure_base, mult_pure_scale,
-    mult_equilibrium, mult_foil, mult_steadfast, mult_color,
+    mult_equilibrium, mult_foil, mult_steadfast, mult_sparkling, mult_color,
     mult_deluxe_flat, mult_deluxe_core_base, mult_deluxe_core_scale,
     mult_void_core_base, mult_void_core_scale,
     mult_archive_core,
@@ -884,6 +893,7 @@ pub fn run_sa_inventory(
     mult_equilibrium:       f64,
     mult_foil:              f64,
     mult_steadfast:         f64,
+    mult_sparkling:         f64,
     mult_color:             f64,
     mult_deluxe_flat:       f64,
     mult_deluxe_core_base:  f64,
@@ -945,7 +955,7 @@ pub fn run_sa_inventory(
         mult_dir_vert, mult_dir_horiz, mult_evo_greed, mult_surr_greed,
         mult_dir_diag_up, mult_dir_diag_down,
         mult_pure_base, mult_pure_scale,
-        mult_equilibrium, mult_foil, mult_steadfast, mult_color,
+        mult_equilibrium, mult_foil, mult_steadfast, mult_sparkling, mult_color,
         mult_deluxe_flat, mult_deluxe_core_base, mult_deluxe_core_scale,
         mult_void_core_base, mult_void_core_scale,
         mult_archive_core,

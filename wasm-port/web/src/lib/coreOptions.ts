@@ -13,6 +13,7 @@ export const CORE_OPTIONS: readonly CoreOption[] = [
   { coreType: CoreType.PURE,        color: null },
   { coreType: CoreType.EQUILIBRIUM, color: null },
   { coreType: CoreType.STEADFAST,   color: null },
+  { coreType: CoreType.SPARKLING,   color: null },
   { coreType: CoreType.FOIL,        color: null },
   { coreType: CoreType.DELUXE_CORE, color: null },
   { coreType: CoreType.VOID_CORE,   color: null },
@@ -46,6 +47,7 @@ export function coreDefaultValue(opt: CoreOption, cfg: ResolvedConfig): number {
     case CoreType.VOID_CORE:   return cfg.cores.void_scale;
     case CoreType.EQUILIBRIUM: return cfg.cores.equilibrium;
     case CoreType.STEADFAST:   return cfg.cores.steadfast;
+    case CoreType.SPARKLING:   return cfg.cores.sparkling ?? 2.5;
     case CoreType.FOIL:        return cfg.cores.foil;
     case CoreType.COLOR:       return cfg.cores.color;
     // Archive override replaces the per-arcane BASE (not the final mult). So

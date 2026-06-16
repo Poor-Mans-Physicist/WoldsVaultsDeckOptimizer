@@ -24,6 +24,7 @@ from .config import (
     ALLOW_DELUXE,
     ALLOW_VOID,
     ALLOW_ARCHIVE,
+    ALLOW_SPARKLING,
     Deck,
     DELUXE_COUNTED_AS_REGULAR,
     ENABLE_EXPERIMENTAL_EXPONENT,
@@ -45,6 +46,7 @@ from .config import (
     MULT_PURE_BASE,
     MULT_PURE_SCALE,
     MULT_STEADFAST,
+    MULT_SPARKLING,
     MULT_SURR_GREED,
     MULT_VOID_CORE_BASE,
     MULT_VOID_CORE_SCALE,
@@ -132,6 +134,8 @@ def simulate(
             baseline_contribs.append(MULT_EQUILIBRIUM)
         elif core == CoreType.STEADFAST   and card_class == CardClass.SHINY:
             baseline_contribs.append(MULT_STEADFAST)
+        elif core == CoreType.SPARKLING   and card_class == CardClass.SHINY:
+            baseline_contribs.append(MULT_SPARKLING)
         elif core == CoreType.COLOR:
             baseline_contribs.append(MULT_COLOR)
         elif core == CoreType.FOIL:
@@ -252,12 +256,15 @@ def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreTyp
     if card_class == CardClass.SHINY:
         non_var_shiny = [CoreType.EQUILIBRIUM, CoreType.STEADFAST,
                          CoreType.COLOR,       CoreType.FOIL]
+        if ALLOW_SPARKLING:
+            non_var_shiny.append(CoreType.SPARKLING)
 
         def shiny_static(combo) -> float:
             m = 1.0
             for core in combo:
                 if   core == CoreType.EQUILIBRIUM: m *= MULT_EQUILIBRIUM
                 elif core == CoreType.STEADFAST:   m *= MULT_STEADFAST
+                elif core == CoreType.SPARKLING:   m *= MULT_SPARKLING
                 elif core == CoreType.COLOR:       m *= MULT_COLOR
                 elif core == CoreType.FOIL:        m *= MULT_FOIL
             return m
@@ -462,6 +469,7 @@ def sa_optimize(
         mult_equilibrium       = MULT_EQUILIBRIUM,
         mult_foil              = MULT_FOIL,
         mult_steadfast         = MULT_STEADFAST,
+        mult_sparkling         = MULT_SPARKLING,
         mult_color             = MULT_COLOR,
         mult_deluxe_flat       = MULT_DELUXE_FLAT,
         mult_deluxe_core_base  = MULT_DELUXE_CORE_BASE,

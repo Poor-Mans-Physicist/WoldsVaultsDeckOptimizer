@@ -61,6 +61,9 @@ const CORE_DELUXE:      u8 = 5;
 const CORE_VOID:        u8 = 6;
 // Archive core: base ** n_arcane_placed, applied *outside* the per-card core_mult.
 const CORE_ARCHIVE:     u8 = 7;
+// Sparkling core: flat SHINY-only multiplier. Same gating as STEADFAST /
+// EQUILIBRIUM, Wold's-only via the picker's sparkling_allow flag.
+const CORE_SPARKLING:   u8 = 8;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String ↔ u8 conversions (Python boundary only — never on the hot path)
@@ -141,6 +144,7 @@ pub(crate) fn core_from_str(s: &str) -> u8 {
         "pure"        => CORE_PURE,
         "equilibrium" => CORE_EQUILIBRIUM,
         "steadfast"   => CORE_STEADFAST,
+        "sparkling"   => CORE_SPARKLING,
         "color"       => CORE_COLOR,
         "foil"        => CORE_FOIL,
         "deluxe_core" => CORE_DELUXE,
@@ -213,6 +217,8 @@ pub(crate) struct SimConfig {
     pub mult_equilibrium: f64,
     pub mult_foil: f64,
     pub mult_steadfast: f64,
+    /// Sparkling core flat value — SHINY-only baseline (gated by `is_shiny`).
+    pub mult_sparkling: f64,
     pub mult_color: f64,
     pub mult_deluxe_flat: f64,
     pub mult_deluxe_core_base: f64,
@@ -371,6 +377,11 @@ fn simulate(
             }
             CORE_STEADFAST if cfg.is_shiny => {
                 let v = if s.has_override() { s.override_ } else { cfg.mult_steadfast };
+                baseline_sum  += v - 1.0;
+                baseline_prod *= v;
+            }
+            CORE_SPARKLING if cfg.is_shiny => {
+                let v = if s.has_override() { s.override_ } else { cfg.mult_sparkling };
                 baseline_sum  += v - 1.0;
                 baseline_prod *= v;
             }

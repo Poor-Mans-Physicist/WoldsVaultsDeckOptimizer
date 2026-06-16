@@ -82,6 +82,10 @@ MULT_PURE_SCALE:  float = _CFG["cores"]["pure_scale"]
 MULT_EQUILIBRIUM: float = _CFG["cores"]["equilibrium"]
 MULT_FOIL:        float = _CFG["cores"]["foil"]
 MULT_STEADFAST:   float = _CFG["cores"]["steadfast"]
+# Sparkling: flat SHINY-only multiplier; gated by `sparkling_allow` (vanilla
+# off). When enabled and the run is SHINY, contributes as a baseline core.
+ALLOW_SPARKLING:  bool  = _CFG["cores"].get("sparkling_allow", False)
+MULT_SPARKLING:   float = _CFG["cores"].get("sparkling", 1.0)
 MULT_COLOR:       float = _CFG["cores"]["color"]
 ALLOW_VOID:           bool  = _CFG["cores"]["void_allow"]
 MULT_VOID_CORE_BASE:  float = _CFG["cores"]["void_base"]
@@ -481,6 +485,7 @@ def set_mode(name: str) -> None:
     global MULT_DIR_GREED_VERT, MULT_DIR_GREED_HORIZ, MULT_EVO_GREED, MULT_SURR_GREED
     global MULT_DIR_GREED_DIAG_UP, MULT_DIR_GREED_DIAG_DOWN
     global MULT_PURE_BASE, MULT_PURE_SCALE, MULT_EQUILIBRIUM, MULT_FOIL, MULT_STEADFAST, MULT_COLOR
+    global ALLOW_SPARKLING, MULT_SPARKLING
     global ALLOW_VOID, MULT_VOID_CORE_BASE, MULT_VOID_CORE_SCALE
     global ALLOW_ARCHIVE, MULT_ARCHIVE_CORE
     global ALLOW_DELUXE, MULT_DELUXE_FLAT, MULT_DELUXE_CORE_BASE, MULT_DELUXE_CORE_SCALE
@@ -513,6 +518,8 @@ def set_mode(name: str) -> None:
     MULT_EQUILIBRIUM         = _CFG["cores"]["equilibrium"]
     MULT_FOIL                = _CFG["cores"]["foil"]
     MULT_STEADFAST           = _CFG["cores"]["steadfast"]
+    ALLOW_SPARKLING          = _CFG["cores"].get("sparkling_allow", False)
+    MULT_SPARKLING           = _CFG["cores"].get("sparkling", 1.0)
     MULT_COLOR               = _CFG["cores"]["color"]
     ALLOW_VOID               = _CFG["cores"]["void_allow"]
     MULT_VOID_CORE_BASE      = _CFG["cores"]["void_base"]

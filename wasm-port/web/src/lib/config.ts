@@ -23,6 +23,9 @@ export interface ResolvedConfig {
     equilibrium: number;
     foil: number;
     steadfast: number;
+    // Sparkling — flat SHINY-only multiplier, Wold's-only via sparkling_allow.
+    sparkling:       number;
+    sparkling_allow: boolean;
     color: number;
     // Void core: variable multiplier (base + scale × n_dead). `void_allow`
     // gates whether the candidate enumerator considers it. Vanilla sets false.

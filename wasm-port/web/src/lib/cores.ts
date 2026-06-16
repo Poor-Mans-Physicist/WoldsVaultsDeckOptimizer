@@ -13,6 +13,7 @@ export function staticMult(spec: CoreSpec, cfg: ResolvedConfig): number {
   switch (spec.core_type) {
     case CoreType.EQUILIBRIUM: return cfg.cores.equilibrium;
     case CoreType.STEADFAST:   return cfg.cores.steadfast;
+    case CoreType.SPARKLING:   return cfg.cores.sparkling;
     case CoreType.COLOR:       return cfg.cores.color;
     case CoreType.FOIL:        return cfg.cores.foil;
     default:
@@ -114,6 +115,14 @@ export function classifyCores(
             reason: "steadfast only applies to SHINY decks (this run is EVO)" });
         }
         break;
+      case CoreType.SPARKLING:
+        if (card_class === CardClass.SHINY) {
+          baseline.push({ core_type: CoreType.SPARKLING, color: null, value: staticMult(spec, cfg), override: isOverride });
+        } else {
+          classExcluded.push({ core_type: CoreType.SPARKLING, color: null,
+            reason: "sparkling only applies to SHINY decks (this run is EVO)" });
+        }
+        break;
       case CoreType.FOIL:
         baseline.push({ core_type: CoreType.FOIL, color: null, value: staticMult(spec, cfg), override: isOverride });
         break;
@@ -203,6 +212,9 @@ export function candidateCoresInventory(
   const foilSpec       = byType.get(CoreType.FOIL)?.[0]        ?? null;
   const equiSpec       = byType.get(CoreType.EQUILIBRIUM)?.[0] ?? null;
   const steadSpec      = byType.get(CoreType.STEADFAST)?.[0]   ?? null;
+  // Mode-gated; vanilla flips sparkling_allow off and we drop the spec here.
+  let sparkSpec        = byType.get(CoreType.SPARKLING)?.[0]   ?? null;
+  if (!cfg.cores.sparkling_allow) sparkSpec = null;
   const colorSpecs     = byType.get(CoreType.COLOR)            ?? [];
 
   const colorChoices: (CoreSpec | null)[] = [null, ...colorSpecs];
@@ -227,7 +239,7 @@ export function candidateCoresInventory(
 
   // ── SHINY ───────────────────────────────────────────────────────────────
   if (card_class === CardClass.SHINY) {
-    const nonVarStatic: CoreSpec[] = [equiSpec, steadSpec, foilSpec].filter((s): s is CoreSpec => s !== null);
+    const nonVarStatic: CoreSpec[] = [equiSpec, steadSpec, sparkSpec, foilSpec].filter((s): s is CoreSpec => s !== null);
 
     const bestShinyFillers = (slotsLeft: number, colorPick: CoreSpec | null): CoreSpec[] => {
       const pool: CoreSpec[] = [...nonVarStatic];

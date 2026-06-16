@@ -36,8 +36,12 @@ cores:
   pure_base:   1.0
   pure_scale:  0.07
   equilibrium: 3.0
-  foil:        2.8    # the shiny core
+  foil:        2.5    # the shiny core
   steadfast:   2.2
+  # Sparkling core — flat SHINY-only multiplier; behaves like steadfast with a
+  # higher number. Wold's-only (vanilla flips `sparkling_allow` off below).
+  sparkling:       2.5
+  sparkling_allow: true
   color:       1.75
   # Void core (variable, like pure/deluxe-core): scales with dead-card count.
   # When `allow: true` the candidate enumerator considers it; when false it's
@@ -136,6 +140,7 @@ modes:
       archive_allow:      false
       construction_allow: false
       arcane_core_allow:  false
+      sparkling_allow:    false
     stacking:
       additive_cores: false
     shiny:
