@@ -123,10 +123,11 @@ export function simulateInventoryBreakdown(
   const archiveArcaneCount = arcane.size;
 
   // ── Greed → boost (with provenance) ──────────────────────────────────────
-  // Additive starts at 0 (use-site floors at 1); multiplicative starts at 1.
+  // Both stacking modes start at 1.0 so the boost is `1 + Σ greeds` (additive)
+  // or `1 × Π greeds` (multiplicative). 0 greeds → 1.0 in either case.
   const scorable = new Set<string>([...positional.keys(), ...deluxe.keys(), ...typeless.keys()]);
   const boost = new Map<string, number>();
-  const initBoost = cfg.stacking.greed_additive ? 0.0 : 1.0;
+  const initBoost = 1.0;
   for (const k of scorable) boost.set(k, initBoost);
   const boostSources = new Map<string, GreedSource[]>();
   for (const k of scorable) boostSources.set(k, []);

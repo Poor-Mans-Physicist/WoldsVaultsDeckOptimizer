@@ -170,10 +170,11 @@ def simulate(
         row_count[r] = row_count.get(r, 0) + 1
         col_count[c] = col_count.get(c, 0) + 1
 
-    # Additive: start at 0 and accumulate raw multipliers; the `max(b, 1.0)`
-    # floor at the use site promotes the no-greed case to a neutral 1× boost.
-    # Multiplicative: start at 1 and multiply (unchanged).
-    init  = 0.0 if GREED_ADDITIVE else 1.0
+    # Both modes start at 1.0 so the boost is `1 + Σ greeds` (additive) or
+    # `1 × Π greeds` (multiplicative) — 0 greeds yields 1.0 in either. The
+    # legacy `max(b, 1.0)` floor at the use site is now a no-op for additive
+    # but kept for symmetry.
+    init  = 1.0
     boost = {p: init for p in scorable}
 
     for g, gt in greed.items():

@@ -441,7 +441,10 @@ fn simulate(
     // Greed → boost pass (same semantics as classic optimizer).
     // Additive: reset to 0 and accumulate raw multipliers (use-site floors at 1).
     // Multiplicative: reset to 1 and multiply.
-    let reset_boost = if cfg.greed_additive { 0.0 } else { 1.0 };
+    // Additive boost starts at 1.0 so the formula is `1 + Σ greeds` for any
+    // number of greeds (including 0). Multiplicative still starts at 1.0 so
+    // multiplying by zero greeds leaves boost = 1.
+    let reset_boost = 1.0;
     for v in boost[..n].iter_mut() { *v = reset_boost; }
 
     let scorable = |i: usize| -> bool {

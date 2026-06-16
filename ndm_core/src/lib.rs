@@ -359,10 +359,11 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
     }
 
     // ── Greed boosts ──────────────────────────────────────────────────────────
-    // Additive:       boost starts at 0, accumulates raw multipliers; the
-    //                 use-site `max(boost, 1.0)` floor handles no-greed slots.
-    // Multiplicative: boost starts at 1, each greed multiplies.
-    let init_boost = if cfg.greed_additive { 0.0 } else { 1.0 };
+    // Both modes start at 1.0 so the boost is `1 + Σ greeds` (additive) or
+    // `1 × Π greeds` (multiplicative) — including 0 greeds, which yields 1.0
+    // in both. The legacy `max(boost, 1.0)` floor at the use site is now a
+    // no-op for additive but kept for symmetry.
+    let init_boost = 1.0;
     let mut boost = vec![init_boost; n];
 
     macro_rules! apply_greed {

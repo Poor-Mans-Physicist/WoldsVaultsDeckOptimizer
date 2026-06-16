@@ -150,32 +150,33 @@ greed cards are skipped.
 
 Controlled by `stacking.greed_additive` (default **true** in both modes).
 
-- **Additive** (`true`): each greed pointing at a slot contributes its
-  raw multiplier value to a running sum. Final boost =
-  `max(1.0, Σ amount_i)` over all greeds hitting the slot — the `max`
-  floor handles the no-greed case so the slot doesn't drop to 0× boost.
+- **Additive** (`true`): the boost starts at **1.0** and each greed
+  pointing at the slot adds its raw multiplier value. Final boost =
+  `1.0 + Σ amount_i` over all greeds hitting the slot — so a no-greed
+  slot stays at a neutral 1× and every greed adds on top of that base
+  rather than replacing it.
   Worked examples (default `dir_vert: 4`):
 
   | Greeds pointing at slot | Final boost |
   | --- | --- |
-  | 0                            | 1.0  |
-  | 1× dir_vert                  | 4    |
-  | 2× dir_vert                  | 8    |
-  | 3× dir_vert                  | 12   |
-  | 1× dir_vert + 1× surr_greed at 3 | 7 |
+  | 0                            | 1   |
+  | 1× dir_vert                  | 5   |
+  | 2× dir_vert                  | 9   |
+  | 3× dir_vert                  | 13  |
+  | 1× dir_vert + 1× surr_greed at 3 | 8 |
 
 - **Multiplicative** (`false`): each greed multiplies the running boost
   starting from 1.0. Final boost = `Π amount_i`. **Not floored** — if any
   contributing multiplier is 0, the slot's contribution becomes 0. This
   is a legacy stacking model; neither Wold's nor Vanilla uses it today.
 
-Implementation: `_apply_greed()` in `src/simulate.py` /
-`src/inventory_optimize.py`, the `apply_greed!` macro in
-`ndm_core/src/lib.rs`, the inline `apply` closure in
+Implementation: `_apply_greed()` in `src/simulate.py`, the `apply_greed!`
+macro in `ndm_core/src/lib.rs`, the inline `apply` closure in
 `ndm_core/src/inventory.rs` + `wasm-port/ndm_core/src/inventory.rs`, and
 `applyGreed()` in `wasm-port/web/src/lib/breakdown.ts`. The boost map
-is initialized to `0` (additive) or `1` (multiplicative) at the start of
-every scoring call.
+is initialized to `1.0` at the start of every scoring call in both
+stacking modes — additive accumulates additional greeds on top of that
+base, multiplicative scales it.
 
 ---
 
