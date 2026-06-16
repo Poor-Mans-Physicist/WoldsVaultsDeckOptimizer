@@ -398,6 +398,24 @@ Mode flips and deck-dropdown changes call `resetStructural()` for the
 same reason — and because the coordinate space (Position values) is
 specific to the previous deck.
 
+### Click precedence on the deck grid
+
+When both a Run result AND a structural-core tool mode are active at the
+same time, **left-click on a slot prioritizes the breakdown popup over
+the tool action**. So clicking a filled slot post-Run never quietly
+mutates the layout — the user sees the per-slot math instead. The tool
+actions reactivate as soon as the result is cleared (which any
+structural mutation also does, transitively).
+
+Practical implication: to convert / place more tiles after a Run, the
+user either right-clicks an existing converted/added tile to revert
+it (frees up the structural-core budget and clears the result, leaving
+slots empty for the next left-click), or toggles the relevant
+structural core off and back on. Implementation: `DeckGrid.svelte`'s
+`handleSlotClick` checks `breakdown.get(key)` first; only if absent
+does it dispatch to `onConvertSlot` / `onUnconvertSlot`. Right-click
+behavior is unchanged — it always reverts.
+
 ### What the SA sees
 
 `effectiveDeck(base, sc, deckmod)` (in `structural.ts`) returns the

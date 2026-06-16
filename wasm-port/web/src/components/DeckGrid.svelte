@@ -104,8 +104,18 @@
       onBuildClick?.([r, c]);
       return;
     }
-    // Conversion mode wins over breakdown popups when active. The grid is
-    // single-purpose while a structural mode is on.
+    // Priority: if a run result is available for this slot, breakdown wins
+    // over any structural-core tool action. This prevents the "I clicked the
+    // slot but got a convert instead of a breakdown" trap when Arcane Core
+    // or Construction Core is left enabled after a Run. To convert / place
+    // again post-run, the user right-clicks an existing converted/added
+    // tile to revert (which clears the result, freeing slots back to
+    // empty), or toggles the core off and on.
+    if (breakdown && onSlotClick) {
+      const bd = breakdown.get(key);
+      if (bd) { onSlotClick(key, bd); return; }
+    }
+    // No result yet → structural-core tools own the click.
     if (conversionMode) {
       const pos: Position = [r, c];
       if (convertedSet.has(key)) {
@@ -117,10 +127,8 @@
       }
       return;
     }
-    if (placementMode) return;   // breakdown popup is suppressed in placement mode
-    if (!onSlotClick || !breakdown) return;
-    const bd = breakdown.get(key);
-    if (bd) onSlotClick(key, bd);
+    // Placement mode: clicks on actual slots are a no-op (placements happen
+    // on empty cells via handlePlacementClick); right-click removes.
   }
 
   function handleSlotContext(e: MouseEvent, key: string, r: number, c: number) {

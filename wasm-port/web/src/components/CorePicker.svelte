@@ -136,6 +136,7 @@
         {#if app.structural.constructionEnabled}
           <div class="hint">
             Click a <span class="hint-plus">+</span> tile to add it · right-click an added tile to remove.
+            <em>After a Run, clicks show the slot's breakdown — right-click an added tile to revert and free up the budget.</em>
           </div>
         {/if}
       {/if}
@@ -159,6 +160,7 @@
         {#if app.structural.arcaneCoreEnabled}
           <div class="hint">
             Click a regular slot to convert to arcane · right-click to revert.
+            <em>After a Run, clicks show the slot's breakdown — right-click a converted slot to revert and free up the budget.</em>
           </div>
         {/if}
       {/if}
@@ -320,6 +322,12 @@
     color: var(--text-muted);
     padding: 0 0 4px 22px;
     line-height: 1.4;
+  }
+  .hint em {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-secondary);
+    font-style: normal;
   }
   .hint-plus {
     display: inline-block;
