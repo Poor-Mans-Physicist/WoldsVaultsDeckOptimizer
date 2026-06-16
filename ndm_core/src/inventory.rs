@@ -337,8 +337,11 @@ fn simulate(
     let mut void_addend   = 0.0f64;
     let mut void_factor   = 1.0f64;
     let mut void_present  = false;
-    // Archive core: per-arcane base; resolved value is base ** n_arcane_placed.
-    // Folded into the baseline core stack — see the CORE_ARCHIVE arm.
+    // Archive core: per-arcane base; final multiplier is base ** n_arcane_placed.
+    // Applied *outside* the per-card core_mult, so it bypasses the additive_cores
+    // stacking switch.
+    let mut archive_base    = 1.0f64;
+    let mut archive_present = false;
     let color_core_color = cores.color_core_color;
 
     for s in &cores.list {
@@ -385,17 +388,19 @@ fn simulate(
                 void_present  = true;
             }
             CORE_ARCHIVE => {
-                // Archive folds into the baseline stack like any other
-                // baseline core. Resolved value is base ** n_arcane_placed;
-                // stacking obeys additive_cores below.
-                let base = if s.has_override() { s.override_ } else { cfg.mult_archive_core };
-                let v = base.powi(n_arcane as i32);
-                baseline_sum  += v - 1.0;
-                baseline_prod *= v;
+                archive_base    = if s.has_override() { s.override_ } else { cfg.mult_archive_core };
+                archive_present = true;
             }
             _ => {}
         }
     }
+
+    // Archive multiplier — applied outside the per-card core_mult.
+    let archive_mult: f64 = if archive_present {
+        archive_base.powi(n_arcane as i32)
+    } else {
+        1.0
+    };
 
     // Per-card core multiplier — picks color/deluxe/void addends per
     // applicability. (Dead cards are skipped before this is called; gating is
@@ -508,11 +513,11 @@ fn simulate(
                     _ => 0.0,
                 }
             };
-            ndm += pos_val * card_core_mult(t, c) * b;
+            ndm += pos_val * card_core_mult(t, c) * b * archive_mult;
         } else if t == DELUXE {
-            ndm += cfg.mult_deluxe_flat * card_core_mult(t, c) * b;
+            ndm += cfg.mult_deluxe_flat * card_core_mult(t, c) * b * archive_mult;
         } else if t == TYPELESS {
-            ndm += 1.0 * card_core_mult(t, c) * b;
+            ndm += 1.0 * card_core_mult(t, c) * b * archive_mult;
         }
         // GREED / DEAD contribute nothing.
     }

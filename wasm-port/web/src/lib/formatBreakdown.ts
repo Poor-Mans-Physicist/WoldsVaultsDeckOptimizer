@@ -28,18 +28,13 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
   }
   out.push("");
 
-  // Applied cores. Archive is now one of these (folded into baseline); we
-  // annotate its row with the exponent calc so the user sees where the
-  // resolved value came from.
+  // Applied cores
   out.push("Cores applied to this card:");
   if (b.appliedCores.length === 0) out.push("  (none)");
   for (const c of b.appliedCores) {
     const label = c.color !== null ? `${c.core_type} (${c.color})` : c.core_type;
     const tag   = c.override ? " (override)" : "";
     out.push(`  • ${label.padEnd(18)} ×${c.value.toFixed(3)}${tag}`);
-    if (c.core_type === "archive_core") {
-      out.push(`      ↳ ${b.archiveBase.toFixed(3)} ^ ${b.archiveArcaneCount} arcane = ${c.value.toFixed(3)}`);
-    }
   }
   out.push(`  formula: ${b.coreMultFormula}`);
   out.push(`  → core_mult = ×${b.coreMult.toFixed(3)}`);
@@ -66,8 +61,17 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
   out.push(`  → boost = ×${b.boost.toFixed(3)}`);
   out.push("");
 
-  // Archive folds into core_mult now — no separate factor line.
-  out.push(`Final: ${stripFloat(b.baseValue)} × ${b.coreMult.toFixed(3)} × ${b.boost.toFixed(3)}`);
+  // Archive core — applied OUTSIDE the per-card core_mult stack, so shown as
+  // its own factor. Only render when archive is actually contributing.
+  const showArchive = b.archiveMult !== 1.0;
+  if (showArchive) {
+    out.push("Archive core (outside core stack):");
+    out.push(`  • ${b.archiveArcaneCount} arcane placed → ${b.archiveBase.toFixed(3)}^${b.archiveArcaneCount} = ×${b.archiveMult.toFixed(3)}`);
+    out.push("");
+    out.push(`Final: ${stripFloat(b.baseValue)} × ${b.coreMult.toFixed(3)} × ${b.boost.toFixed(3)} × ${b.archiveMult.toFixed(3)}`);
+  } else {
+    out.push(`Final: ${stripFloat(b.baseValue)} × ${b.coreMult.toFixed(3)} × ${b.boost.toFixed(3)}`);
+  }
   out.push(`     = ${b.finalNdm.toFixed(3)}`);
   return out.join("\n");
 }

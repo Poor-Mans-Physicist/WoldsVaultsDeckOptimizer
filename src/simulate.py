@@ -141,12 +141,13 @@ def simulate(
         elif core == CoreType.VOID_CORE:
             void_core_value   = MULT_VOID_CORE_BASE   + MULT_VOID_CORE_SCALE   * n_dead
 
-    # Archive core folds into the baseline core stack like any other baseline
-    # core. Resolved value is base ** N where N is the count of placed
-    # ARCANE cards; the stacking math below treats it as one more entry in
-    # baseline_contribs.
+    # Archive core (special — applied *outside* the per-card core_mult; bypasses
+    # the additive_cores stacking switch). Final multiplier is base ** N where
+    # N is the count of placed ARCANE cards. Skipped entirely when not in the
+    # candidate set.
+    archive_mult = 1.0
     if CoreType.ARCHIVE_CORE in cores:
-        baseline_contribs.append(MULT_ARCHIVE_CORE ** len(arcane))
+        archive_mult = MULT_ARCHIVE_CORE ** len(arcane)
 
     if ADDITIVE_CORES:
         baseline_sum  = sum(v - 1.0 for v in baseline_contribs)
@@ -221,15 +222,15 @@ def simulate(
         elif t == CardType.DIAG: pos = sum(1 for q in deck._diag_peers[p] if q in filled) + 1
         else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += _contrib(pos * regular_core_mult * b)
+        ndm += _contrib(pos * regular_core_mult * b * archive_mult)
 
     for p in deluxe:
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += _contrib(MULT_DELUXE_FLAT * deluxe_card_core_mult * b)
+        ndm += _contrib(MULT_DELUXE_FLAT * deluxe_card_core_mult * b * archive_mult)
 
     for p in typeless:
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += _contrib(1.0 * typeless_core_mult * b)
+        ndm += _contrib(1.0 * typeless_core_mult * b * archive_mult)
 
     return ndm
 

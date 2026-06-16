@@ -60,13 +60,11 @@ export interface ExcludedCore {
 
 /**
  * Mirror `_classify_cores`: split cores into baseline / color / deluxe / void
- * / excluded buckets.
+ * / archive / excluded buckets.
  *
- * `n_arcane_placed` feeds Archive Core's `base ^ n` formula — Archive now
- * folds into baseline alongside Pure / Foil / etc. (stacks per
- * `additive_cores`, applies to every scoring card). `n_dead` is used by the
- * void core. The old Pure-core fudge is gone — arcane cards count via the
- * assignment-derived `n_ns` instead.
+ * `n_arcane_placed` feeds Archive Core's `base ^ n` formula. `n_dead` is used
+ * by the void core. The old Pure-core fudge is gone — arcane cards count via
+ * the assignment-derived `n_ns` instead.
  */
 export function classifyCores(
   cores:      readonly CoreSpec[],
@@ -81,12 +79,14 @@ export function classifyCores(
   colorComp:  CoreComponent | null;
   deluxeComp: CoreComponent | null;
   voidComp:   CoreComponent | null;
+  archiveComp: CoreComponent | null;
   classExcluded: ExcludedCore[];
 } {
   const baseline: CoreComponent[] = [];
   let colorComp:  CoreComponent | null = null;
   let deluxeComp: CoreComponent | null = null;
   let voidComp:   CoreComponent | null = null;
+  let archiveComp: CoreComponent | null = null;
   const classExcluded: ExcludedCore[] = [];
 
   for (const spec of cores) {
@@ -131,16 +131,13 @@ export function classifyCores(
         break;
       }
       case CoreType.ARCHIVE_CORE: {
-        // Archive folds into baseline like any other baseline core. Resolved
-        // value is `base ^ n_arcane_placed`; it then stacks with everything
-        // else per `additive_cores`.
         const v = archiveCoreMult(spec, n_arcane_placed, cfg);
-        baseline.push({ core_type: CoreType.ARCHIVE_CORE, color: null, value: v, override: isOverride });
+        archiveComp = { core_type: CoreType.ARCHIVE_CORE, color: null, value: v, override: isOverride };
         break;
       }
     }
   }
-  return { baseline, colorComp, deluxeComp, voidComp, classExcluded };
+  return { baseline, colorComp, deluxeComp, voidComp, archiveComp, classExcluded };
 }
 
 // ── Set-like dedup for CoreSpec collections ──────────────────────────────────

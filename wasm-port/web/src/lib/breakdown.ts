@@ -33,11 +33,9 @@ export interface SlotBreakdown {
   coreMultFormula:     string;
   boost:               number;
   boostSources:        GreedSource[];
-  // Archive folds into coreMult now (it's just another baseline core). These
-  // fields stay in the popup so the user still sees "1.2 ^ 8 = 4.299" rather
-  // than a bare "4.299" — they describe the same value that lives in
-  // appliedCores under CoreType.ARCHIVE_CORE.
-  archiveMult:         number;       // = 1.0 when archive isn't picked
+  // Archive core (applied OUTSIDE core_mult). = 1.0 when archive isn't picked
+  // or doesn't apply to this card class.
+  archiveMult:         number;
   archiveArcaneCount:  number;
   archiveBase:         number;       // per-arcane base used (default or override)
   finalNdm:            number;
@@ -112,18 +110,17 @@ export function simulateInventoryBreakdown(
     : greed.size + arcane.size;
   const n_deluxe = deluxe.size;
 
-  const { baseline, colorComp, deluxeComp, voidComp, classExcluded } =
+  const { baseline, colorComp, deluxeComp, voidComp, archiveComp, classExcluded } =
     classifyCores(cores, card_class, n_ns, n_deluxe, n_dead, arcane.size, cfg);
-  // Archive now folds into coreMult via baseline; these fields are display-
-  // only (the popup still shows "1.2 ^ 8 = 4.299").
+  // Archive multiplier — applied *outside* the per-card core_mult (bypasses
+  // the additive_cores stacking switch). Value = base ^ n_arcane_placed.
+  const archiveMult = archiveComp !== null ? archiveComp.value : 1.0;
+  // Pull the picked spec so we can show "base ^ n = mult" in the popup.
   const archiveSpec = cores.find((s) => s.core_type === CoreType.ARCHIVE_CORE) ?? null;
   const archiveBase = archiveSpec === null
     ? 1.0
     : (archiveSpec.override !== null ? archiveSpec.override : cfg.cores.archive_core);
   const archiveArcaneCount = arcane.size;
-  // Mirror the value baseline carries for ARCHIVE_CORE, kept so the popup can
-  // print the resolved factor next to the exponent expression.
-  const archiveMult = archiveSpec === null ? 1.0 : Math.pow(archiveBase, archiveArcaneCount);
 
   // ── Greed → boost (with provenance) ──────────────────────────────────────
   // Additive starts at 0 (use-site floors at 1); multiplicative starts at 1.
@@ -285,7 +282,7 @@ export function simulateInventoryBreakdown(
     }
     const { applied, excluded, mult, formula } = cardBreakdown(t, c);
     const b = additive ? Math.max(boost.get(k)!, 1.0) : boost.get(k)!;
-    const v = posVal * mult * b;
+    const v = posVal * mult * b * archiveMult;
     perSlot.set(k, {
       cardType: t, color: c,
       baseValue: posVal, baseExplain: explain,
@@ -302,7 +299,7 @@ export function simulateInventoryBreakdown(
   for (const [k, [t, c]] of deluxe) {
     const { applied, excluded, mult, formula } = cardBreakdown(CardType.DELUXE, c);
     const b = additive ? Math.max(boost.get(k)!, 1.0) : boost.get(k)!;
-    const v = cfg.deluxe.flat * mult * b;
+    const v = cfg.deluxe.flat * mult * b * archiveMult;
     perSlot.set(k, {
       cardType: t, color: c,
       baseValue: cfg.deluxe.flat, baseExplain: `deluxe flat value = ${cfg.deluxe.flat}`,
@@ -319,7 +316,7 @@ export function simulateInventoryBreakdown(
   for (const [k, [t, c]] of typeless) {
     const { applied, excluded, mult, formula } = cardBreakdown(CardType.TYPELESS, c);
     const b = additive ? Math.max(boost.get(k)!, 1.0) : boost.get(k)!;
-    const v = 1.0 * mult * b;
+    const v = 1.0 * mult * b * archiveMult;
     perSlot.set(k, {
       cardType: t, color: c,
       baseValue: 1.0, baseExplain: "typeless flat value = 1.0",
