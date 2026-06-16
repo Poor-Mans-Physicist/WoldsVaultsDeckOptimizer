@@ -289,7 +289,6 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
     let mut baseline_c: Vec<f64> = Vec::with_capacity(6);
     let mut deluxe_core_value: Option<f64> = None;
     let mut void_core_value:   Option<f64> = None;
-    let mut archive_present = false;
 
     for &core in cores {
         match core {
@@ -311,18 +310,15 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
                     cfg.mult_void_core_base + cfg.mult_void_core_scale * n_dead as f64,
                 );
             }
-            CORE_ARCHIVE => { archive_present = true; }
+            // Archive folds into baseline like every other baseline core.
+            // Resolved value is base ** n_arcane_placed; stacking obeys
+            // additive_cores below.
+            CORE_ARCHIVE => {
+                baseline_c.push(cfg.mult_archive_core.powi(n_arcane_placed as i32));
+            }
             _ => {}
         }
     }
-
-    // Archive core — applied *outside* the per-card core_mult below. Bypasses
-    // the additive_cores stacking switch entirely.
-    let archive_mult: f64 = if archive_present {
-        cfg.mult_archive_core.powi(n_arcane_placed as i32)
-    } else {
-        1.0
-    };
 
     let (regular_core_mult, deluxe_card_core_mult, typeless_core_mult) = if cfg.additive_cores {
         let baseline_sum:  f64 = baseline_c.iter().map(|v| v - 1.0).sum();
@@ -456,13 +452,13 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
                 _    => 0,
             };
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
-            ndm += contrib(pos as f64 * regular_core_mult * b * archive_mult);
+            ndm += contrib(pos as f64 * regular_core_mult * b);
         } else if is_deluxe[i] {
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
-            ndm += contrib(cfg.mult_deluxe_flat * deluxe_card_core_mult * b * archive_mult);
+            ndm += contrib(cfg.mult_deluxe_flat * deluxe_card_core_mult * b);
         } else if is_typeless[i] {
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
-            ndm += contrib(1.0_f64 * typeless_core_mult * b * archive_mult);
+            ndm += contrib(1.0_f64 * typeless_core_mult * b);
         }
     }
 

@@ -59,7 +59,7 @@ const CORE_FOIL:        u8 = 4;
 const CORE_DELUXE:      u8 = 5;
 // Void core (base + scale × n_dead). Applies to every non-DEAD scoring card.
 const CORE_VOID:        u8 = 6;
-// Archive core: base ** n_arcane_placed, applied *outside* the per-card core_mult.
+// Archive core: base ** n_arcane_placed, folded into the baseline core stack.
 const CORE_ARCHIVE:     u8 = 7;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -348,11 +348,8 @@ fn simulate(
     let mut void_addend   = 0.0f64;
     let mut void_factor   = 1.0f64;
     let mut void_present  = false;
-    // Archive core: per-arcane base; final multiplier is base ** n_arcane_placed.
-    // Applied *outside* the per-card core_mult, so it bypasses the additive_cores
-    // stacking switch.
-    let mut archive_base    = 1.0f64;
-    let mut archive_present = false;
+    // Archive core: per-arcane base; resolved multiplier is base ** n_arcane.
+    // Folded into the baseline core stack — see the CORE_ARCHIVE arm.
     let color_core_color = cores.color_core_color;
 
     for s in &cores.list {
@@ -399,19 +396,18 @@ fn simulate(
                 void_present  = true;
             }
             CORE_ARCHIVE => {
-                archive_base    = if s.has_override() { s.override_ } else { cfg.mult_archive_core };
-                archive_present = true;
+                // Archive folds into the baseline stack like any other
+                // baseline core: resolved value is base ** n_arcane_placed.
+                // For additive_cores it contributes (v - 1) to baseline_sum;
+                // for multiplicative, it multiplies baseline_prod.
+                let base = if s.has_override() { s.override_ } else { cfg.mult_archive_core };
+                let v = base.powi(n_arcane as i32);
+                baseline_sum  += v - 1.0;
+                baseline_prod *= v;
             }
             _ => {}
         }
     }
-
-    // Archive multiplier — applied outside the per-card core_mult.
-    let archive_mult: f64 = if archive_present {
-        archive_base.powi(n_arcane as i32)
-    } else {
-        1.0
-    };
 
     // Per-card core multiplier — picks color/deluxe/void addends per
     // applicability:
@@ -525,11 +521,11 @@ fn simulate(
                     _ => 0.0,
                 }
             };
-            ndm += pos_val * card_core_mult(t, c) * b * archive_mult;
+            ndm += pos_val * card_core_mult(t, c) * b;
         } else if t == DELUXE {
-            ndm += cfg.mult_deluxe_flat * card_core_mult(t, c) * b * archive_mult;
+            ndm += cfg.mult_deluxe_flat * card_core_mult(t, c) * b;
         } else if t == TYPELESS {
-            ndm += 1.0 * card_core_mult(t, c) * b * archive_mult;
+            ndm += 1.0 * card_core_mult(t, c) * b;
         }
         // GREED / DEAD contribute nothing.
     }

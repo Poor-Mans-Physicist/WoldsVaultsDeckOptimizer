@@ -25,8 +25,8 @@ decks:
   json_file: wolds_decks.json
 
 greed:
-  dir_vert:      5
-  dir_horiz:     5
+  dir_vert:      4
+  dir_horiz:     4
   evo:           0    # set > 0 to enable
   surr:          0    # set > 0 to enable
   dir_diag_up:   0    # NE / NW diagonal greed

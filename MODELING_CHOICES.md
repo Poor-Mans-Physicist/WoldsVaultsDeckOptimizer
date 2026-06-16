@@ -135,10 +135,10 @@ greed cards are skipped.
 
 | Card type           | Target slot relative to greed (r, c)       | Multiplier source       | Default value | Notes                                                                                                         |
 | ------------------- | ------------------------------------------ | ----------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
-| `DIR_GREED_UP`    | `(r-1, c)` directly above                | `greed.dir_vert`      | **5**   |                                                                                                               |
-| `DIR_GREED_DOWN`  | `(r+1, c)` directly below                | `greed.dir_vert`      | **5**   |                                                                                                               |
-| `DIR_GREED_LEFT`  | `(r, c-1)` directly left                 | `greed.dir_horiz`     | **5**   |                                                                                                               |
-| `DIR_GREED_RIGHT` | `(r, c+1)` directly right                | `greed.dir_horiz`     | **5**   |                                                                                                               |
+| `DIR_GREED_UP`    | `(r-1, c)` directly above                | `greed.dir_vert`      | **4**   |                                                                                                               |
+| `DIR_GREED_DOWN`  | `(r+1, c)` directly below                | `greed.dir_vert`      | **4**   |                                                                                                               |
+| `DIR_GREED_LEFT`  | `(r, c-1)` directly left                 | `greed.dir_horiz`     | **4**   |                                                                                                               |
+| `DIR_GREED_RIGHT` | `(r, c+1)` directly right                | `greed.dir_horiz`     | **4**   |                                                                                                               |
 | `DIR_GREED_NE`    | `(r-1, c+1)`                             | `greed.dir_diag_up`   | **0**   | Diagonal greeds are inert at default 0                                                                        |
 | `DIR_GREED_NW`    | `(r-1, c-1)`                             | `greed.dir_diag_up`   | **0**   |                                                                                                               |
 | `DIR_GREED_SE`    | `(r+1, c+1)`                             | `greed.dir_diag_down` | **0**   |                                                                                                               |
@@ -154,15 +154,15 @@ Controlled by `stacking.greed_additive` (default **true** in both modes).
   raw multiplier value to a running sum. Final boost =
   `max(1.0, Σ amount_i)` over all greeds hitting the slot — the `max`
   floor handles the no-greed case so the slot doesn't drop to 0× boost.
-  Worked examples (default `dir_vert: 5`):
+  Worked examples (default `dir_vert: 4`):
 
   | Greeds pointing at slot | Final boost |
   | --- | --- |
   | 0                            | 1.0  |
-  | 1× dir_vert                  | 5    |
-  | 2× dir_vert                  | 10   |
-  | 3× dir_vert                  | 15   |
-  | 1× dir_vert + 1× surr_greed at 3 | 8 |
+  | 1× dir_vert                  | 4    |
+  | 2× dir_vert                  | 8    |
+  | 3× dir_vert                  | 12   |
+  | 1× dir_vert + 1× surr_greed at 3 | 7 |
 
 - **Multiplicative** (`false`): each greed multiplies the running boost
   starting from 1.0. Final boost = `Π amount_i`. **Not floored** — if any
@@ -190,43 +190,58 @@ every scoring call.
 | `FOIL`        | **2.8**                           | regulars, deluxe cards (baseline), typeless                             | greed                                    | Flat                                                     | Universal;**also flips EVO's `n_ns` to the SHINY formula** (see below) |
 | `DELUXE_CORE` | base**1.0**, scale **0.2**  | regulars, typeless                                                      | **deluxe cards themselves**, greed | `deluxe_core_base + deluxe_core_scale × n_deluxe`     | Universal; gated by `deluxe.allow` (off in vanilla)                          |
 | `VOID_CORE`   | base**1.0**, scale **0.3**  | regulars, deluxe cards, typeless                                        | dead cards themselves, greed             | `void_base + void_scale × n_dead`                     | Universal; gated by `cores.void_allow` (off in vanilla)                      |
-| `ARCHIVE_CORE` | per-arcane base **1.2**           | regulars, deluxe cards, typeless                                        | greed (arcane/dead score 0 anyway)       | `archive_core ^ n_arcane_placed` — applied **outside** the per-card `core_mult` (see callout below) | Gated by `cores.archive_allow` (off in vanilla); when on, additionally **enumerated only when the deck has ≥ 1 arcane slot** |
+| `ARCHIVE_CORE` | per-arcane base **1.2**           | regulars, deluxe cards, typeless                                        | greed (arcane/dead score 0 anyway)       | `archive_core ^ n_arcane_placed` — folded into the per-card `core_mult` like every other baseline core | Gated by `cores.archive_allow` (off in vanilla); when on, additionally **enumerated only when the deck has ≥ 1 arcane slot** |
 
 Cores **never** apply to greed cards. They never apply to ARCANE cards
 (arcane = 0 NDM, fixed). DEAD cards score 0 regardless and so are not
 affected.
 
-### Archive core — the only "outside-the-stack" core
+### Archive core — variable baseline core
 
-Every other core folds into one per-card `core_mult` that respects the
-`stacking.additive_cores` flag (sum in Wold's, product in Vanilla).
-Archive does **not**. After all the other math, each scoring card's
-contribution is multiplied by an Archive factor of
-`archive_core ^ n_arcane_placed`:
+Archive's per-card resolved value is `archive_core ^ n_arcane_placed`,
+computed once per Run from the count of placed ARCANE cards (which the
+SA fixes by the time scoring runs). That resolved value joins the
+baseline core list — same as Pure / Foil / Equilibrium / Steadfast /
+Color — and stacks with everything else per `stacking.additive_cores`
+(sum-of-(c−1) in Wold's, product in Vanilla).
 
 ```
-final_ndm_per_card = base × core_mult × greed_boost × archive_mult
-                                                     ^^^^^^^^^^^^
-                                                    where archive_mult =
-                                                      base_value ^ n_arcane_placed
-                                                      (1.0 when Archive isn't picked)
+final_ndm_per_card = base × core_mult × greed_boost
+                              ^^^^^^^^
+                              where core_mult includes Archive's
+                              base ^ n_arcane_placed as a baseline term
 ```
 
-Worked example (Wold's default `archive_core: 1.2`):
+Worked example (Wold's default `archive_core: 1.2`, additive cores):
 
-| Arcane cards placed | Archive factor on every scoring card |
-| --- | --- |
-| 0 | 1.0  |
-| 1 | 1.2  |
-| 2 | 1.44 |
-| 3 | 1.728 |
-| 4 | 2.0736 |
+| Arcane cards placed | Archive's resolved value | Contribution to `core_mult` |
+| --- | --- | --- |
+| 0 | 1.0    | +0      |
+| 1 | 1.2    | +0.20   |
+| 2 | 1.44   | +0.44   |
+| 3 | 1.728  | +0.728  |
+| 4 | 2.0736 | +1.0736 |
+| 8 | 4.2998 | +3.2998 |
+
+So an 8-arcane deck with only Archive picked yields a per-card
+`core_mult = 1 + 3.2998 = 4.2998×`; stacked with a Foil (1.8 addend)
+the per-card mult becomes `1 + 1.8 + 3.2998 = 6.0998×`. Under
+multiplicative cores (vanilla) the same Foil + Archive would multiply:
+`2.8 × 4.2998 = 12.04×` — but Archive is gated off in vanilla anyway.
 
 Override semantics: when the user sets an override on Archive, the
-override replaces the **per-arcane base**, not the final multiplier. So
-an override of `1.5` yields a final factor of `1.5 ^ n_arcane_placed`.
-Mirrors PURE / DELUXE_CORE / VOID_CORE, where the override replaces the
-per-N scale term rather than the resolved value.
+override replaces the **per-arcane base**, not the resolved value. So
+an override of `1.5` yields a resolved value of `1.5 ^ n_arcane_placed`
+which then joins the baseline stack. Mirrors PURE / DELUXE_CORE /
+VOID_CORE, where the override replaces the per-N scale term rather
+than the resolved value.
+
+Historical note: a previous design had Archive applied OUTSIDE the
+per-card `core_mult` as a final multiplicative factor (bypassing the
+stacking switch). That made Archive stack multiplicatively even in
+additive-cores mode, which over-rewarded high-arcane decks. The
+current design (Archive as a baseline core) puts it on the same footing
+as every other variable-baseline core.
 
 Two-stage gating:
 
@@ -642,7 +657,7 @@ identical.
 | `stacking.additive_cores` | **true**       | **false**   | Vanilla multiplies cores instead of summing                                                                 |
 | `decks.json_file`         | `wolds_decks.json` | `vh_decks.json` | Different deck rosters per mode                                                                             |
 
-Greed defaults (`dir_vert: 5`, `dir_horiz: 5`, others 0) and core multipliers
+Greed defaults (`dir_vert: 4`, `dir_horiz: 4`, others 0) and core multipliers
 (`pure_scale: 0.07`, `equilibrium: 3.0`, `foil: 2.8`, `steadfast: 2.2`,
 `color: 1.75`, `void_scale: 0.3`, `deluxe.flat: 2`) are shared.
 
