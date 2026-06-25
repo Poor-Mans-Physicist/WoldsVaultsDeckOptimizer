@@ -192,8 +192,9 @@ def compute_heatmap(
         r, c = p
         if   t == CardType.ROW:  pos = row_count.get(r, 0)
         elif t == CardType.COL:  pos = col_count.get(c, 0)
-        elif t == CardType.DIAG: pos = sum(1 for q in deck._diag_peers[p]
-                                           if q in filled) + 1
+        # DIAG: filled peers on either diagonal, NOT counting self. Floored
+        # at 1 so a lone DIAG card doesn't drop to 0×.
+        elif t == CardType.DIAG: pos = max(1, sum(1 for q in deck._diag_peers[p] if q in filled))
         else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
         b          = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
         heatmap[p] = _contrib(pos * core_mult * deluxe_core_mult * b * archive_mult)

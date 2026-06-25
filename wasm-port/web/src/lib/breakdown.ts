@@ -274,8 +274,11 @@ export function simulateInventoryBreakdown(
       explain = `col ${cc}, color ${c ?? "—"} → col_count = ${posVal}`;
     } else if (t === CardType.DIAG) {
       const idx = slotIndex.get(k)!;
-      posVal = 1 + deck.diagPeers[idx].filter((j) => colored.get(slotKey(j)) === c).length;
-      explain = `diag (self + same-color peers, color ${c ?? "—"}) = ${posVal}`;
+      // Same-color peers on either diagonal (NOT counting self), floored at 1
+      // so a lone DIAG card still contributes its base value instead of 0×.
+      const peers = deck.diagPeers[idx].filter((j) => colored.get(slotKey(j)) === c).length;
+      posVal = Math.max(1, peers);
+      explain = `diag same-color peers (color ${c ?? "—"}) = ${peers}${peers === 0 ? "  (floored to 1)" : ""}`;
     } else {  // SURR
       const idx = slotIndex.get(k)!;
       posVal = deck.surrPeers[idx].filter((j) => colored.get(slotKey(j)) === c).length;

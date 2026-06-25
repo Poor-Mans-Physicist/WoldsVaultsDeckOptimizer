@@ -459,7 +459,10 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
             let pos: usize = match asgn[i] {
                 ROW  => *row_count.get(&deck.row_of[i]).unwrap_or(&0),
                 COL  => *col_count.get(&deck.col_of[i]).unwrap_or(&0),
-                DIAG => deck.diag_peers[i].iter().filter(|&&j| is_filled[j]).count() + 1,
+                // Filled peers on either diagonal, NOT counting self.
+                // Floored at 1 so a lone DIAG card still contributes its
+                // base value instead of 0.
+                DIAG => deck.diag_peers[i].iter().filter(|&&j| is_filled[j]).count().max(1),
                 SURR => deck.surr_peers[i].iter().filter(|&&j| is_filled[j]).count(),
                 _    => 0,
             };
@@ -768,13 +771,13 @@ fn run_sa_optimize(
     let dir_sw:    Vec<Option<usize>> = (0..n).map(|i| dir(i,  1, -1)).collect();
 
     // Geometry-optimal positional card per slot (from peer set sizes, same logic as Python)
-    // ROW/COL/DIAG: counts self (+1); SURR: does not count self
+    // ROW/COL: count self (+1); SURR/DIAG: do NOT count self.
     let best_positional: Vec<u8> = (0..n)
         .map(|i| {
             let row_cnt  = row_peers[i].len()  + 1;
             let col_cnt  = col_peers[i].len()  + 1;
             let surr_cnt = surr_peers[i].len();
-            let diag_cnt = diag_peers[i].len() + 1;
+            let diag_cnt = diag_peers[i].len();
             let best = *[
                 (ROW,  row_cnt),
                 (COL,  col_cnt),

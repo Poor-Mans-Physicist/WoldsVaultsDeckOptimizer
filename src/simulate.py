@@ -224,7 +224,9 @@ def simulate(
         r, c = p
         if   t == CardType.ROW:  pos = row_count.get(r, 0)
         elif t == CardType.COL:  pos = col_count.get(c, 0)
-        elif t == CardType.DIAG: pos = sum(1 for q in deck._diag_peers[p] if q in filled) + 1
+        # DIAG: same-color peers along either diagonal (NOT counting self),
+        # floored at 1 so a lone diag card doesn't drop to a 0× multiplier.
+        elif t == CardType.DIAG: pos = max(1, sum(1 for q in deck._diag_peers[p] if q in filled))
         else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
         ndm += _contrib(pos * regular_core_mult * b * archive_mult)
@@ -385,9 +387,10 @@ def _precompute_best_positional(deck: Deck) -> Dict[Position, CardType]:
     For each slot, determine which positional card type yields the highest
     multiplier based purely on deck geometry (peer set sizes).
     This is fixed for a given deck shape and never needs recomputing.
-    DIAG counts self (+1); ROW/COL count all filled including self via row_count;
-    SURR does not count self. For a fair comparison we use maximum possible peer
-    counts (i.e. assume all slots filled), since relative ordering is geometry-only.
+    ROW/COL count all filled including self via row_count; SURR and DIAG
+    do NOT count self. For a fair comparison we use maximum possible peer
+    counts (i.e. assume all slots filled), since relative ordering is
+    geometry-only.
     """
     result: Dict[Position, CardType] = {}
     for p in deck.slots:
@@ -396,7 +399,7 @@ def _precompute_best_positional(deck: Deck) -> Dict[Position, CardType]:
             CardType.ROW:  len(deck._row_peers[p]) + 1,   # +1 for self
             CardType.COL:  len(deck._col_peers[p]) + 1,   # +1 for self
             CardType.SURR: len(deck._surr_peers[p]),       # does not count self
-            CardType.DIAG: len(deck._diag_peers[p]) + 1,  # +1 for self
+            CardType.DIAG: len(deck._diag_peers[p]),       # does not count self
         }
         result[p] = max(counts, key=counts.__getitem__)
     return result

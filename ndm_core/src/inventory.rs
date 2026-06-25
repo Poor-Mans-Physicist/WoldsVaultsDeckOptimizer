@@ -507,12 +507,15 @@ fn simulate(
                         col_color[cc * N_COLORS + cu] as f64
                     }
                     DIAG => {
-                        let mut count = 1.0; // self
+                        // Same-color peers on either diagonal, NOT counting
+                        // self. Floored at 1.0 so a lone DIAG card still
+                        // contributes its base value instead of 0×.
+                        let mut count: f64 = 0.0;
                         for &q in &geom.diag_peers[i] {
                             let (qt, qc) = asgn[q];
                             if qt != DEAD && qc == c { count += 1.0; }
                         }
-                        count
+                        count.max(1.0)
                     }
                     SURR => {
                         let mut count = 0.0; // SURR excludes self
