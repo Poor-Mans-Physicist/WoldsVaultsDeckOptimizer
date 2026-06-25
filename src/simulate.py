@@ -68,7 +68,7 @@ import ndm_core as _ndm_core
 
 def _apply_greed(boost: Dict[Position, float], pos: Position, amount: float) -> None:
     # New additive rule: boost is a raw sum of the greed multipliers pointing
-    # at this slot. The use-site `max(boost, 1.0)` floor handles the no-greed
+    # at this slot. The use-site `max(boost, 1.0)` clamp handles the no-greed
     # case (boost stays 0 → b = 1). Multiplicative is unchanged.
     if pos in boost:
         if GREED_ADDITIVE: boost[pos] += amount
@@ -176,7 +176,7 @@ def simulate(
 
     # Both modes start at 1.0 so the boost is `1 + Σ greeds` (additive) or
     # `1 × Π greeds` (multiplicative) — 0 greeds yields 1.0 in either. The
-    # legacy `max(b, 1.0)` floor at the use site is now a no-op for additive
+    # legacy `max(b, 1.0)` clamp at the use site is now a no-op for additive
     # but kept for symmetry.
     init  = 1.0
     boost = {p: init for p in scorable}
@@ -225,7 +225,7 @@ def simulate(
         if   t == CardType.ROW:  pos = row_count.get(r, 0)
         elif t == CardType.COL:  pos = col_count.get(c, 0)
         # DIAG: same-color peers along either diagonal (NOT counting self),
-        # floored at 1 so a lone diag card doesn't drop to a 0× multiplier.
+        # clamped to a minimum of 1 so a lone diag card doesn't drop to 0×.
         elif t == CardType.DIAG: pos = max(1, sum(1 for q in deck._diag_peers[p] if q in filled))
         else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]

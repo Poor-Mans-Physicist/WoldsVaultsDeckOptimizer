@@ -93,7 +93,7 @@ count for positional peer scans.
 | `ROW`                    | `pos_count × core_mult × boost`                    | Same-row peer count (incl. self via `row_count`)   | EVO + SHINY-with-positional | EVO-no-FOIL only                         |
 | `COL`                    | `pos_count × core_mult × boost`                    | Same-column peer count                               | EVO + SHINY-with-positional | EVO-no-FOIL only                         |
 | `SURR`                   | `pos_count × core_mult × boost`                    | Count of filled 8-neighbors (excludes self)          | EVO + SHINY-with-positional | EVO-no-FOIL only                         |
-| `DIAG`                   | `pos_count × core_mult × boost`                    | NW-SE plus NE-SW diagonal peer count (does NOT count self), floored at 1 so a lone DIAG card still contributes its base value | EVO + SHINY-with-positional | EVO-no-FOIL only                         |
+| `DIAG`                   | `pos_count × core_mult × boost`                    | NW-SE plus NE-SW diagonal peer count (does NOT count self), clamped to a minimum of 1 so a lone DIAG card still contributes its base value | EVO + SHINY-with-positional | EVO-no-FOIL only                         |
 | `DELUXE`                 | `MULT_DELUXE_FLAT × deluxe_card_core_mult × boost` | Flat base (config `deluxe.flat`, default 2)        | EVO + SHINY                 | **No** (rides DELUXE_CORE instead) |
 | `TYPELESS` (T)           | `1.0 × typeless_core_mult × boost`                 | Always 1.0 base                                      | EVO + SHINY                 | **No** ("always shiny" by design)  |
 | `ARCANE`                 | 0 (always)                                             | n/a — no direct NDM, no cores apply, no greed boost | EVO + SHINY                 | **Always** counts                  |
@@ -166,7 +166,7 @@ Controlled by `stacking.greed_additive` (default **true** in both modes).
   | 1× dir_vert + 1× surr_greed at 3 | 8 |
 
 - **Multiplicative** (`false`): each greed multiplies the running boost
-  starting from 1.0. Final boost = `Π amount_i`. **Not floored** — if any
+  starting from 1.0. Final boost = `Π amount_i`. **Not clamped** — if any
   contributing multiplier is 0, the slot's contribution becomes 0. This
   is a legacy stacking model; neither Wold's nor Vanilla uses it today.
 

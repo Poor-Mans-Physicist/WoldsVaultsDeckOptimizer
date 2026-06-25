@@ -51,7 +51,7 @@ const posKey = (p: Position) => `${p[0]},${p[1]}`;
 /** Helper — apply greed (additive or multiplicative) into a Map<key,number>. */
 function applyGreed(boost: Map<string, number>, key: string, amount: number, additive: boolean) {
   // Additive: boost is a raw sum of greed multipliers pointing at this slot
-  // (use-site floors at 1 via Math.max). Multiplicative: each greed scales
+  // (use-site clamps to ≥ 1 via Math.max). Multiplicative: each greed scales
   // the running boost.
   if (!boost.has(key)) return;
   const v = boost.get(key)!;
@@ -274,11 +274,11 @@ export function simulateInventoryBreakdown(
       explain = `col ${cc}, color ${c ?? "—"} → col_count = ${posVal}`;
     } else if (t === CardType.DIAG) {
       const idx = slotIndex.get(k)!;
-      // Same-color peers on either diagonal (NOT counting self), floored at 1
-      // so a lone DIAG card still contributes its base value instead of 0×.
+      // Same-color peers on either diagonal (NOT counting self), clamped to a
+      // minimum of 1 so a lone DIAG card still contributes its base value.
       const peers = deck.diagPeers[idx].filter((j) => colored.get(slotKey(j)) === c).length;
       posVal = Math.max(1, peers);
-      explain = `diag same-color peers (color ${c ?? "—"}) = ${peers}${peers === 0 ? "  (floored to 1)" : ""}`;
+      explain = `diag same-color peers (color ${c ?? "—"}) = ${peers}${peers === 0 ? "  (clamped to 1)" : ""}`;
     } else {  // SURR
       const idx = slotIndex.get(k)!;
       posVal = deck.surrPeers[idx].filter((j) => colored.get(slotKey(j)) === c).length;

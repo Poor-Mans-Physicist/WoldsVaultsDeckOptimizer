@@ -27,7 +27,7 @@
 
   // Live counters — "placements left" / "conversions left". These wire into
   // the deck grid (it gates the "+" candidates and convert clicks on the same
-  // numbers), so showing them here is informational only. Floor at 0 in case
+  // numbers), so showing them here is informational only. Clamp at 0 in case
   // the Greater toggle was switched off while the user was over the base cap.
   const placementsLeft  = $derived(Math.max(0, maxConstruction(app.structural)   - app.structural.addedSlots.length));
   const conversionsLeft = $derived(Math.max(0, maxArcaneConvert(app.structural) - app.structural.convertedSlots.length));

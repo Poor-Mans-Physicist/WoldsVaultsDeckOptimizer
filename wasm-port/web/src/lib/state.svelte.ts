@@ -281,7 +281,7 @@ export function resetStructural(): void {
 /** Toggle the "Greater" structural-cores variant (experimental community
  *  cap, 5 instead of 3). Switching off doesn't auto-prune existing
  *  overflow tiles — the new cap takes effect only for further additions /
- *  conversions, and the counter floors at 0 when the user is over-cap. */
+ *  conversions, and the counter clamps at 0 when the user is over-cap. */
 export function toggleGreaterStructural(on: boolean): void {
   if (app.structural.greaterStructural === on) return;
   app.structural.greaterStructural = on;

@@ -437,7 +437,7 @@ fn simulate(
     let _ = n_positional;
 
     // Greed → boost pass (same semantics as classic optimizer).
-    // Additive: reset to 0 and accumulate raw multipliers (use-site floors at 1).
+    // Additive: reset to 0 and accumulate raw multipliers (use-site clamps to ≥ 1).
     // Multiplicative: reset to 1 and multiply.
     // Additive boost starts at 1.0 so the formula is `1 + Σ greeds` for any
     // number of greeds (including 0). Multiplicative still starts at 1.0 so
@@ -508,8 +508,8 @@ fn simulate(
                     }
                     DIAG => {
                         // Same-color peers on either diagonal, NOT counting
-                        // self. Floored at 1.0 so a lone DIAG card still
-                        // contributes its base value instead of 0×.
+                        // self. Clamped to a minimum of 1.0 so a lone DIAG
+                        // card still contributes its base value instead of 0×.
                         let mut count: f64 = 0.0;
                         for &q in &geom.diag_peers[i] {
                             let (qt, qc) = asgn[q];

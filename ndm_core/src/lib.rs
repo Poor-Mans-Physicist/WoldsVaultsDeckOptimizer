@@ -368,7 +368,7 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
     // ── Greed boosts ──────────────────────────────────────────────────────────
     // Both modes start at 1.0 so the boost is `1 + Σ greeds` (additive) or
     // `1 × Π greeds` (multiplicative) — including 0 greeds, which yields 1.0
-    // in both. The legacy `max(boost, 1.0)` floor at the use site is now a
+    // in both. The legacy `max(boost, 1.0)` clamp at the use site is now a
     // no-op for additive but kept for symmetry.
     let init_boost = 1.0;
     let mut boost = vec![init_boost; n];
@@ -460,8 +460,8 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
                 ROW  => *row_count.get(&deck.row_of[i]).unwrap_or(&0),
                 COL  => *col_count.get(&deck.col_of[i]).unwrap_or(&0),
                 // Filled peers on either diagonal, NOT counting self.
-                // Floored at 1 so a lone DIAG card still contributes its
-                // base value instead of 0.
+                // Clamped to a minimum of 1 so a lone DIAG card still
+                // contributes its base value instead of 0.
                 DIAG => deck.diag_peers[i].iter().filter(|&&j| is_filled[j]).count().max(1),
                 SURR => deck.surr_peers[i].iter().filter(|&&j| is_filled[j]).count(),
                 _    => 0,
