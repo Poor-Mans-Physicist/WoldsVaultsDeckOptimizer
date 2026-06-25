@@ -338,6 +338,7 @@
         cardClass:       app.cardClass,
         inventory:       invKept,
         forcedCounts:    fcKept,
+        minRegularPlaced: app.minRegularPlaced,
         autoPlaceArcane: app.autoPlaceArcane,
         cores:           selectedCores(),
         nIter:           app.nIter,

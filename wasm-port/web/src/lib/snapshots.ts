@@ -46,6 +46,9 @@ export interface Snapshot {
   autoPlaceArcane: boolean;
   inventoryCounts: Record<string, number>;
   forcedCounts:    Record<string, number>;
+  /** Floor on stat-giving cards. Defaults to 0 on old snapshots that
+   *  predate the field. */
+  minRegularPlaced: number;
   cores:           CoreSpec[];
   structural:      StructuralCores;
 
@@ -92,6 +95,7 @@ function _normalize(rec: any): Snapshot {
     autoPlaceArcane: Boolean(rec?.autoPlaceArcane ?? true),
     inventoryCounts: rec?.inventoryCounts ?? {},
     forcedCounts:    rec?.forcedCounts ?? {},
+    minRegularPlaced: Number(rec?.minRegularPlaced ?? 0),
     cores:           Array.isArray(rec?.cores) ? rec.cores : [],
     structural:      rec?.structural ?? emptyStructural(),
     assignment:      Array.isArray(rec?.assignment) ? rec.assignment : [],

@@ -74,6 +74,10 @@ export interface OptimizeInput {
   inventory:   InventoryCounts;        // regular pool (per-(type,color) upper bound)
   /** Forced pool — per-(type, color) lower bound. Cap = inventory + forced. */
   forcedCounts: InventoryCounts;
+  /** Lower bound on placed stat-giving cards. Stat-giving =
+   *  ROW/COL/SURR/DIAG/DELUXE/TYPELESS (i.e. anything non-greed, non-arcane,
+   *  non-dead). 0 = unconstrained. */
+  minRegularPlaced: number;
   /** true = arcane slots locked to ARCANE; false = SA may swap to DEAD for void. */
   autoPlaceArcane: boolean;
   cores:       CoreSpec[];             // user's available cores (CoreInventory)
@@ -120,7 +124,8 @@ export async function initWasm(): Promise<void> {
 // ──────────────────────────────────────────────────────────────────────────────
 
 export function enumerateCandidates(input: OptimizeInput): CandidateBundle {
-  const { deck, cardClass, inventory, forcedCounts, cores, cfg } = input;
+  const { deck, cardClass, inventory, forcedCounts, minRegularPlaced,
+          autoPlaceArcane, cores, cfg } = input;
 
   // Quick pre-flight (also done in the slice runner — duplication is cheap and
   // we want to fail fast on the main thread before fanning out workers).
@@ -152,6 +157,46 @@ export function enumerateCandidates(input: OptimizeInput): CandidateBundle {
     );
   }
 
+  // Minimum-stat-giving feasibility. Stat-giving = ROW/COL/SURR/DIAG/DELUXE/
+  // TYPELESS (everything that isn't a greed, ARCANE, or DEAD). The constraint
+  // is infeasible iff we don't own enough stat cards OR not enough non-arcane
+  // slots are free after the forced non-stat cards land.
+  const minStat = minRegularPlaced | 0;
+  if (minStat > 0) {
+    const isStat = (t: string) =>
+      t === "row" || t === "col" || t === "surr" || t === "diag" ||
+      t === "deluxe" || t === "typeless";
+
+    let availStat = 0;
+    let forcedNonStatNonArcane = 0;
+    for (const [k, n] of Object.entries(inventory)) {
+      if (n <= 0) continue;
+      const [t] = parseStackKey(k);
+      if (isStat(t)) availStat += n;
+    }
+    for (const [k, n] of Object.entries(forcedCounts ?? {})) {
+      if (n <= 0) continue;
+      const [t] = parseStackKey(k);
+      if (isStat(t))            availStat += n;
+      else if (t !== "arcane")  forcedNonStatNonArcane += n;
+    }
+
+    const reservedArcane = autoPlaceArcane ? deck.arcaneSlots.length : 0;
+    const slotCap = Math.max(0, deck.slots.length - reservedArcane - forcedNonStatNonArcane);
+    if (minStat > availStat) {
+      throw new Error(
+        `Minimum stat-giving (${minStat}) exceeds available stat-giving ` +
+        `inventory (${availStat}) — raise inventory counts or lower the minimum.`,
+      );
+    }
+    if (minStat > slotCap) {
+      throw new Error(
+        `Minimum stat-giving (${minStat}) exceeds the ${slotCap} non-arcane ` +
+        `slots left after forced placements — lower the minimum or remove forced cards.`,
+      );
+    }
+  }
+
   let candidates = candidateCoresInventory(
     cores, cardClass, deck.core_slots, deck.slots.length,
     deck.arcaneSlots.length, cfg,
@@ -166,8 +211,8 @@ export function enumerateCandidates(input: OptimizeInput): CandidateBundle {
 // ──────────────────────────────────────────────────────────────────────────────
 
 function buildBasePayload(input: OptimizeInput) {
-  const { deck, cardClass, inventory, forcedCounts, autoPlaceArcane,
-          nIter, restarts, cfg } = input;
+  const { deck, cardClass, inventory, forcedCounts, minRegularPlaced,
+          autoPlaceArcane, nIter, restarts, cfg } = input;
   const invList: [string, string, number][] = [];
   for (const [k, n] of Object.entries(inventory)) {
     if (n <= 0) continue;
@@ -191,6 +236,7 @@ function buildBasePayload(input: OptimizeInput) {
     is_shiny:   cardClass === "shiny",
     inventory:  invList,
     forced_inventory: forcedList,
+    min_regular_placed: Math.max(0, minRegularPlaced | 0),
     n_iter:     nIter,
     restarts:   restarts,
     mult_dir_vert:          cfg.greed.dir_vert,

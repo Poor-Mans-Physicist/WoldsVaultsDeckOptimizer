@@ -506,6 +506,7 @@ in front) before restoring.
 | `mode` | `app.mode` (e.g. `"wolds"`) |
 | `cardClass`, `bonusCores`, `autoPlaceArcane` | `app.*` |
 | `inventoryCounts`, `forcedCounts` | `app.*` (shallow-copied) |
+| `minRegularPlaced` | `app.*` — stat-giving floor at the time of run (old snapshots default to 0) |
 | `cores` | `app.result.coresUsed` — the SA-chosen combo, **not** the picker state |
 | `structural` | `app.structural` (including `addedSlots` + `convertedSlots`) |
 | `assignment` | `app.result.assignment`, serialized parallel to `deck.slots` |
@@ -651,6 +652,40 @@ Greed defaults (`dir_vert: 4`, `dir_horiz: 4`, others 0) and core multipliers
 
 The UI also relabels in Vanilla: SHINY → "Stat" in class pickers
 (`wasm-port/web/src/lib/visibility.ts::classSelectLabel`).
+
+---
+
+## Inventory bounds (WASM web app)
+
+The inventory-aware optimizer supports two distinct constraint shapes on
+top of the regular pool's per-(type, color) **upper bound**:
+
+| Constraint | UI | Shape | Where enforced |
+| --- | --- | --- | --- |
+| Per-(type, color) lower bound | "Forced" view of the Inventory table | `forced_inventory[t,c]` — placed[t,c] must stay ≥ forced[t,c] | `initial_fill` (Phase 1) + `sa_one_restart` per-move check (`wasm-port/ndm_core/src/inventory.rs`) |
+| Aggregate floor on stat-giving cards | "Minimum stat-giving cards placed" input below the forced grid | `min_regular_placed` — `Σ placed[t,_] for t ∈ STAT` must stay ≥ this | `sa_one_restart` per-move check (same file) |
+
+**STAT set** = `{ROW, COL, SURR, DIAG, DELUXE, TYPELESS}`. Anything else
+(greeds, ARCANE, DEAD) is non-stat. The set is hard-coded as
+`is_stat_giving(t)` in `wasm-port/ndm_core/src/inventory.rs` (the u8
+layout makes it `t ≤ TYPELESS`).
+
+The aggregate floor is checked in TS upstream of the worker dispatch
+(`enumerateCandidates` in `wasm-port/web/src/lib/optimize.ts`) for two
+infeasibilities — not enough stat-giving cards in inventory + forced, or
+not enough non-arcane slots left after forced non-stat placements — and
+throws a user-readable error before the SA runs.
+
+If a caller skips the TS pre-flight (e.g. the parity scripts in
+`wasm-port/scripts/`) and `min_regular_placed` exceeds what
+`initial_fill` can achieve, the kernel clamps the effective floor to
+whatever init placed. This avoids the SA freezing on every proposal but
+silently degrades the constraint — the TS path is the authoritative
+infeasibility detector.
+
+The aggregate floor is a WASM-only feature. The spreadsheet CLI does not
+take inventory at all; its closest analogue is the panel CLI's
+`min_regular` / `max_greed` deck-level fields, which are unrelated.
 
 ---
 

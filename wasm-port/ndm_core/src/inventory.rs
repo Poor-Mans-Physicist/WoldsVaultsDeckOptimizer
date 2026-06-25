@@ -719,6 +719,7 @@ pub(crate) fn sa_one_restart(
     forced:     &[u32],          // forced pool, same shape — per-(t,c) lower bound
     cap:        &[u32],          // = inventory + forced, per-(t,c) upper bound
     options:    &[(u8, u8)],     // proposal alphabet (non-arcane slots)
+    min_regular_placed: u32,     // floor on stat-giving placements (0 = off)
     n_iter:     usize,
     t_start:    f64,
     t_end:      f64,
@@ -729,10 +730,21 @@ pub(crate) fn sa_one_restart(
 
     // Placed counters (flat N_TYPES * N_COLORS).
     let mut placed = vec![0u32; N_TYPES * N_COLORS];
+    let mut stat_placed: u32 = 0;
     for &(t, c) in &asgn {
         if t == DEAD || c == COLOR_NONE { continue; }
         placed[t as usize * N_COLORS + c as usize] += 1;
+        if is_stat_giving(t) { stat_placed += 1; }
     }
+
+    // If init couldn't meet the floor (feasibility check skipped, or forced
+    // greeds ate too many slots), clamp the effective floor to what init
+    // actually achieved. Without this clamp the SA would reject every move
+    // that touched a non-stat slot and the layout would freeze.
+    // (User-facing infeasibility is caught upstream in enumerateCandidates;
+    //  this path only triggers when callers skip the pre-flight, e.g. parity
+    //  scripts. No browser-visible warning channel is wired up here.)
+    let effective_min: u32 = min_regular_placed.min(stat_placed);
 
     // Scratch buffers reused across simulate() calls.
     let mut row_color = vec![0u32; geom.row_span * N_COLORS];
@@ -803,6 +815,17 @@ pub(crate) fn sa_one_restart(
                 if placed[idx] <= forced[idx] { continue; }
             }
 
+            // Lower bound on stat_placed (only matters when the move shifts a
+            // stat-giving card to a non-stat type or DEAD). Skip the check
+            // entirely when no floor is active to keep the hot path cheap.
+            let old_is_stat = old.0 != DEAD && old.1 != COLOR_NONE && is_stat_giving(old.0);
+            let new_is_stat = new.0 != DEAD && new.1 != COLOR_NONE && is_stat_giving(new.0);
+            let stat_delta: i32 = (new_is_stat as i32) - (old_is_stat as i32);
+            if effective_min > 0 && stat_delta < 0
+                && (stat_placed as i32 + stat_delta) < effective_min as i32 {
+                continue;
+            }
+
             // Apply
             if old.0 != DEAD && old.1 != COLOR_NONE {
                 placed[old.0 as usize * N_COLORS + old.1 as usize] -= 1;
@@ -810,6 +833,7 @@ pub(crate) fn sa_one_restart(
             if new.0 != DEAD && new.1 != COLOR_NONE {
                 placed[new.0 as usize * N_COLORS + new.1 as usize] += 1;
             }
+            stat_placed = (stat_placed as i32 + stat_delta) as u32;
             asgn[p] = new;
 
             let new_score = simulate(geom, &asgn, cores, cfg, &mut row_color, &mut col_color, &mut boost);
@@ -825,6 +849,7 @@ pub(crate) fn sa_one_restart(
                 if old.0 != DEAD && old.1 != COLOR_NONE {
                     placed[old.0 as usize * N_COLORS + old.1 as usize] += 1;
                 }
+                stat_placed = (stat_placed as i32 - stat_delta) as u32;
                 asgn[p] = old;
             }
         } else {
@@ -879,10 +904,23 @@ pub(crate) struct InventoryRun<'a> {
     pub is_shiny:            bool,
     pub inventory:           Vec<(u8, u8, u32)>,   // regular pool (pre-typed)
     pub forced_inventory:    Vec<(u8, u8, u32)>,   // forced pool (pre-typed)
+    /// Lower bound on placed stat-giving cards (anything with type < ARCANE
+    /// that isn't a greed — see `is_stat_giving`). 0 = no constraint.
+    pub min_regular_placed:  u32,
     pub cores:               Vec<(u8, u8, f64)>,   // (type, color, override<0 = none)
     pub n_iter:              usize,
     pub restarts:            usize,
     pub cfg_mults:           SimConfig,            // mults + flags
+}
+
+/// "Stat-giving" set: positional shinies/evos + DELUXE + TYPELESS. Excludes
+/// greed cards (which give multipliers but no stats themselves), ARCANE, and
+/// the DEAD sentinel. Used by the `min_regular_placed` floor.
+#[inline]
+pub(crate) fn is_stat_giving(t: u8) -> bool {
+    // u8 layout: ROW=0, COL=1, SURR=2, DIAG=3, DELUXE=4, TYPELESS=5,
+    // greeds=6..15, DEAD=16, ARCANE=17. Stat-giving ⇔ t ≤ TYPELESS.
+    t <= TYPELESS
 }
 
 pub(crate) fn run_sa_inventory_core(run: InventoryRun<'_>) -> (Vec<(u8, u8)>, f64) {
@@ -982,6 +1020,7 @@ pub(crate) fn run_sa_inventory_core(run: InventoryRun<'_>) -> (Vec<(u8, u8)>, f6
             ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         sa_one_restart(&geom, &cores_pack, &cfg,
                        &inv_flat, &forced_flat, &cap_flat, &options,
+                       run.min_regular_placed,
                        n_iter, 100.0, 0.5, seed)
     };
 

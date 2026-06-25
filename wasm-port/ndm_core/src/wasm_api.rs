@@ -42,6 +42,11 @@ pub struct WasmInventoryInput {
     /// Defaults to empty (no forced placements).
     #[serde(default)]
     pub forced_inventory: Vec<(String, String, u32)>,
+    /// Lower bound on the count of placed stat-giving cards. Stat-giving =
+    /// {ROW, COL, SURR, DIAG, DELUXE, TYPELESS} — anything non-greed,
+    /// non-arcane, non-dead. 0 disables. Defaults to 0 for old payloads.
+    #[serde(default)]
+    pub min_regular_placed: u32,
     /// Each entry: [core_type_string, color_string_or_empty, override_or_negative].
     pub cores:      Vec<(String, String, f64)>,
     pub n_iter:     usize,
@@ -144,6 +149,7 @@ pub fn run_sa_inventory_wasm(input: JsValue) -> Result<JsValue, JsValue> {
         is_shiny:            inp.is_shiny,
         inventory:           inventory_u8,
         forced_inventory:    forced_u8,
+        min_regular_placed:  inp.min_regular_placed,
         cores:               cores_u8,
         n_iter:              inp.n_iter,
         restarts:            inp.restarts,

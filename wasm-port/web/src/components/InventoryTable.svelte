@@ -57,6 +57,23 @@
   function fillColumnMax(c: string): void {
     fillColumn(MAX_COUNT, visibleTypes.map((t) => stackKey(t, c)));
   }
+
+  // Cap for the "minimum stat-giving" input — can't exceed how many non-arcane
+  // slots the deck actually has. If autoPlaceArcane is on, arcane slots are
+  // reserved for ARCANE cards, so the effective ceiling drops by that count.
+  const minStatMax = $derived.by(() => {
+    if (!app.deck) return 0;
+    const arcaneN = app.autoPlaceArcane ? app.deck.arcaneSlots.length : 0;
+    return Math.max(0, app.deck.slots.length - arcaneN);
+  });
+
+  function onMinStatInput(e: Event): void {
+    const el = e.currentTarget as HTMLInputElement;
+    const raw = Number(el.value);
+    const clamped = Math.min(minStatMax, Math.max(0, Math.floor(raw) || 0));
+    if (String(clamped) !== el.value) el.value = String(clamped);
+    app.minRegularPlaced = clamped;
+  }
 </script>
 
 <div class="card">
@@ -149,6 +166,28 @@
       >×</button>
     {/each}
   </div>
+
+  {#if app.inventoryView === "forced"}
+    <!-- Single integer floor on the count of placed stat-giving cards. Stat-
+         giving = anything non-greed / non-arcane / non-dead. 0 disables. -->
+    <div class="min-stat-row">
+      <label for="min-stat-input">Minimum number of stat-giving cards placed</label>
+      <input
+        id="min-stat-input"
+        type="number"
+        inputmode="numeric"
+        min="0"
+        max={minStatMax}
+        step="1"
+        value={app.minRegularPlaced}
+        oninput={onMinStatInput}
+        onfocus={(e) => (e.currentTarget as HTMLInputElement).select()}
+      />
+    </div>
+    <p class="hint sub">
+      Counts non-greed regulars (row/col/surr/diag, deluxe, typeless). 0 = no floor.
+    </p>
+  {/if}
 </div>
 
 <style>
@@ -318,5 +357,31 @@
     background: rgba(220, 38, 38, 0.2);
     border-color: #DC2626;
     color: #FCA5A5;
+  }
+
+  /* "Minimum stat-giving cards placed" — single integer input below the
+     forced grid. Visually grouped with the .grid.forced tint above. */
+  .min-stat-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 6px 4px 6px;
+    margin-top: 4px;
+    border-top: 1px dashed var(--border);
+  }
+  .min-stat-row label {
+    font-size: 12px;
+    color: var(--text-primary);
+    flex: 1 1 auto;
+  }
+  .min-stat-row input[type="number"] {
+    width: 72px;
+    flex: 0 0 auto;
+  }
+  .hint.sub {
+    margin: 0 0 0 6px;
+    font-size: 10.5px;
+    color: var(--text-muted);
   }
 </style>

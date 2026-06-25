@@ -55,6 +55,10 @@ interface AppState {
   // Forced inventory — per-(type, color) lower bound the SA must satisfy.
   // Cap = inventoryCounts + forcedCounts. Empty by default.
   forcedCounts:    Record<string, number>;
+  // Minimum number of "stat-giving" (non-greed, non-arcane, non-dead) cards
+  // the SA must place. 0 disables the constraint. Stat-giving set =
+  // {ROW, COL, SURR, DIAG, DELUXE, TYPELESS}. Enforced inside the WASM kernel.
+  minRegularPlaced: number;
   // Which inventory pool the table is currently editing.
   inventoryView:   "regular" | "forced";
   // Arcane auto-place toggle. true = SA must keep arcane slots as ARCANE
@@ -117,6 +121,7 @@ export const app = $state<AppState>({
 
   inventoryCounts: {},
   forcedCounts:    {},
+  minRegularPlaced: 0,
   inventoryView:   "regular",
   autoPlaceArcane: true,   // default; overridden from cfg.arcane.auto_place on boot
   coreState: initialCoreState(),
@@ -456,6 +461,7 @@ export function captureSnapshot(label: string): Snapshot | null {
     autoPlaceArcane: app.autoPlaceArcane,
     inventoryCounts: { ...app.inventoryCounts },
     forcedCounts:    { ...app.forcedCounts },
+    minRegularPlaced: app.minRegularPlaced,
     cores:           app.result.coresUsed.map((c) => ({ ...c })),
     structural: {
       constructionEnabled: app.structural.constructionEnabled,
@@ -526,6 +532,7 @@ export function restoreSnapshot(snap: Snapshot): void {
   app.autoPlaceArcane = snap.autoPlaceArcane;
   app.inventoryCounts = { ...snap.inventoryCounts };
   app.forcedCounts    = { ...snap.forcedCounts };
+  app.minRegularPlaced = snap.minRegularPlaced ?? 0;
   // Structural cores — same shape, just clone so reactive proxies don't share.
   // `greaterStructural` was added later; older snapshots default to false.
   app.structural = {
