@@ -11,7 +11,9 @@
 // records at most) so we rewrite the whole thing on every CRUD call.
 
 import type { Position } from "./types";
-import type { CardClass, CoreSpec } from "./types";
+import type {
+  CardClass, CoreSpec, Depth, ExactStack, OptimizerMode, TagRuleRow,
+} from "./types";
 import type { StructuralCores } from "./structural";
 import { emptyStructural } from "./structural";
 
@@ -56,6 +58,19 @@ export interface Snapshot {
   assignment: [string, string][];   // parallel to deck.slots; same shape as
                                     // SliceResult.assignment
   wasmScore:  number;
+
+  // — Optimizer 2.0 (all optional so v1 snapshots keep loading) —
+  /** Absent on v1 snapshots → restore as "max". */
+  optMode?:      OptimizerMode;
+  depth?:        Depth;
+  complexCards?: boolean;
+  targetedRules?: TagRuleRow[];
+  exactStacks?:  ExactStack[];
+  mysteryPicks?: [string, string] | null;
+  /** Tagged per-slot output, parallel to deck.slots:
+   *  [type, color, scale_color, groups[]]. v1 snapshots lack it — the
+   *  restore path synthesizes tags from the run-level foil rule. */
+  taggedAssignment?: [string, string, string, string[]][];
 }
 
 // ─── localStorage CRUD ───────────────────────────────────────────────────────
@@ -100,6 +115,14 @@ function _normalize(rec: any): Snapshot {
     structural:      rec?.structural ?? emptyStructural(),
     assignment:      Array.isArray(rec?.assignment) ? rec.assignment : [],
     wasmScore:       Number(rec?.wasmScore ?? 0),
+    // Optimizer 2.0 optional fields — pass through when present.
+    optMode:         rec?.optMode,
+    depth:           rec?.depth,
+    complexCards:    rec?.complexCards,
+    targetedRules:   Array.isArray(rec?.targetedRules) ? rec.targetedRules : undefined,
+    exactStacks:     Array.isArray(rec?.exactStacks) ? rec.exactStacks : undefined,
+    mysteryPicks:    rec?.mysteryPicks ?? undefined,
+    taggedAssignment: Array.isArray(rec?.taggedAssignment) ? rec.taggedAssignment : undefined,
   };
 }
 

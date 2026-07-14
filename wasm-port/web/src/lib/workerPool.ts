@@ -79,6 +79,24 @@ export function dispatchSlice(
   });
 }
 
+/** Optimizer 2.0: send one pre-built tagged payload (candidate × restart
+ *  chunk) to a specific worker. */
+export function dispatchTagged<T>(
+  workerIdx: number,
+  payload:   Record<string, unknown>,
+): Promise<T> {
+  const pool = ensurePool();
+  const slot = pool[workerIdx % pool.length];
+  const id = _nextId++;
+  return new Promise<T>((resolve, reject) => {
+    slot.pending.set(id, {
+      resolve: resolve as (r: SliceResult) => void,
+      reject,
+    });
+    slot.worker.postMessage({ id, type: "tagged", payload });
+  });
+}
+
 /** Split `items` into `n` contiguous chunks of as-even-as-possible sizes. */
 export function chunkInto<T>(items: readonly T[], n: number): T[][] {
   if (n <= 1 || items.length <= 1) return [items.slice()];

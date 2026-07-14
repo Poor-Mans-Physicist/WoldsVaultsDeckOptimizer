@@ -16,7 +16,7 @@
 // `optimizeInventory(input)` is the legacy single-thread path: it composes
 // all three sequentially. The parallel orchestrator lives in workerClient.ts.
 
-import init, { runSaInventory } from "../wasm/ndm_core";
+import init, { runSaInventory, runSaTagged, scoreTagged } from "../wasm/ndm_core";
 import wasmUrl from "../wasm/ndm_core_bg.wasm?url";
 
 import {
@@ -117,6 +117,29 @@ export async function initWasm(): Promise<void> {
   if (_wasmReady) return _wasmReady;
   _wasmReady = init({ module_or_path: wasmUrl }).then(() => undefined);
   return _wasmReady;
+}
+
+// ── Optimizer 2.0 kernel entries ─────────────────────────────────────────────
+
+/** Raw per-slot card as the tagged kernel returns it. */
+export interface RawTaggedPlaced {
+  t: string; color: string; scale_color: string; groups: string[];
+}
+
+/** One tagged SA run (a candidate combo × a restart chunk). Worker-side. */
+export async function runTaggedPayload(
+  payload: Record<string, unknown>,
+): Promise<{ assignment: RawTaggedPlaced[]; score: number }> {
+  await initWasm();
+  return runSaTagged(payload) as { assignment: RawTaggedPlaced[]; score: number };
+}
+
+/** Score-only pass on a fixed assignment (what-if popup cross-check). */
+export async function scoreTaggedPayload(
+  payload: Record<string, unknown>,
+): Promise<number> {
+  await initWasm();
+  return scoreTagged(payload) as number;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

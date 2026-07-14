@@ -1,16 +1,24 @@
 <script lang="ts">
-  import { CardType, type Color, type Position } from "../lib/types";
+  import { CardType, type Color, type GroupTag, type Position } from "../lib/types";
   import type { Deck } from "../lib/deck";
   import type { Placed } from "../lib/types";
-  import type { SlotBreakdown } from "../lib/breakdown";
+  import type { TaggedSlotBreakdown } from "../lib/taggedBreakdown";
   import { slotBg, COLOR_HEX, TYPE_GLYPH } from "../lib/palette";
+  import { NOTCH_COLOR, sortTags } from "../lib/notches";
+
+  type SlotBreakdown = TaggedSlotBreakdown;
 
   interface Props {
     deck: Deck;
     assignment?: Map<string, Placed> | null;
     perSlotNdm?: Map<string, number> | null;
     breakdown?: Map<string, SlotBreakdown> | null;
-    onSlotClick?: (key: string, bd: SlotBreakdown) => void;
+    /** Per-slot carried tags (post what-if overlay) — drives the notches
+     *  and the hover popup (spec §9.5/§9.6). */
+    tagsBySlot?: Map<string, GroupTag[]> | null;
+    /** Click a placed card. `shiftKey` selects the breakdown view; plain
+     *  click opens the tag editor (spec §9.6 rebind). */
+    onSlotClick?: (key: string, bd: SlotBreakdown, shiftKey: boolean) => void;
 
     // ─── Structural-cores integration (optional) ───────────────────────────
     //
@@ -48,13 +56,38 @@
   }
 
   let {
-    deck, assignment = null, perSlotNdm = null, breakdown = null, onSlotClick,
+    deck, assignment = null, perSlotNdm = null, breakdown = null,
+    tagsBySlot = null, onSlotClick,
     placementMode = false, conversionMode = false,
     placementCandidates = [], addedSlots = [], convertedSlots = [],
     onPlaceSlot, onRemoveSlot, onConvertSlot, onUnconvertSlot,
     buildMode = false, buildRows = 6, buildCols = 9,
     onBuildClick, onBuildContextClick,
   }: Props = $props();
+
+  // Hover popup (spec §9.6): tags of the hovered card as colored bubbles.
+  let hoverKey: string | null = $state(null);
+  let hoverX = $state(0);
+  let hoverY = $state(0);
+  let gridEl: HTMLDivElement | undefined = $state();
+
+  const hoverTags = $derived.by<GroupTag[] | null>(() => {
+    if (hoverKey === null || !tagsBySlot) return null;
+    const tags = tagsBySlot.get(hoverKey);
+    return tags && tags.length > 0 ? sortTags(tags) : null;
+  });
+
+  function onTileEnter(key: string, e: MouseEvent) {
+    hoverKey = key;
+    trackHover(e);
+  }
+  function trackHover(e: MouseEvent) {
+    if (!gridEl) return;
+    const r = gridEl.getBoundingClientRect();
+    hoverX = e.clientX - r.left + 14;
+    hoverY = e.clientY - r.top + 10;
+  }
+  function onTileLeave() { hoverKey = null; }
 
   const SLOT_PX = 64;
   const GAP_PX  = 6;
@@ -97,23 +130,21 @@
     return { t: p[0], color: p[1] };
   }
 
-  function handleSlotClick(key: string, r: number, c: number) {
+  function handleSlotClick(key: string, r: number, c: number, e: MouseEvent) {
     // Build mode owns every cell — left-click → tool action (caller dispatches
     // by app.builder.tool). No SA result or breakdown is active in this mode.
     if (buildMode) {
       onBuildClick?.([r, c]);
       return;
     }
-    // Priority: if a run result is available for this slot, breakdown wins
-    // over any structural-core tool action. This prevents the "I clicked the
-    // slot but got a convert instead of a breakdown" trap when Arcane Core
-    // or Construction Core is left enabled after a Run. To convert / place
-    // again post-run, the user right-clicks an existing converted/added
-    // tile to revert (which clears the result, freeing slots back to
-    // empty), or toggles the core off and on.
+    // Priority: if a run result is available for this slot, the card popup
+    // wins over any structural-core tool action (plain click = tag editor,
+    // Shift+click = breakdown — spec §9.6). To convert / place again
+    // post-run, the user right-clicks an existing converted/added tile to
+    // revert, or toggles the core off and on.
     if (breakdown && onSlotClick) {
       const bd = breakdown.get(key);
-      if (bd) { onSlotClick(key, bd); return; }
+      if (bd) { onSlotClick(key, bd, e.shiftKey); return; }
     }
     // No result yet → structural-core tools own the click.
     if (conversionMode) {
@@ -165,6 +196,7 @@
 
 <div
   class="grid"
+  bind:this={gridEl}
   style:grid-template-columns="repeat({width}, {SLOT_PX}px)"
   style:grid-template-rows="repeat({height}, {SLOT_PX}px)"
   style:gap="{GAP_PX}px"
@@ -210,6 +242,7 @@
         {@const isArcane = arcaneSet.has(key)}
         {@const isAdded = addedSet.has(key)}
         {@const isConverted = convertedSet.has(key)}
+        {@const tags = tagsBySlot?.get(key) ?? null}
         <button
           type="button"
           class="slot"
@@ -218,16 +251,22 @@
           class:added={isAdded}
           class:converted={isConverted}
           class:convert-target={conversionMode && !isArcane}
+          class:wild={t === CardType.WILD}
           style:width="{SLOT_PX}px"
           style:height="{SLOT_PX}px"
           style:background={t === CardType.EMPTY ? "var(--bg-empty-slot)" : slotBg(t)}
-          onclick={() => handleSlotClick(key, r, c)}
+          onclick={(e) => handleSlotClick(key, r, c, e)}
           oncontextmenu={(e) => handleSlotContext(e, key, r, c)}
+          onmouseenter={(e) => onTileEnter(key, e)}
+          onmousemove={trackHover}
+          onmouseleave={onTileLeave}
           aria-label="Slot {r},{c} — {t}{isArcane ? ' (arcane)' : ''}{isAdded ? ' (added)' : ''}"
         >
           <span class="glyph">
             {#if t === CardType.EMPTY}
               {isArcane ? "a" : "□"}
+            {:else if t === CardType.WILD}
+              W
             {:else}
               {TYPE_GLYPH[t] ?? "·"}
             {/if}
@@ -238,10 +277,25 @@
           {#if color !== null}
             <span class="color-dot" style:background={COLOR_HEX[color]}></span>
           {/if}
+          {#if tags && tags.length > 0}
+            <span class="notches">
+              {#each sortTags(tags) as g}
+                <span class="notch" style:background={NOTCH_COLOR[g]} title={g}></span>
+              {/each}
+            </span>
+          {/if}
         </button>
       {/if}
     {/each}
   {/each}
+
+  {#if hoverTags}
+    <div class="tag-popup" style:left="{hoverX}px" style:top="{hoverY}px">
+      {#each hoverTags as g}
+        <span class="bubble" style:--c={NOTCH_COLOR[g]}>{g}</span>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -251,6 +305,54 @@
     background: var(--bg-deck);
     border: 1px solid var(--border);
     border-radius: 10px;
+    position: relative;   /* hover tag-popup anchors here */
+  }
+  /* Tag notches — small colored blocks along the tile's bottom edge (§9.5). */
+  .notches {
+    position: absolute;
+    bottom: 3px;
+    left: 4px;
+    right: 4px;
+    display: flex;
+    gap: 2px;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .notch {
+    width: 7px;
+    height: 5px;
+    border-radius: 1.5px;
+    border: 1px solid rgba(0,0,0,.4);
+    flex-shrink: 1;
+    min-width: 3px;
+  }
+  /* Hover popup: tag bubbles colored to their notch color (§9.6). */
+  .tag-popup {
+    position: absolute;
+    z-index: 20;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-width: 220px;
+    padding: 6px 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.45);
+    pointer-events: none;
+  }
+  .bubble {
+    font-size: 10px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--c) 26%, transparent);
+    border: 1px solid var(--c);
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+  /* Wild tile accent — chartreuse ring (not a group notch). */
+  .slot.wild {
+    box-shadow: inset 0 0 0 2px #9BCF3B;
   }
   .slot {
     position: relative;

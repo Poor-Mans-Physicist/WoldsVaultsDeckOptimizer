@@ -20,6 +20,7 @@ export function slotBg(t: CardType): string {
   if (t === CardType.TYPELESS) return "#A8D5A2";
   if (t === CardType.DEAD)     return "#ECECEC";
   if (t === CardType.ARCANE)   return "#E5DEFF";  // light purple
+  if (t === CardType.WILD)     return "#EDF7D4";  // pale chartreuse
   return "#FFFFFF";
 }
 
@@ -46,6 +47,7 @@ export const TYPE_LABEL: Record<CardType, string> = {
   [CardType.EVO_GREED]: "Evo Greed", [CardType.SURR_GREED]: "Surr Greed",
   [CardType.FILLER_GREED]: "Filler",
   [CardType.EMPTY]: "Empty", [CardType.DEAD]: "Dead",
+  [CardType.WILD]: "Wild",
 };
 
 // Single-char glyphs (matches Deck._CHAR in src/config.py).
@@ -61,6 +63,7 @@ export const TYPE_GLYPH: Record<CardType, string> = {
   [CardType.EVO_GREED]: "e", [CardType.SURR_GREED]: "o",
   [CardType.FILLER_GREED]: ".",
   [CardType.EMPTY]: "·", [CardType.DEAD]: "_",
+  [CardType.WILD]: "W",
 };
 
 // Inventory rows in the order the table renders them (positional, arcane,

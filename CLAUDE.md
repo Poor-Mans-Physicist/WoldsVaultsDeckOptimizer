@@ -30,10 +30,21 @@ Finally, we have "deluxe" type cards, which are similar to T cards but have a fl
 
 After the channel-consolidation refactor, this repo ships exactly two user-facing channels — both backed by the same `config.yaml`, `decks/`, and `modifiers.json` at the repo root:
 
-1. **Spreadsheet CLI** (`uv run optimize`) — outer Python orchestrator + outer `ndm_core/` Rust kernel (PyO3). Runs every deck in parallel via multiprocessing and emits `Panel_*.xlsx`.
-2. **WASM web app** (`wasm-port/web/`, deployed to GitHub Pages) — Svelte 5 SPA + `wasm-port/ndm_core/` Rust kernel (wasm-bindgen). Interactive, inventory-aware, color-aware.
+1. **Spreadsheet CLI** (`uv run optimize`) — outer Python orchestrator + outer `ndm_core/` Rust kernel (PyO3). Runs every deck in parallel via multiprocessing (one process per deck; kernel restarts stay serial) and emits `Panel_*.xlsx`.
+2. **WASM web app** (`wasm-port/web/`, deployed to GitHub Pages) — Svelte 5 SPA + `wasm-port/ndm_core/` Rust kernel (wasm-bindgen). Interactive; three run modes (Max / Targeted / Exact) with restart-chunk fan-out across a worker pool.
 
-The two Rust crates share no source (different binding layers — PyO3 vs wasm-bindgen) but mirror the same scoring math. `MODELING_CHOICES.md` is the cross-platform spec; `src/simulate.py::simulate()` is kept as a runnable Python reference for the same math even though nothing in production calls it.
+**Optimizer 2.0:** both channels run the SAME tag-aware kernel —
+`ndm_core/src/tagsim.rs` is the canonical source, `#[path]`-included by the
+wasm crate so the math can't drift. The spreadsheet drives it in Max
+configuration (`config.yaml engine: tagged`; `classic` keeps the 1.x kernel
+for A/B). Deck implicits live in `decks/wolds_implicits.json` (extracted from
+the woldsvaults datagen) and are attached to the web bundle by
+`build_data.py`. `scripts/parity_2_0.py` is the validation gate (scoring
+equivalence + SA-optimum convergence vs classic) — run it after any kernel
+change. The legacy 1.x kernels (`lib.rs`, `inventory.rs` both crates) remain
+as the parity baseline. `MODELING_CHOICES.md` is the cross-platform spec
+(see its **Optimizer 2.0 addendum**); `src/simulate.py::simulate()` stays the
+runnable Python reference for the classic math.
 
 ## Running
 

@@ -1,12 +1,12 @@
 <script lang="ts">
-  import type { SlotBreakdown } from "../lib/breakdown";
+  import type { TaggedSlotBreakdown } from "../lib/taggedBreakdown";
   import type { Position } from "../lib/types";
   import { formatBreakdown } from "../lib/formatBreakdown";
 
   interface Props {
     open: boolean;
     pos:  Position | null;
-    bd:   SlotBreakdown | null;
+    bd:   TaggedSlotBreakdown | null;
     onClose: () => void;
   }
   let { open, pos, bd, onClose }: Props = $props();

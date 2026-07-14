@@ -6,7 +6,7 @@
   import { onMount } from "svelte";
   import {
     app, clearRunResult, clearPreviewAssignments, selectedCores,
-    resetStructural,
+    resetStructural, whatIfBreakdown,
     addConstructionSlot, removeConstructionSlot,
     convertSlotToArcane, unconvertArcaneSlot,
     builderCanvasClick, builderCanvasContextClick,
@@ -14,15 +14,17 @@
     captureSnapshot, saveSnapshot, restoreSnapshot, reloadSnapshots,
   } from "./lib/state.svelte";
   import { loadConfigBundle, getMode } from "./lib/config";
-  import { loadDecks } from "./lib/deck";
-  import { CardClass } from "./lib/types";
-  import { optimizeInventoryAsync } from "./lib/workerClient";
-  import { filterInventoryByHidden } from "./lib/optimize";
+  import { loadDecks, implicitCatalog } from "./lib/deck";
+  import {
+    CardClass, OptimizerMode, DEPTH_PARAMS,
+    type ExactStack, type GroupTag, type TagRuleRow,
+  } from "./lib/types";
+  import { optimizeTaggedAsync } from "./lib/taggedClient";
   import { loadModifiers } from "./lib/modifiers";
   import {
     isAssignableSlot, slotFamily, resetAssignmentsOnRun,
   } from "./lib/preview";
-  import { classSelectLabel, hiddenInventoryTypes } from "./lib/visibility";
+  import { classSelectLabel } from "./lib/visibility";
   import {
     effectiveDeck, constructionCandidates, structuralCoreCost,
   } from "./lib/structural";
@@ -31,12 +33,11 @@
     BUILDER_GRID_WIDTH, BUILDER_GRID_HEIGHT,
   } from "./lib/builder";
   import { defaultLabel as snapshotDefaultLabel, type Snapshot } from "./lib/snapshots";
-  import type { SlotBreakdown } from "./lib/breakdown";
+  import type { TaggedSlotBreakdown as SlotBreakdown } from "./lib/taggedBreakdown";
   import type { Position, CardType } from "./lib/types";
 
   import ModeToggle             from "./components/ModeToggle.svelte";
   import DeckGrid               from "./components/DeckGrid.svelte";
-  import InventoryTable         from "./components/InventoryTable.svelte";
   import CorePicker             from "./components/CorePicker.svelte";
   import Legend                 from "./components/Legend.svelte";
   import BreakdownDialog        from "./components/BreakdownDialog.svelte";
@@ -47,6 +48,13 @@
   import UnsavedChangesDialog   from "./components/UnsavedChangesDialog.svelte";
   import SnapshotsTab           from "./components/SnapshotsTab.svelte";
   import SaveSnapshotDialog     from "./components/SaveSnapshotDialog.svelte";
+  import OptimizerSettings      from "./components/OptimizerSettings.svelte";
+  import TargetedPanel          from "./components/TargetedPanel.svelte";
+  import ExactPanel             from "./components/ExactPanel.svelte";
+  import CardBuilderDialog      from "./components/CardBuilderDialog.svelte";
+  import MaxReadout             from "./components/MaxReadout.svelte";
+  import TagEditDialog          from "./components/TagEditDialog.svelte";
+  import ImplicitInfo           from "./components/ImplicitInfo.svelte";
 
   const baseUrl = (import.meta.env.BASE_URL ?? "/").endsWith("/")
     ? (import.meta.env.BASE_URL ?? "/")
@@ -62,11 +70,32 @@
   let assignSlotType: CardType | null = $state(null);
   let assignNdm = $state(0);
 
+  // Live breakdown: the run result, re-scored through the what-if overlay
+  // when tag edits are active (score-only pass, §9.6).
+  const liveBreakdown = $derived.by(() => {
+    if (!app.result) return null;
+    if (app.whatIf.size === 0) return app.result.breakdown;
+    return whatIfBreakdown() ?? app.result.breakdown;
+  });
+
   // Per-slot NDM map for grid annotation.
   const perSlotNdm = $derived.by<Map<string, number> | null>(() => {
-    if (!app.result) return null;
+    if (!liveBreakdown) return null;
     const m = new Map<string, number>();
-    for (const [k, b] of app.result.breakdown.perSlot) m.set(k, b.finalNdm);
+    for (const [k, b] of liveBreakdown.perSlot) m.set(k, b.finalNdm);
+    return m;
+  });
+
+  // Per-slot carried tags (post what-if) → notches + hover popup. Slot
+  // lookups go through the RESULT's deck (post-structural shape).
+  const tagsBySlot = $derived.by<Map<string, GroupTag[]> | null>(() => {
+    if (!app.result) return null;
+    const m = new Map<string, GroupTag[]>();
+    for (let i = 0; i < app.result.deck.slots.length; i++) {
+      const [r, c] = app.result.deck.slots[i];
+      const k = `${r},${c}`;
+      m.set(k, app.whatIf.get(k) ?? app.result.cards[i]?.groups ?? []);
+    }
     return m;
   });
 
@@ -244,6 +273,14 @@
   let exportOpen = $state(false);
   const exportJson = $derived(buildModpackJson(app.builder));
 
+  // Exact-mode card builder wiring: the dialog hands built stacks to the
+  // ExactPanel instance (which stacks duplicates ×N).
+  let cardBuilderOpen = $state(false);
+  let exactPanelRef: { addStack: (s: ExactStack) => void } | undefined = $state();
+  function onBuilderAdd(stack: ExactStack) {
+    exactPanelRef?.addStack(stack);
+  }
+
   // The structural-core grid affordances (`+` placement, click-to-convert) are
   // shown only when the grid is rendering an actual deck/result, never during
   // the Build tab's blank-canvas mode. In Build tab they re-enable as soon as
@@ -274,7 +311,9 @@
   function onDeckChange(e: Event) {
     const key = (e.currentTarget as HTMLSelectElement).value;
     app.deck = app.decks.find((d) => d.key === key) ?? app.deck;
-    // Coordinates from the previous deck don't apply to the new one.
+    // Coordinates from the previous deck don't apply to the new one; a
+    // Mystery pair belongs to the Mystery deck only.
+    app.mysteryPicks = null;
     resetStructural();
     clearRunResult();
     clearPreviewAssignments();
@@ -311,19 +350,6 @@
 
     const t0 = performance.now();
     try {
-      // Strip card types that the current (mode, class) combo hides — same
-      // rule the inventory table uses to gate its rows. Without this, cards
-      // stocked in another mode/class (e.g. positional shiny added during a
-      // Wold's run) would silently land in the SA's pool when the user flips
-      // to vanilla-stat. Filter is silent on purpose — the hide rule is
-      // already implied by the inventory table, so a "N ignored" badge would
-      // just add noise.
-      const hidden = hiddenInventoryTypes(app.mode, app.cardClass, app.cfg);
-      const invSnap  = $state.snapshot(app.inventoryCounts);
-      const fcSnap   = $state.snapshot(app.forcedCounts);
-      const { kept: invKept } = filterInventoryByHidden(invSnap, hidden);
-      const { kept: fcKept  } = filterInventoryByHidden(fcSnap,  hidden);
-
       // The SA sees the structural-modified deck (Construction additions +
       // Arcane conversions baked into slots / arcaneSlots / peers). We then
       // splice in the post-structural-cost core budget so candidate
@@ -331,21 +357,29 @@
       const deckSnap = $state.snapshot(fxDeck);
       deckSnap.core_slots = effectiveCoreSlots;
 
+      const depth = DEPTH_PARAMS[app.depth];
+
       // $state.snapshot() unwraps Svelte 5 reactive proxies so structured-clone
       // can ship them across the worker boundary.
-      const r = await optimizeInventoryAsync({
+      const r = await optimizeTaggedAsync({
         deck:            deckSnap,
         cardClass:       app.cardClass,
-        inventory:       invKept,
-        forcedCounts:    fcKept,
-        minRegularPlaced: app.minRegularPlaced,
+        mode:            app.optMode,
+        appMode:         app.mode,
+        targetedRules:   $state.snapshot(app.targetedRules) as TagRuleRow[],
+        exactStacks:     $state.snapshot(app.exactStacks) as ExactStack[],
+        mysteryPicks:    app.mysteryPicks ? [...app.mysteryPicks] : null,
+        implicitCatalog: implicitCatalog(),
+        complexCards:    app.complexCards,
+        minStatPlaced:   app.minRegularPlaced,
         autoPlaceArcane: app.autoPlaceArcane,
         cores:           selectedCores(),
-        nIter:           app.nIter,
-        restarts:        app.restarts,
+        nIter:           depth.nIter,
+        restarts:        depth.restarts,
         cfg:             $state.snapshot(app.cfg),
       });
       app.result = r;
+      app.whatIf = new Map();
 
       // Migrate preview assignments to the new layout (drops orphans).
       if (app.modifiers) {
@@ -363,13 +397,24 @@
   }
 
   // ─── Slot click dispatch — different action per tab ─────────────────────
-  function onSlotClick(key: string, bd: SlotBreakdown) {
+  // Optimize/Build: plain click = tag-edit what-if popup; Shift+click = the
+  // full slot breakdown (spec §9.6 rebind). Preview keeps its assign dialog.
+  let tagEditOpen = $state(false);
+  let tagEditPos: Position | null = $state(null);
+
+  function onSlotClick(key: string, bd: SlotBreakdown, shiftKey: boolean) {
     const [r, c] = key.split(",").map(Number);
     const pos = [r, c] as Position;
-    if (app.tab === "optimize") {
-      breakdownPos  = pos;
-      breakdownBd   = bd;
-      breakdownOpen = true;
+    if (app.tab === "optimize" || app.tab === "build") {
+      if (shiftKey) {
+        // Show the breakdown for the LIVE (what-if) state when edits exist.
+        breakdownPos  = pos;
+        breakdownBd   = liveBreakdown?.perSlot.get(key) ?? bd;
+        breakdownOpen = true;
+      } else {
+        tagEditPos  = pos;
+        tagEditOpen = true;
+      }
     } else {
       // Preview tab: only open the assign dialog on assignable, scoring slots.
       if (!isAssignableSlot(bd.cardType, app.cardClass)) return;
@@ -381,6 +426,7 @@
   }
   function closeBreakdown() { breakdownOpen = false; breakdownPos = null; breakdownBd = null; }
   function closeAssign()    { assignOpen    = false; assignPos    = null; assignSlotType = null; }
+  function closeTagEdit()   { tagEditOpen   = false; tagEditPos   = null; }
 
   function assignCard(cardKey: string, tier: number) {
     if (!assignPos) return;
@@ -493,39 +539,15 @@
           {effectiveCoreSlots} cores{structuralCost > 0 ? ` (−${structuralCost} structural)` : ""} ·
           {(fxDeck ?? app.deck).arcaneSlots.length} arcane
         </div>
+        {#if app.tab !== "build"}
+          <!-- Deck implicit (Wold's only): effect summary + the Mystery
+               deck's rolled-pair dropdowns. -->
+          <ImplicitInfo />
+        {/if}
       </section>
 
       {#if app.tab === "optimize" || app.tab === "build"}
-        <section class="card">
-          <h3>SA params</h3>
-          <div class="row">
-            <label>Iterations
-              <input type="number" min="1000" step="1000" bind:value={app.nIter} />
-            </label>
-          </div>
-          <div class="row">
-            <label>Restarts
-              <input type="number" min="1" max="64" step="1" bind:value={app.restarts} />
-            </label>
-          </div>
-          <div class="run-row">
-            <button class="run" type="button" onclick={run} disabled={app.running}>
-              {app.running ? "Optimizing…" : "Run"}
-            </button>
-            {#if app.result}
-              <!-- Manual snapshot save — only meaningful when a result exists.
-                   Opens a label-entry modal; persisting refreshes the
-                   Snapshots tab list. -->
-              <button class="snap" type="button" onclick={openSaveSnapshot} title="Save this run as a snapshot">
-                📷 Save snapshot
-              </button>
-            {/if}
-          </div>
-          {#if app.runError}
-            <div class="err small">{app.runError}</div>
-          {/if}
-        </section>
-
+        <OptimizerSettings onRun={run} onSaveSnapshot={openSaveSnapshot} />
         <CorePicker />
       {/if}
 
@@ -552,6 +574,12 @@
         ]}
         <div class="result-bar">
           <span class="score">NDM <strong>{r.wasmScore.toFixed(3)}</strong></span>
+          {#if app.whatIf.size > 0 && liveBreakdown}
+            <span class="badge whatif" title="Ephemeral tag edits applied — discarded on the next Run">
+              what-if {liveBreakdown.total.toFixed(3)}
+              ({liveBreakdown.total - r.tsScore >= 0 ? "+" : ""}{(liveBreakdown.total - r.tsScore).toFixed(3)})
+            </span>
+          {/if}
           <span class="badge" class:ok class:bad={!ok}>
             {ok
               ? `✓ WASM / TS agree (Δ ${delta.toExponential(2)})`
@@ -576,7 +604,8 @@
         deck={fxDeck ?? app.deck}
         assignment={app.result?.assignment ?? null}
         perSlotNdm={perSlotNdm}
-        breakdown={app.result?.breakdown.perSlot ?? null}
+        breakdown={liveBreakdown?.perSlot ?? null}
+        tagsBySlot={tagsBySlot}
         onSlotClick={onSlotClick}
         placementMode={app.structural.constructionEnabled && structuralUiActive}
         conversionMode={app.structural.arcaneCoreEnabled && structuralUiActive}
@@ -597,10 +626,17 @@
       <Legend />
     </section>
 
-    <!-- ── Right: inventory (Optimize + Build use the same surface) ──── -->
+    <!-- ── Right: mode-dependent side panel (spec §9.3) ─────────────── -->
     {#if app.tab === "optimize" || app.tab === "build"}
       <aside class="col-right">
-        <InventoryTable />
+        {#if app.optMode === OptimizerMode.MAX}
+          <MaxReadout />
+        {:else if app.optMode === OptimizerMode.TARGETED}
+          <TargetedPanel />
+        {:else}
+          <ExactPanel bind:this={exactPanelRef}
+            onOpenBuilder={() => (cardBuilderOpen = true)} />
+        {/if}
       </aside>
     {/if}
   </main>
@@ -643,6 +679,24 @@
   defaultLabel={saveSnapshotDefaultLabel}
   onConfirm={confirmSaveSnapshot}
   onCancel={cancelSaveSnapshot}
+/>
+
+<TagEditDialog
+  open={tagEditOpen}
+  pos={tagEditPos}
+  onClose={closeTagEdit}
+/>
+
+<CardBuilderDialog
+  open={cardBuilderOpen}
+  cardClass={app.cardClass}
+  appMode={app.mode}
+  complexCards={app.complexCards}
+  allowDeluxe={app.cfg?.deluxe.allow ?? true}
+  shinyPositional={app.cfg?.shiny.positional ?? true}
+  hasArcaneSlots={((fxDeck ?? app.deck)?.arcaneSlots.length ?? 0) > 0}
+  onAdd={onBuilderAdd}
+  onClose={() => (cardBuilderOpen = false)}
 />
 
 <style>
@@ -845,6 +899,7 @@
   }
   .badge.ok  { background: rgba(16,185,129,.18); color: #6EE7B7; }
   .badge.bad { background: rgba(220,38,38,.22); color: #FCA5A5; }
+  .badge.whatif { background: rgba(232,195,59,.18); color: #FCD34D; }
   .time  { color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
   .cores { color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
 </style>

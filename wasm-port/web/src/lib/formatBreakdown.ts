@@ -1,7 +1,7 @@
-// Port of `_format_breakdown` in src/gui.py — produces the multi-line
-// text shown in the click-to-open per-slot popup.
+// Produces the multi-line text shown in the Shift+click per-slot popup.
+// Consumes the Optimizer 2.0 tagged breakdown (implicits, tags, mirror).
 
-import type { SlotBreakdown } from "./breakdown";
+import type { TaggedSlotBreakdown as SlotBreakdown } from "./taggedBreakdown";
 import type { Position } from "./types";
 import { TYPE_LABEL } from "./palette";
 
@@ -12,10 +12,14 @@ function titleCase(s: string): string {
 export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
   const typeName  = TYPE_LABEL[b.cardType] ?? b.cardType;
   const colorName = b.color !== null ? titleCase(b.color) : "—";
-  const head = `${typeName} · ${colorName}  @ (${pos[0]},${pos[1]})`;
+  const scaleNote = b.scaleColor !== null && b.scaleColor !== b.color
+    ? ` (scales ${b.scaleColor})` : "";
+  const head = `${typeName} · ${colorName}${scaleNote}  @ (${pos[0]},${pos[1]})`;
   const sep  = "─".repeat(Math.max(head.length, 24));
 
-  const out: string[] = [head, sep, ""];
+  const out: string[] = [head, sep];
+  if (b.groups.length > 0) out.push(`Tags: ${b.groups.join(", ")}`);
+  out.push("");
 
   // Base
   out.push("Base value:");
@@ -35,6 +39,12 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
     const label = c.color !== null ? `${c.core_type} (${c.color})` : c.core_type;
     const tag   = c.override ? " (override)" : "";
     out.push(`  • ${label.padEnd(18)} ×${c.value.toFixed(3)}${tag}`);
+  }
+  if (b.implicitParts.length > 0) {
+    out.push("Deck implicit (additive into core_mult):");
+    for (const p of b.implicitParts) {
+      out.push(`  • ${p.label}  → +${p.addend.toFixed(3)}`);
+    }
   }
   out.push(`  formula: ${b.coreMultFormula}`);
   out.push(`  → core_mult = ×${b.coreMult.toFixed(3)}`);
@@ -68,10 +78,21 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
     out.push("Archive core (outside core stack):");
     out.push(`  • ${b.archiveArcaneCount} arcane placed → ${b.archiveBase.toFixed(3)}^${b.archiveArcaneCount} = ×${b.archiveMult.toFixed(3)}`);
     out.push("");
-    out.push(`Final: ${stripFloat(b.baseValue)} × ${b.coreMult.toFixed(3)} × ${b.boost.toFixed(3)} × ${b.archiveMult.toFixed(3)}`);
-  } else {
-    out.push(`Final: ${stripFloat(b.baseValue)} × ${b.coreMult.toFixed(3)} × ${b.boost.toFixed(3)}`);
   }
+  // Runic mirror — multiplicative on the whole card value.
+  const showMirror = b.mirrorFactor !== 1.0;
+  if (showMirror) {
+    out.push(`Runic mirror: same-color mirror slot → ×${b.mirrorFactor.toFixed(3)}`);
+    out.push("");
+  }
+  const factors = [
+    stripFloat(b.baseValue),
+    b.coreMult.toFixed(3),
+    b.boost.toFixed(3),
+    ...(showArchive ? [b.archiveMult.toFixed(3)] : []),
+    ...(showMirror ? [b.mirrorFactor.toFixed(3)] : []),
+  ];
+  out.push(`Final: ${factors.join(" × ")}`);
   out.push(`     = ${b.finalNdm.toFixed(3)}`);
   return out.join("\n");
 }

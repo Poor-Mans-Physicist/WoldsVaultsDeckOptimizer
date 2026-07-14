@@ -25,6 +25,9 @@ export const CardType = {
   // no greed boost. Counts in n_ns (EVO-no-FOIL only, "treat like regulars")
   // and participates in same-color row/col/peer counts for neighbors.
   ARCANE:          "arcane",
+  // Optimizer 2.0: the Wild card — 0 NDM itself, counts as ANY group and
+  // ANY color for neighbors' positional scaling (universal wildcard).
+  WILD:            "wild",
 } as const;
 export type CardType = typeof CardType[keyof typeof CardType];
 
@@ -99,3 +102,63 @@ export interface CoreSpec {
   color:     Color | null;
   override:  number | null;
 }
+
+// ─── Optimizer 2.0 ───────────────────────────────────────────────────────────
+
+export const OptimizerMode = {
+  MAX:      "max",
+  TARGETED: "targeted",
+  EXACT:    "exact",
+} as const;
+export type OptimizerMode = typeof OptimizerMode[keyof typeof OptimizerMode];
+
+export const Depth = { FAST: "fast", DEFAULT: "default", DEEP: "deep" } as const;
+export type Depth = typeof Depth[keyof typeof Depth];
+
+/** Depth slider → fixed SA params (spec §9.2). */
+export const DEPTH_PARAMS: Record<Depth, { nIter: number; restarts: number }> = {
+  fast:    { nIter:  50_000, restarts:  6 },
+  default: { nIter:  75_000, restarts: 12 },
+  deep:    { nIter: 125_000, restarts: 24 },
+};
+
+/** The 9 freeform category tags (spec §2.2 Bucket B), in canonical order. */
+export const CATEGORY_GROUPS = [
+  "Offensive", "Defensive", "Physical", "Magical", "Utility",
+  "Resource", "Knack", "Temporal", "Essence",
+] as const;
+export type GroupTag = typeof CATEGORY_GROUPS[number] | "Foil" | "Stat";
+export const ALL_GROUP_TAGS: readonly GroupTag[] =
+  [...CATEGORY_GROUPS, "Foil", "Stat"];
+
+/** A card placed by the 2.0 kernel: type + colors + carried tags. */
+export interface TaggedPlaced {
+  t:          CardType;
+  color:      Color | null;
+  scaleColor: Color | null;   // ≠ color only under Complex Cards
+  groups:     GroupTag[];
+}
+
+/** One Targeted-mode constraint row. null = unbounded on that side. */
+export interface TagRuleRow {
+  axis: "color" | "type" | "group" | "greed";
+  key:  string;                // color / card-type / group name; "" for greed
+  min:  number | null;
+  max:  number | null;
+}
+
+/** One Exact-mode inventory stack (identical cards ×count). */
+export interface ExactStack {
+  t:          CardType;
+  color:      Color;
+  scaleColor: Color;           // == color unless Complex Cards
+  groups:     GroupTag[];      // real tags on the card (incl. Foil / Stat)
+  count:      number;
+  mustPlace:  boolean;         // per-stack lower bound = count when true
+}
+
+/** Real greed in 2.0 = the 4 orthogonal directions only (spec §2.3). */
+export const REAL_GREEDS: readonly CardType[] = [
+  CardType.DIR_GREED_UP, CardType.DIR_GREED_DOWN,
+  CardType.DIR_GREED_LEFT, CardType.DIR_GREED_RIGHT,
+];

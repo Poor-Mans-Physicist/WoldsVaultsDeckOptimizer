@@ -12,6 +12,7 @@
 //     and `arcaneSlotIndices` is derived for the SA payload.
 
 import type { Position } from "./types";
+import type { ImplicitDef } from "./implicits";
 
 export interface RawDeck {
   key:             string;
@@ -21,6 +22,8 @@ export interface RawDeck {
   base_core_slots: number;               // add ``modes.<mode>.deckmod`` for final
   min_regular:     number;
   max_greed:       number;
+  /** Optimizer 2.0: the deck's implicit modifier (Wold's roster only). */
+  implicit?:       ImplicitDef | null;
 }
 
 export interface Deck {
@@ -34,6 +37,8 @@ export interface Deck {
   arcaneSlotIndices:   number[];          // indices into `slots`, for the SA payload
   min_regular: number;
   max_greed:   number;
+  /** The deck's implicit modifier (null on vanilla / implicit-less decks). */
+  implicit:    ImplicitDef | null;
 
   // Peer-index arrays (indices into `slots`), parallel to Rust `DeckGeom`.
   rowPeers:  number[][];
@@ -98,6 +103,7 @@ export function buildDeck(raw: RawDeck, deckmod: number): Deck {
     arcaneSlotIndices,
     min_regular:       raw.min_regular,
     max_greed:         raw.max_greed,
+    implicit:          raw.implicit ?? null,
     rowPeers, colPeers, surrPeers, diagPeers,
   };
 }
@@ -110,6 +116,13 @@ export function buildDeck(raw: RawDeck, deckmod: number): Deck {
  * Caches the parsed JSON so mode switches don't re-fetch.
  */
 let _decksCache: Record<string, RawDeck[]> | null = null;
+let _implicitCatalog: Record<string, ImplicitDef> = {};
+
+/** Full implicit catalog (for the Mystery pair-picker). Populated by the
+ *  first loadDecks() call — decks.json ships it under "_implicits". */
+export function implicitCatalog(): Record<string, ImplicitDef> {
+  return _implicitCatalog;
+}
 
 export async function loadDecks(
   baseUrl: string,
@@ -121,7 +134,10 @@ export async function loadDecks(
     // the server so new decks / arcane-slot changes aren't served stale.
     const res = await fetch(`${baseUrl}decks.json`, { cache: "no-cache" });
     if (!res.ok) throw new Error(`Failed to load decks.json: ${res.status}`);
-    _decksCache = await res.json();
+    const blob = await res.json();
+    _implicitCatalog = (blob["_implicits"] ?? {}) as Record<string, ImplicitDef>;
+    delete blob["_implicits"];
+    _decksCache = blob;
   }
   const list = _decksCache?.[mode];
   if (!list) {

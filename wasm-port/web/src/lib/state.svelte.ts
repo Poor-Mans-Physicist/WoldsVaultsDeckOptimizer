@@ -2,10 +2,20 @@
 // components read/mutate fields on `app`. Mirrors the `_AppState` dataclass
 // in src/gui.py plus the parts we keep purely client-side (no shutdown).
 
-import { CardClass, type CoreSpec, type Position } from "./types";
+import {
+  CardClass, Depth, OptimizerMode,
+  type CoreSpec, type ExactStack, type GroupTag, type Position,
+  type TagRuleRow, type TaggedPlaced,
+} from "./types";
 import type { Deck } from "./deck";
+import { implicitCatalog } from "./deck";
 import type { ResolvedConfig, ConfigBundle } from "./config";
-import type { OptimizeResult } from "./optimize";
+import type { TaggedOptimizeResult } from "./taggedClient";
+import { defaultTargetedRules } from "./tagged";
+import { toPayload, isScoringImplicit, type ImplicitPayload } from "./implicits";
+import {
+  simulateTaggedBreakdown,
+} from "./taggedBreakdown";
 import { CORE_OPTIONS } from "./coreOptions";
 import type { CardEntry } from "./modifiers";
 import type { AssignmentKey, AssignmentVal } from "./preview";
@@ -29,7 +39,6 @@ import {
 import { buildDeck } from "./deck";
 import type { RawDeck } from "./deck";
 import { CardType, type Placed } from "./types";
-import { simulateInventoryBreakdown } from "./breakdown";
 
 export type Tab = "optimize" | "preview" | "build" | "snapshots";
 
@@ -50,17 +59,25 @@ interface AppState {
   deck: Deck | null;
   cardClass: CardClass;
 
-  // Inputs
-  inventoryCounts: Record<string, number>;            // stackKey -> count (regular pool)
-  // Forced inventory — per-(type, color) lower bound the SA must satisfy.
-  // Cap = inventoryCounts + forcedCounts. Empty by default.
-  forcedCounts:    Record<string, number>;
-  // Minimum number of "stat-giving" (non-greed, non-arcane, non-dead) cards
-  // the SA must place. 0 disables the constraint. Stat-giving set =
-  // {ROW, COL, SURR, DIAG, DELUXE, TYPELESS}. Enforced inside the WASM kernel.
+  // ── Optimizer 2.0 inputs ──────────────────────────────────────────────
+  // Mode slider: Max (theoretical ceiling) / Targeted (tag limits) / Exact
+  // (real built cards). Each swaps the side panel + kernel supply model.
+  optMode: OptimizerMode;
+  // Depth slider → fixed SA params (DEPTH_PARAMS). Replaces raw inputs.
+  depth: Depth;
+  // Complex Cards (§7): scale_color may differ from card_color. Slows runs.
+  complexCards: boolean;
+  // Targeted per-tag Min/Max rows (canonical order; null = unbounded).
+  targetedRules: TagRuleRow[];
+  // Exact-mode inventory: stacked identical cards + per-stack must-place.
+  exactStacks: ExactStack[];
+  // Mystery deck: the two implicits the player's crafted deck rolled.
+  mysteryPicks: [string, string] | null;
+  // Ephemeral what-if tag edits on the placed result (click popup, §9.6).
+  // Keyed by `${r},${c}` → replacement group list. Discarded on re-run.
+  whatIf: Map<string, GroupTag[]>;
+  // Minimum number of stat-giving cards the SA must place. 0 disables.
   minRegularPlaced: number;
-  // Which inventory pool the table is currently editing.
-  inventoryView:   "regular" | "forced";
   // Arcane auto-place toggle. true = SA must keep arcane slots as ARCANE
   // (color swaps still allowed within them). false = SA may swap arcane slots
   // to DEAD for void-core trade-offs. Initialised from cfg.arcane.auto_place.
@@ -72,12 +89,10 @@ interface AppState {
   // value is unbounded — typing a large negative number just clamps the
   // effective core count to 0.
   bonusCores: number;
-  nIter: number;
-  restarts: number;
 
   // Run
   running: boolean;
-  result: OptimizeResult | null;
+  result: TaggedOptimizeResult | null;
   elapsedMs: number | null;
   runError: string | null;
 
@@ -119,15 +134,17 @@ export const app = $state<AppState>({
   deck: null,
   cardClass: CardClass.SHINY,
 
-  inventoryCounts: {},
-  forcedCounts:    {},
+  optMode: OptimizerMode.MAX,
+  depth: Depth.DEFAULT,
+  complexCards: false,
+  targetedRules: defaultTargetedRules(),
+  exactStacks: [],
+  mysteryPicks: null,
+  whatIf: new Map(),
   minRegularPlaced: 0,
-  inventoryView:   "regular",
   autoPlaceArcane: true,   // default; overridden from cfg.arcane.auto_place on boot
   coreState: initialCoreState(),
   bonusCores: 0,           // seeded from cfg.deckmod on boot + mode change
-  nIter: 60_000,
-  restarts: 12,
 
   running: false,
   result: null,
@@ -161,25 +178,6 @@ export function selectedCores(): CoreSpec[] {
   return out;
 }
 
-/** Apply a flat preset to every inventory cell (Unlimited / Clear buttons).
- *  Operates on whichever pool the table is currently editing. */
-export function setAllInventory(value: number, allKeys: string[]): void {
-  const target = app.inventoryView === "forced" ? app.forcedCounts : app.inventoryCounts;
-  for (const k of allKeys) target[k] = value;
-}
-
-/** Fill every (type, `color`) cell with `value` in the active pool. */
-export function fillColumn(value: number, columnKeys: string[]): void {
-  const target = app.inventoryView === "forced" ? app.forcedCounts : app.inventoryCounts;
-  for (const k of columnKeys) target[k] = value;
-}
-
-/** Fill every (`cardType`, color) cell with `value` in the active pool. */
-export function fillRow(value: number, rowKeys: string[]): void {
-  const target = app.inventoryView === "forced" ? app.forcedCounts : app.inventoryCounts;
-  for (const k of rowKeys) target[k] = value;
-}
-
 /** Toggle every core checkbox at once (Enable-all / Disable-all). */
 export function setAllCores(enabled: boolean): void {
   for (const s of app.coreState) s.enabled = enabled;
@@ -190,6 +188,74 @@ export function clearRunResult(): void {
   app.result    = null;
   app.elapsedMs = null;
   app.runError  = null;
+  app.whatIf    = new Map();   // what-if edits die with the run (§9.6)
+}
+
+// ─── Optimizer 2.0 helpers ───────────────────────────────────────────────────
+
+/** Reset every Targeted Min/Max to unbounded. */
+export function clearTargetedRules(): void {
+  app.targetedRules = defaultTargetedRules();
+}
+
+/** The active implicit payloads for the CURRENT app state (deck implicit or
+ *  the user's Mystery pair; empty in vanilla). Mirrors tagged.ts logic but
+ *  reads the reactive state directly. */
+export function currentImplicits(): ImplicitPayload[] {
+  if (app.mode === "vanilla" || !app.deck) return [];
+  const def = app.deck.implicit;
+  if (!def) return [];
+  if (def.kind === "mystery") {
+    if (!app.mysteryPicks) return [];
+    const cat = implicitCatalog();
+    const out: ImplicitPayload[] = [];
+    for (const key of app.mysteryPicks) {
+      const d = cat[key];
+      if (isScoringImplicit(d)) out.push(toPayload(d));
+    }
+    return out;
+  }
+  return isScoringImplicit(def) ? [toPayload(def)] : [];
+}
+
+/** Result cards with the ephemeral what-if tag edits applied. Slot lookups
+ *  go through the RESULT's deck (post-structural shape), not app.deck. */
+export function whatIfCards(): TaggedPlaced[] | null {
+  if (!app.result) return null;
+  if (app.whatIf.size === 0) return app.result.cards;
+  const deck = app.result.deck;
+  return app.result.cards.map((c, i) => {
+    const [r, cc] = deck.slots[i];
+    const edited = app.whatIf.get(`${r},${cc}`);
+    return edited ? { ...c, groups: [...edited] } : c;
+  });
+}
+
+/** Re-score the current result with what-if edits applied (score-only sim
+ *  pass, not a re-anneal — §9.6). Returns null when no result is live. */
+/** colors_real flag for the CURRENT app state — must mirror
+ *  tagged.ts::colorsRealFor exactly or the what-if re-score drifts. */
+export function currentColorsReal(): boolean {
+  if (app.optMode === OptimizerMode.EXACT) return true;
+  if (app.complexCards) return true;
+  if (app.optMode === OptimizerMode.TARGETED) {
+    return app.targetedRules.some(
+      (r) => r.axis === "color" && (r.min !== null || r.max !== null),
+    );
+  }
+  return false;
+}
+
+export function whatIfBreakdown() {
+  if (!app.result || !app.cfg) return null;
+  const cards = whatIfCards();
+  if (cards === null) return null;
+  const colorsReal = currentColorsReal();
+  return simulateTaggedBreakdown(
+    app.result.deck, cards, app.cardClass, app.result.coresUsed, currentImplicits(),
+    { colorsReal, complex: app.complexCards, wvFoilRules: app.mode !== "vanilla" },
+    app.cfg,
+  );
 }
 
 /** Drop every preview-mode assignment (deck/class swap, manual clear). */
@@ -459,8 +525,9 @@ export function captureSnapshot(label: string): Snapshot | null {
     cardClass:       app.cardClass,
     bonusCores:      app.bonusCores,
     autoPlaceArcane: app.autoPlaceArcane,
-    inventoryCounts: { ...app.inventoryCounts },
-    forcedCounts:    { ...app.forcedCounts },
+    // v1 pools retired in 2.0 — kept as empty maps for schema compat.
+    inventoryCounts: {},
+    forcedCounts:    {},
     minRegularPlaced: app.minRegularPlaced,
     cores:           app.result.coresUsed.map((c) => ({ ...c })),
     structural: {
@@ -472,6 +539,16 @@ export function captureSnapshot(label: string): Snapshot | null {
     },
     assignment: _serializeAssignment(deckSrc.slots, app.result.assignment),
     wasmScore:  app.result.wasmScore,
+    // — Optimizer 2.0 —
+    optMode:      app.optMode,
+    depth:        app.depth,
+    complexCards: app.complexCards,
+    targetedRules: app.targetedRules.map((r) => ({ ...r })),
+    exactStacks:   app.exactStacks.map((s) => ({ ...s, groups: [...s.groups] })),
+    mysteryPicks:  app.mysteryPicks ? [...app.mysteryPicks] : null,
+    taggedAssignment: app.result.cards.map((c) => [
+      c.t, c.color ?? "", c.scaleColor ?? "", [...c.groups],
+    ]),
   };
   return snap;
 }
@@ -530,9 +607,15 @@ export function restoreSnapshot(snap: Snapshot): void {
   app.cardClass       = snap.cardClass;
   app.bonusCores      = snap.bonusCores;
   app.autoPlaceArcane = snap.autoPlaceArcane;
-  app.inventoryCounts = { ...snap.inventoryCounts };
-  app.forcedCounts    = { ...snap.forcedCounts };
   app.minRegularPlaced = snap.minRegularPlaced ?? 0;
+  // Optimizer 2.0 inputs — v1 snapshots restore as Max/default.
+  app.optMode       = snap.optMode ?? OptimizerMode.MAX;
+  app.depth         = snap.depth ?? Depth.DEFAULT;
+  app.complexCards  = snap.complexCards ?? false;
+  app.targetedRules = snap.targetedRules?.map((r) => ({ ...r })) ?? defaultTargetedRules();
+  app.exactStacks   = snap.exactStacks?.map((s) => ({ ...s, groups: [...s.groups] })) ?? [];
+  app.mysteryPicks  = snap.mysteryPicks ?? null;
+  app.whatIf        = new Map();
   // Structural cores — same shape, just clone so reactive proxies don't share.
   // `greaterStructural` was added later; older snapshots default to false.
   app.structural = {
@@ -563,18 +646,60 @@ export function restoreSnapshot(snap: Snapshot): void {
     }
   }
 
-  // Rebuild the OptimizeResult from the serialized assignment so the grid
-  // paints + the breakdown popup works on click.
+  // Rebuild the result from the serialized assignment so the grid paints +
+  // the breakdown popup works on click.
+  //
+  // v2 snapshots carry the tagged per-slot cards and re-score under the
+  // captured mode's flags + the deck's implicits. v1 snapshots predate tags
+  // AND implicits: synthesize the run-level foil bits (so n_ns matches) and
+  // re-score with implicits OFF + real colors (the old color-aware model) —
+  // showing the run as it was captured, not as 2.0 would score it today.
+  const isV2 = Array.isArray(snap.taggedAssignment)
+    && snap.taggedAssignment.length === deck.slots.length;
+  const foilCore = snap.cores.some((c) => c.core_type === "foil");
+  const v1Foil = (snap.mode !== "vanilla" && snap.cardClass === CardClass.SHINY)
+    || (snap.cardClass === CardClass.EVO && foilCore);
+
+  const cards: TaggedPlaced[] = [];
   const asgnMap = new Map<string, Placed>();
   for (let i = 0; i < deck.slots.length; i++) {
-    const [tStr, cStr] = snap.assignment[i] ?? [CardType.EMPTY, ""];
-    asgnMap.set(
-      `${deck.slots[i][0]},${deck.slots[i][1]}`,
-      [tStr as any, (cStr ? cStr : null) as any],
-    );
+    let card: TaggedPlaced;
+    if (isV2) {
+      const [t, color, scale, groups] = snap.taggedAssignment![i];
+      card = {
+        t: t as any,
+        color: (color || null) as any,
+        scaleColor: (scale || null) as any,
+        groups: groups as GroupTag[],
+      };
+    } else {
+      const [tStr, cStr] = snap.assignment[i] ?? [CardType.EMPTY, ""];
+      const t = tStr as any;
+      const scorableOrArcane = ["row", "col", "surr", "diag", "deluxe", "typeless", "arcane"].includes(tStr);
+      card = {
+        t,
+        color: (cStr ? cStr : null) as any,
+        scaleColor: (cStr ? cStr : null) as any,
+        groups: v1Foil && scorableOrArcane ? (["Foil"] as GroupTag[]) : [],
+      };
+    }
+    cards.push(card);
+    asgnMap.set(`${deck.slots[i][0]},${deck.slots[i][1]}`, [card.t, card.color]);
   }
-  const breakdown = simulateInventoryBreakdown(deck, asgnMap, snap.cardClass, snap.cores, app.cfg);
+
+  const breakdown = simulateTaggedBreakdown(
+    deck, cards, snap.cardClass, snap.cores,
+    isV2 ? currentImplicits() : [],
+    {
+      colorsReal: isV2 ? currentColorsReal() : true,
+      complex: isV2 ? (snap.complexCards ?? false) : false,
+      wvFoilRules: snap.mode !== "vanilla",
+    },
+    app.cfg,
+  );
   app.result = {
+    deck,
+    cards,
     assignment: asgnMap,
     wasmScore:  snap.wasmScore,
     tsScore:    breakdown.total,

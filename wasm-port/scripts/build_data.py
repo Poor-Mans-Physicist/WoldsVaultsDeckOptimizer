@@ -35,6 +35,10 @@ from typing import Any, Dict, List, Set, Tuple
 
 import yaml
 
+# Windows consoles default to cp1252 — force UTF-8 so the summary line prints.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 
 # After the wasm-port dedup refactor, config + decks + modifiers live at the
 # OUTER repo root (single source of truth for both CLI and web app).
@@ -44,6 +48,7 @@ _WASM_ROOT   = _REPO_ROOT / "wasm-port"
 _CONFIG_PATH = _REPO_ROOT / "config.yaml"
 _DECKS_DIR   = _REPO_ROOT / "decks"
 _MODIFIERS   = _REPO_ROOT / "modifiers.json"
+_IMPLICITS   = _DECKS_DIR / "wolds_implicits.json"
 _DEFAULT_OUT = _WASM_ROOT / "web" / "public"
 
 
@@ -224,9 +229,26 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    # decks.json: per-mode keyed dict. The browser loads its active mode's list.
+    # Deck implicits (Optimizer 2.0, Wold's-only). Attach each deck's implicit
+    # entry to its RawDeck (wolds roster only) AND ship the full catalog so
+    # the Mystery deck's pair-picker can enumerate every implicit.
+    implicit_catalog: Dict[str, Any] = {}
+    if _IMPLICITS.is_file():
+        with _IMPLICITS.open("r", encoding="utf-8") as fh:
+            implicit_catalog = (json.load(fh) or {}).get("implicits") or {}
+        for deck in decks_by_mode.get("wolds", []):
+            imp = implicit_catalog.get(deck["key"])
+            if imp is not None:
+                deck["implicit"] = imp
+    else:
+        print(f"[build_data] WARN: {_IMPLICITS} not found — decks ship without implicits.")
+
+    # decks.json: per-mode keyed dict + the implicit catalog under a reserved
+    # "_implicits" key (mode names never start with an underscore).
+    decks_blob: Dict[str, Any] = dict(decks_by_mode)
+    decks_blob["_implicits"] = implicit_catalog
     (out_dir / "decks.json").write_text(
-        json.dumps(decks_by_mode, indent=2) + "\n",
+        json.dumps(decks_blob, indent=2) + "\n",
         encoding="utf-8",
     )
 
