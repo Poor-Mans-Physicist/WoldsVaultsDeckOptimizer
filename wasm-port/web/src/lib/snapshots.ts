@@ -69,6 +69,8 @@ export interface Snapshot {
   targetedRules?: TagRuleRow[];
   exactStacks?:  ExactStack[];
   mysteryPicks?: [string, string] | null;
+  /** Deck-implicit toggle at capture time. Absent (pre-toggle) ⇒ ON. */
+  implicitsEnabled?: boolean;
   /** Tagged per-slot output, parallel to deck.slots:
    *  [type, color, scale_color, groups[]]. v1 snapshots lack it — the
    *  restore path synthesizes tags from the run-level foil rule. */
@@ -124,6 +126,7 @@ function _normalize(rec: any): Snapshot {
     targetedRules:   Array.isArray(rec?.targetedRules) ? rec.targetedRules : undefined,
     exactStacks:     Array.isArray(rec?.exactStacks) ? rec.exactStacks : undefined,
     mysteryPicks:    rec?.mysteryPicks ?? undefined,
+    implicitsEnabled: typeof rec?.implicitsEnabled === "boolean" ? rec.implicitsEnabled : undefined,
     taggedAssignment: Array.isArray(rec?.taggedAssignment) ? rec.taggedAssignment : undefined,
   };
 }

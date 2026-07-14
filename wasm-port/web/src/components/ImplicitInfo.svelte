@@ -3,13 +3,16 @@
   // active implicit's effect, and for the Mystery deck exposes the two
   // dropdowns to enter the pair the player's crafted deck actually rolled.
 
-  import { app, clearRunResult } from "../lib/state.svelte";
+  import { app, clearRunResult, setImplicitsEnabled } from "../lib/state.svelte";
   import { implicitCatalog } from "../lib/deck";
   import { mysteryChoices, isScoringImplicit } from "../lib/implicits";
 
   const def = $derived(app.mode === "vanilla" ? null : app.deck?.implicit ?? null);
   const isMystery = $derived(def?.kind === "mystery");
   const choices = $derived(isMystery ? mysteryChoices(implicitCatalog()) : []);
+  // The on/off box only makes sense when the implicit can reach the kernel
+  // (scoring implicit, or Mystery whose picks might be scoring).
+  const toggleable = $derived(isScoringImplicit(def) || isMystery);
 
   function pick(idx: 0 | 1, e: Event) {
     const key = (e.currentTarget as HTMLSelectElement).value;
@@ -28,12 +31,27 @@
 </script>
 
 {#if def}
-  <div class="implicit" class:inert={!isScoringImplicit(def) && !isMystery}>
+  <div class="implicit"
+    class:inert={!isScoringImplicit(def) && !isMystery}
+    class:off={toggleable && !app.implicitsEnabled}>
     <div class="head">
       <span class="badge">implicit</span>
       <span class="name">{def.name ?? "Deck Modifier"}</span>
+      {#if toggleable}
+        <!-- Base-vs-implicit comparison switch: OFF scores the bare layout.
+             Defaults to ON; toggling clears the run (re-run to compare). -->
+        <label class="onoff" title="Untick to optimize the bare layout — compare base NDM vs what the implicit adds. Cleared results re-run under the new setting.">
+          <input type="checkbox"
+            checked={app.implicitsEnabled}
+            onchange={(e) => setImplicitsEnabled((e.currentTarget as HTMLInputElement).checked)} />
+          <span>{app.implicitsEnabled ? "on" : "off"}</span>
+        </label>
+      {/if}
     </div>
     <div class="desc">{def.desc ?? ""}</div>
+    {#if toggleable && !app.implicitsEnabled}
+      <div class="offnote">Implicit disabled — runs score the base layout.</div>
+    {/if}
 
     {#if isMystery}
       <div class="mystery">
@@ -68,7 +86,21 @@
     background: var(--bg-input);
   }
   .implicit.inert { opacity: .75; }
+  .implicit.off .desc, .implicit.off .name { opacity: .55; }
   .head { display: flex; align-items: center; gap: 6px; }
+  .onoff {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
+  .offnote { font-size: 10px; color: #FCD34D; margin-top: 4px; }
   .badge {
     font-size: 9px;
     text-transform: uppercase;

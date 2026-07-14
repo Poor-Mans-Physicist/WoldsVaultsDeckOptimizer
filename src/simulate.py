@@ -521,12 +521,14 @@ def _tagged_max_stacks(
     deck: Deck,
     card_class: CardClass,
     implicits: Optional[List[tuple]] = None,
+    colors_real: bool = False,
 ) -> List[tuple]:
-    """Unlimited mono-color Max supply for this (deck, class). The mono
-    color follows a color-keyed implicit (velara → green) so readouts match
-    the build guidance; scoring is color-blind regardless."""
+    """Unlimited Max supply for this (deck, class). Mono-color by default —
+    the mono color follows a color-keyed implicit (velara → green) so
+    readouts match the build guidance; scoring is color-blind regardless.
+    Under ``colors_real`` (puzzle's color-mismatch implicit) every type is
+    supplied in all four colors and the SA optimizes them for real."""
     from .implicits import preferred_mono_color
-    mono = preferred_mono_color(implicits or []) or "red"
     types: List[CardType] = []
     if card_class == CardClass.SHINY and not SHINY_POSITIONAL:
         types.append(CardType.TYPELESS)
@@ -538,8 +540,12 @@ def _tagged_max_stacks(
     types += _TAGGED_GREEDS
     if deck.arcane_slots:
         types.append(CardType.ARCANE)
+    if colors_real:
+        colors = ["red", "green", "blue", "yellow"]
+    else:
+        colors = [preferred_mono_color(implicits or []) or "red"]
     # (type, color, scale_color, groups, count(-1 = unlimited), min_place)
-    return [(t.value, mono, "", [], -1, 0) for t in types]
+    return [(t.value, c, "", [], -1, 0) for t in types for c in colors]
 
 
 def _tagged_rules(deck: Deck) -> Tuple[List[tuple], int]:
@@ -589,6 +595,11 @@ def sa_optimize_tagged(
     imps = implicits or []
     blanket, assignable = split_blanket_assignable(imps)
 
+    # color_mismatch (puzzle) scores MISMATCHED neighbor colors — under the
+    # blanket mono model the kernel would assume max mismatch on an all-one-
+    # color layout. Optimize real colors instead (mirrors the web app).
+    colors_real = any(t[0] == "color_mismatch" for t in imps)
+
     tag_rules, min_stat = _tagged_rules(deck)
 
     asgn_list, score = _ndm_core.run_sa_tagged(
@@ -598,12 +609,18 @@ def sa_optimize_tagged(
         surr_peers          = _peers_as_indices(slot_order, deck._surr_peers, slots_list),
         diag_peers          = _peers_as_indices(slot_order, deck._diag_peers, slots_list),
         arcane_slot_indices = [slot_order[p] for p in deck.arcane_slots],
-        stacks              = _tagged_max_stacks(deck, card_class, imps),
+        stacks              = _tagged_max_stacks(deck, card_class, imps, colors_real),
         tag_rules           = tag_rules,
         blanket_groups      = blanket,
         assignable_groups   = assignable,
         implicits           = imps,
-        cores               = [(c.value, "", -1.0) for c in cores],
+        # Under colors_real a colorless COLOR core is inert by design — give
+        # it a concrete color so the SA can weigh it (any color is symmetric
+        # in unlimited supply; the web enumerates the four color rows).
+        cores               = [
+            (c.value, "red" if (colors_real and c == CoreType.COLOR) else "", -1.0)
+            for c in cores
+        ],
         min_stat_placed     = min_stat,
         # §6 non-foil-evo cleanup: Wold's-only model improvement. Vanilla
         # stays exactly on the classic model (it's the regression baseline).
@@ -630,7 +647,7 @@ def sa_optimize_tagged(
         additive_cores         = ADDITIVE_CORES,
         is_shiny               = (card_class == CardClass.SHINY),
         auto_place_arcane      = _live_auto_place_arcane(),
-        colors_real            = False,
+        colors_real            = colors_real,
         complex_cards          = False,
         wv_foil_rules          = MODE != "vanilla",
         floor_counts_deluxe    = DELUXE_COUNTED_AS_REGULAR,

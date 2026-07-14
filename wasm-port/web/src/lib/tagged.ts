@@ -22,6 +22,9 @@ export interface TaggedRunInput {
   targetedRules: TagRuleRow[];     // Targeted only
   exactStacks:   ExactStack[];     // Exact only
   mysteryPicks:  [string, string] | null;
+  /** The Deck-card implicit toggle (default ON). OFF ⇒ the run scores the
+   *  bare layout — for comparing base vs implicit-boosted NDM. */
+  implicitsEnabled: boolean;
   implicitCatalog: Record<string, ImplicitDef>;
   /** Category combos that exist on real cards (deck.ts::legalTagCombos). */
   legalCombos: string[][];
@@ -50,6 +53,11 @@ export interface KernelStack {
 export function colorsRealFor(input: TaggedRunInput): boolean {
   if (input.mode === OptimizerMode.EXACT) return true;
   if (input.complexCards) return true;
+  // color_mismatch (puzzle) scores MISMATCHED neighbor colors. Under blanket
+  // mono colors the kernel would assume max mismatch while the grid displays
+  // a single-color deck — score and display disagree. Optimize real colors
+  // instead so the shown layout is the one being scored.
+  if (activeImplicits(input).some((i) => i.kind === "color_mismatch")) return true;
   if (input.mode === OptimizerMode.TARGETED) {
     return input.targetedRules.some(
       (r) => r.axis === "color" && (r.min !== null || r.max !== null),
@@ -60,6 +68,7 @@ export function colorsRealFor(input: TaggedRunInput): boolean {
 
 export function activeImplicits(input: TaggedRunInput): ImplicitPayload[] {
   if (input.appMode === "vanilla") return [];   // implicits are Wold's-only (§8)
+  if (!input.implicitsEnabled) return [];       // Deck-card toggle (base-layout runs)
   return resolveImplicits(
     input.deck.implicit, input.mysteryPicks, input.implicitCatalog,
   );

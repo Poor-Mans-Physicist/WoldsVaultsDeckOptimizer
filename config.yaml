@@ -37,6 +37,12 @@ decks:
 cards:
   json_file: modifiers.json
 
+# Deck-implicit master switch for the spreadsheet CLI (Wold's only — vanilla
+# never has implicits). `enabled: false` (or the `--no-implicits` flag)
+# scores every deck's bare layout, for base-vs-implicit balance comparisons.
+implicits:
+  enabled: true
+
 greed:
   dir_vert:      4
   dir_horiz:     4

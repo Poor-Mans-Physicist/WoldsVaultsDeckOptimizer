@@ -48,6 +48,12 @@
     return out;
   });
 
+  // Puzzle: the implicit scores MISMATCHED neighbor colors, so the run
+  // optimizes real colors — the grid's per-slot colors are the build plan.
+  const wantsMismatch = $derived(
+    currentImplicits().some((i) => i.kind === "color_mismatch"),
+  );
+
   const deadCount = $derived(
     app.result ? app.result.cards.filter((c) => c.t === CardType.DEAD).length : 0,
   );
@@ -58,7 +64,12 @@
   {#if !app.result}
     <div class="empty">Run the optimizer to see the ideal build list.</div>
   {:else}
-    {#if requiredColors.length > 0}
+    {#if wantsMismatch}
+      <div class="req-color">
+        Implicit rewards <strong>mismatched</strong> neighbor colors — colors
+        were optimized per slot; build exactly the colors shown on the grid.
+      </div>
+    {:else if requiredColors.length > 0}
       <div class="req-color">
         Implicit wants
         {#each requiredColors as c, i}

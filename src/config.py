@@ -31,7 +31,14 @@ _mode_parser.add_argument(
     default="wolds",
     help="Optimizer preset: 'wolds' (default) or 'vanilla'.",
 )
-MODE: str = _mode_parser.parse_known_args()[0].mode
+_mode_parser.add_argument(
+    "--no-implicits",
+    action="store_true",
+    help="Score bare deck layouts: skip every deck implicit (Wold's only — "
+         "vanilla never has them). For base-vs-implicit balance comparisons.",
+)
+_cli_args = _mode_parser.parse_known_args()[0]
+MODE: str = _cli_args.mode
 _VANILLA: bool = MODE == "vanilla"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -73,6 +80,14 @@ DECKS_JSON_FILE: str = (_CFG.get("decks") or {}).get("json_file", "") or ""
 # Mode-specific game-card dump (repo root). Feeds the legal tag-combo catalog
 # (src/implicits.py) — wolds and vanilla ship different card rosters.
 CARDS_JSON_FILE: str = (_CFG.get("cards") or {}).get("json_file", "") or "modifiers.json"
+
+# Deck-implicit master switch: config default AND'd with the --no-implicits
+# CLI override. Off ⇒ every deck optimizes its bare layout (base-vs-implicit
+# comparison runs). Mirrors the web app's Deck-card toggle.
+IMPLICITS_ENABLED: bool = (
+    bool((_CFG.get("implicits") or {}).get("enabled", True))
+    and not _cli_args.no_implicits
+)
 
 MULT_DIR_GREED_VERT:      float = _CFG["greed"]["dir_vert"]
 MULT_DIR_GREED_HORIZ:     float = _CFG["greed"]["dir_horiz"]

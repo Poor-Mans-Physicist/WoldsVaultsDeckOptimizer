@@ -11,6 +11,7 @@ from .types import CardClass
 from .config import (
     DECKS,
     EXPORT_SPREADSHEET,
+    IMPLICITS_ENABLED,
     MODE,
     SPREADSHEET_PREFIX,
     Deck,
@@ -42,7 +43,12 @@ def optimize(
 
     # Deck implicits are a Wold's-only mechanic; the tagged engine evaluates
     # them inside the kernel. Classic engine ignores them (pre-2.0 behavior).
-    implicits = implicits_for_deck(deck.key) if MODE != "vanilla" else []
+    # IMPLICITS_ENABLED (config `implicits.enabled` / --no-implicits) scores
+    # bare layouts instead — the base-vs-implicit comparison switch.
+    implicits = (
+        implicits_for_deck(deck.key)
+        if MODE != "vanilla" and IMPLICITS_ENABLED else []
+    )
 
     for card_class in CardClass:
         candidates = candidate_cores(card_class, deck)

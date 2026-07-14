@@ -73,6 +73,9 @@ interface AppState {
   exactStacks: ExactStack[];
   // Mystery deck: the two implicits the player's crafted deck rolled.
   mysteryPicks: [string, string] | null;
+  // Deck-implicit toggle (default ON; reset on deck/mode change). OFF runs
+  // the bare layout so players can compare base vs implicit-boosted NDM.
+  implicitsEnabled: boolean;
   // Ephemeral what-if tag edits on the placed result (click popup, §9.6).
   // Keyed by `${r},${c}` → replacement group list. Discarded on re-run.
   whatIf: Map<string, GroupTag[]>;
@@ -140,6 +143,7 @@ export const app = $state<AppState>({
   targetedRules: defaultTargetedRules(),
   exactStacks: [],
   mysteryPicks: null,
+  implicitsEnabled: true,
   whatIf: new Map(),
   minRegularPlaced: 0,
   autoPlaceArcane: true,   // default; overridden from cfg.arcane.auto_place on boot
@@ -183,6 +187,15 @@ export function setAllCores(enabled: boolean): void {
   for (const s of app.coreState) s.enabled = enabled;
 }
 
+/** Deck-implicit toggle. Clears the run result: a stale result would have
+ *  been scored under the other setting and every re-score (badge, what-if)
+ *  would silently disagree with it. */
+export function setImplicitsEnabled(on: boolean): void {
+  if (app.implicitsEnabled === on) return;
+  app.implicitsEnabled = on;
+  clearRunResult();
+}
+
 /** Reset run-derived state when the deck / mode / class changes. */
 export function clearRunResult(): void {
   app.result    = null;
@@ -203,6 +216,7 @@ export function clearTargetedRules(): void {
  *  reads the reactive state directly. */
 export function currentImplicits(): ImplicitPayload[] {
   if (app.mode === "vanilla" || !app.deck) return [];
+  if (!app.implicitsEnabled) return [];   // Deck-card toggle (base-layout runs)
   const def = app.deck.implicit;
   if (!def) return [];
   if (def.kind === "mystery") {
@@ -238,6 +252,9 @@ export function whatIfCards(): TaggedPlaced[] | null {
 export function currentColorsReal(): boolean {
   if (app.optMode === OptimizerMode.EXACT) return true;
   if (app.complexCards) return true;
+  // Mirrors the puzzle rule in colorsRealFor: a color_mismatch implicit
+  // forces real colors (currentImplicits() already respects the toggle).
+  if (currentImplicits().some((i) => i.kind === "color_mismatch")) return true;
   if (app.optMode === OptimizerMode.TARGETED) {
     return app.targetedRules.some(
       (r) => r.axis === "color" && (r.min !== null || r.max !== null),
@@ -547,6 +564,7 @@ export function captureSnapshot(label: string): Snapshot | null {
     targetedRules: app.targetedRules.map((r) => ({ ...r })),
     exactStacks:   app.exactStacks.map((s) => ({ ...s, groups: [...s.groups] })),
     mysteryPicks:  app.mysteryPicks ? [...app.mysteryPicks] : null,
+    implicitsEnabled: app.implicitsEnabled,
     taggedAssignment: app.result.cards.map((c) => [
       c.t, c.color ?? "", c.scaleColor ?? "", [...c.groups],
     ]),
@@ -617,6 +635,9 @@ export function restoreSnapshot(snap: Snapshot): void {
   app.targetedRules = snap.targetedRules?.map((r) => ({ ...r })) ?? defaultTargetedRules();
   app.exactStacks   = snap.exactStacks?.map((s) => ({ ...s, groups: [...s.groups] })) ?? [];
   app.mysteryPicks  = snap.mysteryPicks ?? null;
+  // Must land before the breakdown below — currentImplicits() reads it.
+  // Pre-toggle snapshots default to ON (the only behavior that existed).
+  app.implicitsEnabled = snap.implicitsEnabled ?? true;
   app.whatIf        = new Map();
   // Structural cores — same shape, just clone so reactive proxies don't share.
   // `greaterStructural` was added later; older snapshots default to false.

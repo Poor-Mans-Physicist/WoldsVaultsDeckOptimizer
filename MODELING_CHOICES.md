@@ -948,3 +948,23 @@ combos, vanilla 17), so the Preview chooser, the Exact builder chips, the
 what-if popup and the kernel's tag toggles all enforce the active mode's own
 card reality. The CLI reads the same per-mode file via
 `src/config.py::CARDS_JSON_FILE` → `src/implicits.py`.
+
+### Puzzle (color_mismatch) forces real colors; implicit on/off toggle (2026-07-14)
+
+- **color_mismatch (puzzle) always runs with `colors_real`** — in Max /
+  Targeted too, not just Exact/Complex. Under the blanket mono model the
+  kernel scored the §4 "best case" (every filled orthogonal neighbor counts
+  as mismatched) while the grid displayed a single-color deck — score and
+  display disagreed. Now the supply carries all four colors and the SA
+  optimizes them for real (it converges on the expected two-color
+  checkerboard; positional cards pay the true same-color-peer cost). Applies
+  to both channels (`tagged.ts::colorsRealFor`, `simulate.py::
+  sa_optimize_tagged`); the CLI also gives a selected COLOR core a concrete
+  color under this rule (a colorless one is inert when colors are real —
+  any single color is symmetric in unlimited supply).
+- **Deck-implicit toggle** (Deck card, default ON; reset to ON on deck/mode
+  change): OFF scores the bare layout so base-vs-implicit NDM can be
+  compared. Toggling clears the run result (a stale result would disagree
+  with every re-score under the new setting). Snapshots capture the flag
+  (absent = ON). CLI equivalent: config `implicits.enabled` and the
+  `--no-implicits` flag (vanilla is unaffected — it never has implicits).

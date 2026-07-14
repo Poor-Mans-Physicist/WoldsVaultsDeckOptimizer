@@ -314,6 +314,7 @@
     app.decks = await loadDecks(baseUrl, app.cfg.deckmod, next);
     app.deck  = (prevName && app.decks.find((d) => d.name === prevName)) || app.decks[0] || null;
     await reloadCardCatalog();
+    app.implicitsEnabled = true;
     // Structural cores may be disallowed in the new mode; clear them outright.
     resetStructural();
     clearRunResult();
@@ -324,8 +325,11 @@
     const key = (e.currentTarget as HTMLSelectElement).value;
     app.deck = app.decks.find((d) => d.key === key) ?? app.deck;
     // Coordinates from the previous deck don't apply to the new one; a
-    // Mystery pair belongs to the Mystery deck only.
+    // Mystery pair belongs to the Mystery deck only. The implicit toggle is
+    // a per-deck comparison aid — back to its ON default so a deck never
+    // silently optimizes without its implicit.
     app.mysteryPicks = null;
+    app.implicitsEnabled = true;
     resetStructural();
     clearRunResult();
     clearPreviewAssignments();
@@ -381,6 +385,7 @@
         targetedRules:   $state.snapshot(app.targetedRules) as TagRuleRow[],
         exactStacks:     $state.snapshot(app.exactStacks) as ExactStack[],
         mysteryPicks:    app.mysteryPicks ? [...app.mysteryPicks] : null,
+        implicitsEnabled: app.implicitsEnabled,
         implicitCatalog: implicitCatalog(),
         legalCombos:     legalTagCombos(app.mode),
         complexCards:    app.complexCards,
