@@ -15,6 +15,7 @@
   } from "./lib/state.svelte";
   import { loadConfigBundle, getMode } from "./lib/config";
   import { loadDecks, implicitCatalog, legalTagCombos } from "./lib/deck";
+  import { coreKeyDisplay } from "./lib/coreOptions";
   import {
     CardClass, OptimizerMode, DEPTH_PARAMS,
     type ExactStack, type GroupTag, type TagRuleRow,
@@ -160,11 +161,7 @@
       app.bootError = e instanceof Error ? e.message : String(e);
     }
     // Modifiers load is best-effort; preview just degrades if missing.
-    try {
-      app.modifiers = await loadModifiers(baseUrl);
-    } catch (e) {
-      app.modifiersError = e instanceof Error ? e.message : String(e);
-    }
+    await reloadCardCatalog();
     // Populate the Builder's saved-decks list once at boot. Refreshed by the
     // builder helpers (save / delete) on demand thereafter.
     reloadSavedDecks();
@@ -265,6 +262,7 @@
         app.autoPlaceArcane = app.cfg.arcane?.auto_place ?? true;
         app.bonusCores = app.cfg.deckmod ?? 0;
         app.decks = await loadDecks(baseUrl, app.cfg.deckmod, snap.mode);
+        await reloadCardCatalog();
       }
       restoreSnapshot(snap);
       app.tab = "optimize";
@@ -290,6 +288,18 @@
     app.tab === "optimize" || (app.tab === "build" && app.result !== null),
   );
 
+  // The card catalog (Preview chooser + tag legality) is mode-specific —
+  // re-fetched on boot and on every mode flip. Cached per mode in modifiers.ts.
+  async function reloadCardCatalog() {
+    try {
+      app.modifiers = await loadModifiers(baseUrl, app.mode);
+      app.modifiersError = null;
+    } catch (e) {
+      app.modifiers = null;
+      app.modifiersError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   async function onModeChange(next: string) {
     if (!app.bundle) return;
     const prevName = app.deck?.name ?? null;
@@ -303,6 +313,7 @@
     app.bonusCores = app.cfg.deckmod ?? 0;
     app.decks = await loadDecks(baseUrl, app.cfg.deckmod, next);
     app.deck  = (prevName && app.decks.find((d) => d.name === prevName)) || app.decks[0] || null;
+    await reloadCardCatalog();
     // Structural cores may be disallowed in the new mode; clear them outright.
     resetStructural();
     clearRunResult();
@@ -371,7 +382,7 @@
         exactStacks:     $state.snapshot(app.exactStacks) as ExactStack[],
         mysteryPicks:    app.mysteryPicks ? [...app.mysteryPicks] : null,
         implicitCatalog: implicitCatalog(),
-        legalCombos:     legalTagCombos(),
+        legalCombos:     legalTagCombos(app.mode),
         complexCards:    app.complexCards,
         minStatPlaced:   app.minRegularPlaced,
         autoPlaceArcane: app.autoPlaceArcane,
@@ -573,7 +584,9 @@
           ...(app.structural.arcaneCoreEnabled   ? [`arcane_core×${app.structural.convertedSlots.length}`]   : []),
         ]}
         {@const allCoreLabels = [
-          ...r.coresUsed.map((c) => c.color ? `${c.core_type}(${c.color})` : c.core_type),
+          ...r.coresUsed.map((c) => c.color
+            ? `${coreKeyDisplay(c.core_type)}(${c.color})`
+            : coreKeyDisplay(c.core_type)),
           ...structLabels,
         ]}
         <div class="result-bar">

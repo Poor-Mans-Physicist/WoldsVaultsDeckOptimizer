@@ -4,6 +4,7 @@
 import type { TaggedSlotBreakdown as SlotBreakdown } from "./taggedBreakdown";
 import type { Position } from "./types";
 import { TYPE_LABEL } from "./palette";
+import { coreKeyDisplay } from "./coreOptions";
 
 function titleCase(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -38,7 +39,8 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
   out.push("Cores applied to this card:");
   if (b.appliedCores.length === 0) out.push("  (none)");
   for (const c of b.appliedCores) {
-    const label = c.color !== null ? `${c.core_type} (${c.color})` : c.core_type;
+    const key   = coreKeyDisplay(c.core_type);
+    const label = c.color !== null ? `${key} (${c.color})` : key;
     const tag   = c.override ? " (override)" : "";
     out.push(`  • ${label.padEnd(18)} ×${c.value.toFixed(3)}${tag}`);
   }
@@ -56,7 +58,8 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
   if (b.excludedCores.length > 0) {
     out.push("Cores excluded from this card:");
     for (const x of b.excludedCores) {
-      const label = x.color !== null ? `${x.core_type} (${x.color})` : x.core_type;
+      const key   = coreKeyDisplay(x.core_type);
+      const label = x.color !== null ? `${key} (${x.color})` : key;
       out.push(`  • ${label} — ${x.reason}`);
     }
     out.push("");

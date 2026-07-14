@@ -2,8 +2,8 @@
   // Exact-mode card builder popup (spec §9.4): color → type → tags
   // (+ scale color under Complex Cards) → batch count. Foil rules are
   // enforced here: Wold's shiny cards are always foil (locked on); evo
-  // cards take foil only from the Foil core, so the builder locks it off
-  // except where legal.
+  // cards take foil only from the Shiny core (internal key `foil`), so the
+  // builder locks it off except where legal.
 
   import {
     CardClass, CardType, Color, ALL_COLORS, CATEGORY_GROUPS, REAL_GREEDS,
@@ -60,12 +60,12 @@
    *  over the game-data combo catalog; Wild exempt — no chips shown.) */
   function comboIllegal(g: GroupTag): boolean {
     if (groups.includes(g)) return false;   // removal is always fine
-    return !isLegalCategorySet([...groups, g], legalTagCombos());
+    return !isLegalCategorySet([...groups, g], legalTagCombos(appMode));
   }
 
   // Foil legality (§5): Wold's shiny ⇒ locked ON for scorable/arcane cards;
   // greed cards carry no groups; vanilla / evo cards are never foil at build
-  // time (evo foil comes from the Foil core at run time).
+  // time (evo foil comes from the Shiny core at run time).
   // Stat is NOT offered — it's run-derived (shiny ⇒ stat cards carry it,
   // evo ⇒ never); the kernel adds it automatically.
   const foilLocked = $derived(
@@ -166,7 +166,7 @@
               title={foilLocked
                 ? "Wold's shiny cards are always foil"
                 : cardClass === CardClass.EVO
-                  ? "Evo cards are foil only via the Foil core at run time"
+                  ? "Evo cards are foil only via the Shiny core at run time"
                   : "Foil"}
               style:--chip={NOTCH_COLOR.Foil}
               onclick={() => toggleGroup("Foil")}>

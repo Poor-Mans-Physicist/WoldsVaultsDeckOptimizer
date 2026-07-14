@@ -117,7 +117,7 @@ export function buildDeck(raw: RawDeck, deckmod: number): Deck {
  */
 let _decksCache: Record<string, RawDeck[]> | null = null;
 let _implicitCatalog: Record<string, ImplicitDef> = {};
-let _tagCombos: string[][] = [];
+let _tagCombosByMode: Record<string, string[][]> = {};
 
 /** Full implicit catalog (for the Mystery pair-picker). Populated by the
  *  first loadDecks() call — decks.json ships it under "_implicits". */
@@ -125,11 +125,12 @@ export function implicitCatalog(): Record<string, ImplicitDef> {
   return _implicitCatalog;
 }
 
-/** Category-tag combos that exist on real cards (from the game data). A
- *  chosen category set must be a subset of one of these — enforced in the
- *  SA's tag toggles, the Exact builder, and the what-if popup. */
-export function legalTagCombos(): string[][] {
-  return _tagCombos;
+/** Category-tag combos that exist on the MODE's real cards (from the game
+ *  data — wolds and vanilla have different rosters). A chosen category set
+ *  must be a subset of one of these — enforced in the SA's tag toggles, the
+ *  Exact builder, and the what-if popup. Empty ⇒ unconstrained. */
+export function legalTagCombos(mode: string): string[][] {
+  return _tagCombosByMode[mode] ?? [];
 }
 
 export async function loadDecks(
@@ -144,7 +145,16 @@ export async function loadDecks(
     if (!res.ok) throw new Error(`Failed to load decks.json: ${res.status}`);
     const blob = await res.json();
     _implicitCatalog = (blob["_implicits"] ?? {}) as Record<string, ImplicitDef>;
-    _tagCombos = (blob["_tagCombos"] ?? []) as string[][];
+    // Per-mode combo catalogs ({wolds: [...], vanilla: [...]}). A cached
+    // pre-split decks.json shipped one flat array — apply it to every mode
+    // rather than dropping legality entirely.
+    const rawCombos = blob["_tagCombos"] ?? {};
+    if (Array.isArray(rawCombos)) {
+      console.warn("[deck] stale flat _tagCombos in decks.json — applying the single catalog to every mode.");
+      _tagCombosByMode = { wolds: rawCombos, vanilla: rawCombos };
+    } else {
+      _tagCombosByMode = rawCombos as Record<string, string[][]>;
+    }
     delete blob["_implicits"];
     delete blob["_tagCombos"];
     _decksCache = blob;

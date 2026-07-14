@@ -1,6 +1,7 @@
 // Game-card modifier loader + classifier (port of src/modifiers.py).
-// Reads the verbatim `public/modifiers.json` dump and filters down to the
-// previewable stat cards. Family is one of "shiny" | "evo" | "deluxe" | "typeless".
+// Reads the verbatim per-mode `public/modifiers_<mode>.json` dump and filters
+// down to the previewable stat cards. Family is one of
+// "shiny" | "evo" | "deluxe" | "typeless".
 
 const PERCENT_SUFFIXES = ["_percent", "_percentile"];
 
@@ -82,17 +83,22 @@ function humanize(snake: string): string {
     .join(" ");
 }
 
-let _cache: Map<string, CardEntry> | null = null;
+// One card catalog per mode — wolds and vanilla ship different rosters
+// (modifiers_wolds.json / modifiers_vanilla.json from build_data.py).
+const _cacheByMode = new Map<string, Map<string, CardEntry>>();
 
-/** Fetch & parse modifiers.json once, classify into CardEntry, cache the result. */
-export async function loadModifiers(baseUrl: string): Promise<Map<string, CardEntry>> {
-  if (_cache) return _cache;
+/** Fetch & parse the mode's card dump once, classify into CardEntry, cache. */
+export async function loadModifiers(baseUrl: string, mode: string): Promise<Map<string, CardEntry>> {
+  const cached = _cacheByMode.get(mode);
+  if (cached) return cached;
 
-  const res = await fetch(`${baseUrl}modifiers.json`);
+  // `no-cache` like config/decks: revalidate so card retunes aren't stale.
+  const res = await fetch(`${baseUrl}modifiers_${mode}.json`, { cache: "no-cache" });
   if (!res.ok) {
-    console.warn(`[modifiers] modifiers.json fetch failed (${res.status}) — preview will be empty.`);
-    _cache = new Map();
-    return _cache;
+    console.warn(`[modifiers] modifiers_${mode}.json fetch failed (${res.status}) — preview will be empty.`);
+    const empty = new Map<string, CardEntry>();
+    _cacheByMode.set(mode, empty);
+    return empty;
   }
   const raw = await res.json();
   const values = raw?.values ?? {};
@@ -133,7 +139,7 @@ export async function loadModifiers(baseUrl: string): Promise<Map<string, CardEn
     });
   }
 
-  _cache = out;
+  _cacheByMode.set(mode, out);
   return out;
 }
 

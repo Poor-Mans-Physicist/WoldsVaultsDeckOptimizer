@@ -3,14 +3,30 @@
     app, setAllCores,
     toggleConstructionCore, toggleArcaneCore, toggleGreaterStructural,
   } from "../lib/state.svelte";
-  import { CORE_OPTIONS, coreLabel, coreDefaultPlaceholder } from "../lib/coreOptions";
+  import {
+    CORE_OPTIONS, coreLabel, coreDefaultPlaceholder,
+    coreValueKind, storedToPct, pctToStored,
+  } from "../lib/coreOptions";
   import { hiddenCoreTypes } from "../lib/visibility";
   import { maxConstruction, maxArcaneConvert } from "../lib/structural";
   import { CoreType } from "../lib/types";
 
+  // Overrides are entered as a % (matching the in-game item tooltip) but
+  // STORED in raw kernel units, so config defaults, snapshots and the SA
+  // payload are untouched. Scaling cores (Pure / Deluxe / Void) take the
+  // per-unit increment (6.3 → 0.063); the rest take the flat bonus above 1
+  // (150 → 2.5). See coreOptions.coreValueKind.
   function setOverride(i: number, raw: string): void {
     const v = raw.trim();
-    app.coreState[i].override = v === "" ? null : Number(v);
+    app.coreState[i].override = v === ""
+      ? null
+      : pctToStored(Number(v), coreValueKind(CORE_OPTIONS[i].coreType));
+  }
+
+  function overridePct(i: number): number | "" {
+    const stored = app.coreState[i].override;
+    if (stored === null) return "";
+    return storedToPct(stored, coreValueKind(CORE_OPTIONS[i].coreType));
   }
 
   // Mode-driven row visibility. Vanilla hides deluxe / void rows;
@@ -49,14 +65,17 @@
           <input type="checkbox" bind:checked={app.coreState[i].enabled} />
           <span>{coreLabel(opt)}</span>
         </label>
-        <input
-          type="number"
-          class="override"
-          step="0.05"
-          placeholder={app.cfg ? coreDefaultPlaceholder(opt, app.cfg) : "override"}
-          value={app.coreState[i].override ?? ""}
-          oninput={(e) => setOverride(i, (e.currentTarget as HTMLInputElement).value)}
-        />
+        <span class="override-wrap">
+          <input
+            type="number"
+            class="override"
+            step="any"
+            placeholder={app.cfg ? coreDefaultPlaceholder(opt, app.cfg) : "override"}
+            value={overridePct(i)}
+            oninput={(e) => setOverride(i, (e.currentTarget as HTMLInputElement).value)}
+          />
+          <span class="pct" aria-hidden="true">%</span>
+        </span>
       </div>
       {#if opt.coreType === CoreType.ARCHIVE_CORE}
         <!-- In-game caveat the optimizer can't enforce — Archive's effect only
@@ -252,6 +271,18 @@
     text-align: right;
     background: var(--bg-input);
     color: var(--text-primary);
+  }
+  /* % suffix pinned inside the override box so the unit is always visible. */
+  .override-wrap { position: relative; display: inline-flex; }
+  .override-wrap .override { padding-right: 22px; }
+  .override-wrap .pct {
+    position: absolute;
+    right: 7px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    color: var(--text-muted);
+    pointer-events: none;
   }
 
   /* Bonus Cores row — visually divided from the core checkboxes above. */

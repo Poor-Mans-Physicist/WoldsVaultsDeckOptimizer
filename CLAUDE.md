@@ -28,7 +28,7 @@ Finally, we have "deluxe" type cards, which are similar to T cards but have a fl
 
 ## Two channels
 
-After the channel-consolidation refactor, this repo ships exactly two user-facing channels — both backed by the same `config.yaml`, `decks/`, and `modifiers.json` at the repo root:
+After the channel-consolidation refactor, this repo ships exactly two user-facing channels — both backed by the same `config.yaml`, `decks/`, and the per-mode game-card dumps at the repo root (`modifiers.json` = Wold's, `vh_modifiers.json` = vanilla; picked via `cards.json_file`):
 
 1. **Spreadsheet CLI** (`uv run optimize`) — outer Python orchestrator + outer `ndm_core/` Rust kernel (PyO3). Runs every deck in parallel via multiprocessing (one process per deck; kernel restarts stay serial) and emits `Panel_*.xlsx`.
 2. **WASM web app** (`wasm-port/web/`, deployed to GitHub Pages) — Svelte 5 SPA + `wasm-port/ndm_core/` Rust kernel (wasm-bindgen). Interactive; three run modes (Max / Targeted / Exact) with restart-chunk fan-out across a worker pool.
@@ -55,7 +55,7 @@ Everything is driven by `uv`. **Never invoke `python` directly** — always go t
 | `uv run optimize` | Spreadsheet CLI, default mode `wolds`. First run compiles the Rust extension. |
 | `uv run optimize --mode vanilla` | Vanilla preset (multiplicative cores, no positional shiny, no deluxe, no void/archive). |
 | `uv run optimize --help` | CLI help (only flag is `--mode`). |
-| `uv run python wasm-port/scripts/build_data.py` | Regenerates `wasm-port/web/public/{config,decks,modifiers}.json`. CI does this automatically on push. |
+| `uv run python wasm-port/scripts/build_data.py` | Regenerates `wasm-port/web/public/{config,decks}.json` + `modifiers_{wolds,vanilla}.json`. CI does this automatically on push. |
 
 The Rust extension is rebuilt automatically by `uv` whenever `ndm_core/Cargo.{toml,lock}` or `ndm_core/src/**/*.rs` change (see `[tool.uv].cache-keys` in `pyproject.toml`).
 
@@ -85,7 +85,10 @@ decks/           *.yaml (hand-curated) and/or *.json (game-data dumps).
 config.yaml      every tunable (greed/core multipliers, stacking modes,
                  etc.). `modes.<name>` deep-merges over the defaults when
                  --mode <name> is selected.
-modifiers.json   gear-modifier data, used by the WASM web app's Preview panel.
+modifiers.json   Wold's game-card dump (verbatim pack config/the_vault/card/
+                 modifiers.json) — Preview panel + legal tag-combo catalog.
+vh_modifiers.json  vanilla equivalent (stock VH the_vault 3.21.1 instance);
+                 selected per mode via config.yaml `cards.json_file`.
 ```
 
 ### WASM web app
@@ -93,8 +96,9 @@ modifiers.json   gear-modifier data, used by the WASM web app's Preview panel.
 ```
 wasm-port/
   scripts/
-    build_data.py    reads ../config.yaml + ../decks/ + ../modifiers.json,
-                     emits web/public/{config,decks,modifiers}.json
+    build_data.py    reads ../config.yaml + ../decks/ + the per-mode card
+                     dumps (../modifiers.json, ../vh_modifiers.json), emits
+                     web/public/{config,decks}.json + modifiers_<mode>.json
     wasm_*.mjs       perf / parity smoke tests (Node-target wasm build)
   ndm_core/          wasm-bindgen Rust crate; wasm32-unknown-unknown only.
                      inventory.rs is the pure-Rust kernel; wasm_api.rs is

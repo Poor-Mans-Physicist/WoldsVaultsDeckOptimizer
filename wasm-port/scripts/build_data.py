@@ -10,8 +10,10 @@ repo root and produces three JSON blobs under ``web/public/``:
                          constraints. ``core_slots`` is derived in the browser
                          as ``base_core_slots + deckmod``. Shape:
                          ``{"wolds": [Deck, ...], "vanilla": [Deck, ...]}``.
-  * ``modifiers.json`` — verbatim copy of the game data file used by the
-                         Preview panel. Browser does its own filter pass.
+  * ``modifiers_<mode>.json`` — verbatim copy of that mode's game-card dump
+                         (``cfg.cards.json_file``: wolds and vanilla ship
+                         different card rosters) used by the Preview panel.
+                         Browser does its own filter pass.
 
 Per-mode pipeline: each mode's ``decks.json_file`` config picks ONE JSON file
 to load for that mode (e.g. wolds → ``wolds_decks.json``, vanilla →
@@ -47,9 +49,16 @@ _REPO_ROOT   = Path(__file__).resolve().parent.parent.parent
 _WASM_ROOT   = _REPO_ROOT / "wasm-port"
 _CONFIG_PATH = _REPO_ROOT / "config.yaml"
 _DECKS_DIR   = _REPO_ROOT / "decks"
-_MODIFIERS   = _REPO_ROOT / "modifiers.json"
 _IMPLICITS   = _DECKS_DIR / "wolds_implicits.json"
 _DEFAULT_OUT = _WASM_ROOT / "web" / "public"
+
+#: Fallback card dump when a mode's config omits ``cards.json_file``.
+_DEFAULT_MODIFIERS = "modifiers.json"
+
+
+def _modifiers_path_for_mode(mode_cfg: Dict[str, Any]) -> Path:
+    filename = (mode_cfg.get("cards") or {}).get("json_file") or _DEFAULT_MODIFIERS
+    return _REPO_ROOT / filename
 
 
 # ── config.yaml resolution ────────────────────────────────────────────────────
@@ -243,16 +252,18 @@ def main() -> None:
     else:
         print(f"[build_data] WARN: {_IMPLICITS} not found — decks ship without implicits.")
 
-    # Legal category-tag combos: the distinct category sets that exist on
-    # REAL cards (gear stat cards + task_loot resource cards). No optimizer
-    # surface may invent a combination outside this catalog (subset rule;
-    # Wild excepted). Shipped so the SA's tag toggles, the Exact builder,
-    # and the what-if popup all enforce the same reality.
+    # Legal category-tag combos, PER MODE: the distinct category sets that
+    # exist on that mode's REAL cards (gear stat cards + task_loot resource
+    # cards). No optimizer surface may invent a combination outside the
+    # active mode's catalog (subset rule; Wild excepted). Shipped so the
+    # SA's tag toggles, the Exact builder, and the what-if popup all enforce
+    # the same reality — wolds and vanilla have different card rosters.
     categories = ["Offensive", "Defensive", "Physical", "Magical", "Utility",
                   "Resource", "Knack", "Temporal", "Essence"]
-    combo_set = set()
-    if _MODIFIERS.exists():
-        with _MODIFIERS.open("r", encoding="utf-8") as fh:
+
+    def _combos_from(path: Path) -> List[List[str]]:
+        combo_set = set()
+        with path.open("r", encoding="utf-8") as fh:
             mods = json.load(fh) or {}
         for entry in (mods.get("values") or {}).values():
             if not isinstance(entry, dict):
@@ -260,25 +271,41 @@ def main() -> None:
             if entry.get("type") not in ("gear", "task_loot"):
                 continue
             groups = entry.get("groups") or []
-            combo = tuple(sorted(g for g in groups if g in categories))
-            combo_set.add(combo)
-    tag_combos = sorted(list(c) for c in combo_set)
+            combo_set.add(tuple(sorted(g for g in groups if g in categories)))
+        return sorted(list(c) for c in combo_set)
+
+    tag_combos_by_mode: Dict[str, List[List[str]]] = {}
+    for mode_name, mode_cfg in modes.items():
+        path = _modifiers_path_for_mode(mode_cfg)
+        if path.is_file():
+            tag_combos_by_mode[mode_name] = _combos_from(path)
+        else:
+            print(f"[build_data] WARN: {path} not found — mode '{mode_name}' "
+                  f"ships no tag-combo catalog (legality unconstrained).",
+                  file=sys.stderr)
+            tag_combos_by_mode[mode_name] = []
 
     # decks.json: per-mode keyed dict + reserved "_"-prefixed catalogs
     # (mode names never start with an underscore).
     decks_blob: Dict[str, Any] = dict(decks_by_mode)
     decks_blob["_implicits"] = implicit_catalog
-    decks_blob["_tagCombos"] = tag_combos
+    decks_blob["_tagCombos"] = tag_combos_by_mode
     (out_dir / "decks.json").write_text(
         json.dumps(decks_blob, indent=2) + "\n",
         encoding="utf-8",
     )
 
-    # modifiers.json: verbatim copy. Browser filters / classifies.
-    if _MODIFIERS.exists():
-        shutil.copyfile(_MODIFIERS, out_dir / "modifiers.json")
-    else:
-        print(f"[build_data] WARN: {_MODIFIERS} not found — Preview will be empty.")
+    # modifiers_<mode>.json: verbatim per-mode copies. Browser filters /
+    # classifies. (A stale un-suffixed modifiers.json from older builds is
+    # removed so nothing keeps reading pre-split data.)
+    for mode_name, mode_cfg in modes.items():
+        path = _modifiers_path_for_mode(mode_cfg)
+        if path.is_file():
+            shutil.copyfile(path, out_dir / f"modifiers_{mode_name}.json")
+        else:
+            print(f"[build_data] WARN: {path} not found — Preview will be "
+                  f"empty in mode '{mode_name}'.", file=sys.stderr)
+    (out_dir / "modifiers.json").unlink(missing_ok=True)
 
     deck_summary = ", ".join(f"{m}={len(ds)}" for m, ds in decks_by_mode.items())
     print(f"[build_data] wrote {len(modes)} mode(s), decks: [{deck_summary}] → {out_dir}")

@@ -13,8 +13,19 @@ import json
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-_IMPLICITS_FILE = Path(__file__).resolve().parent.parent / "decks" / "wolds_implicits.json"
-_MODIFIERS_FILE = Path(__file__).resolve().parent.parent / "modifiers.json"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_IMPLICITS_FILE = _REPO_ROOT / "decks" / "wolds_implicits.json"
+
+
+def _modifiers_file() -> Path:
+    """The active mode's game-card dump (``cards.json_file`` in config.yaml —
+    wolds and vanilla ship different rosters). Falls back to the wolds file
+    when config can't be imported (e.g. this module used standalone)."""
+    try:
+        from .config import CARDS_JSON_FILE
+        return _REPO_ROOT / CARDS_JSON_FILE
+    except Exception:
+        return _REPO_ROOT / "modifiers.json"
 
 # Kernel tuple: (kind, value, groups, colors, extra) — see tagsim_py.rs.
 ImplicitTuple = Tuple[str, float, List[str], List[str], str]
@@ -83,13 +94,14 @@ def _relevant_groups(implicits: List[ImplicitTuple]) -> List[str]:
 
 def _load_legal_combos() -> List[List[str]]:
     """Distinct category-tag sets on REAL cards (gear + task_loot entries in
-    modifiers.json). Empty when the file is missing (→ unconstrained)."""
-    if not _MODIFIERS_FILE.is_file():
+    the mode's card dump). Empty when the file is missing (→ unconstrained)."""
+    path = _modifiers_file()
+    if not path.is_file():
         import sys as _sys
-        print("[implicits] WARN: modifiers.json not found — tag-combo "
+        print(f"[implicits] WARN: {path.name} not found — tag-combo "
               "legality is unconstrained this run.", file=_sys.stderr)
         return []
-    with _MODIFIERS_FILE.open("r", encoding="utf-8") as fh:
+    with path.open("r", encoding="utf-8") as fh:
         data = json.load(fh) or {}
     combos = set()
     for entry in (data.get("values") or {}).values():

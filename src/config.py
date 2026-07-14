@@ -70,6 +70,10 @@ EXCLUDED_DECKS: FrozenSet[str] = frozenset(_CFG.get("excluded_decks") or ())
 # Mode-specific JSON deck file. Empty string → no JSON file loaded (YAML only).
 DECKS_JSON_FILE: str = (_CFG.get("decks") or {}).get("json_file", "") or ""
 
+# Mode-specific game-card dump (repo root). Feeds the legal tag-combo catalog
+# (src/implicits.py) — wolds and vanilla ship different card rosters.
+CARDS_JSON_FILE: str = (_CFG.get("cards") or {}).get("json_file", "") or "modifiers.json"
+
 MULT_DIR_GREED_VERT:      float = _CFG["greed"]["dir_vert"]
 MULT_DIR_GREED_HORIZ:     float = _CFG["greed"]["dir_horiz"]
 MULT_EVO_GREED:           float = _CFG["greed"]["evo"]

@@ -48,11 +48,11 @@
   /** Would adding `g` create a category set no real card has? */
   function comboIllegal(g: GroupTag): boolean {
     if (currentGroups.includes(g)) return false;   // removal always fine
-    return !isLegalCategorySet([...currentGroups, g], legalTagCombos());
+    return !isLegalCategorySet([...currentGroups, g], legalTagCombos(app.mode));
   }
 
   // Foil rules in the popup (§9.6): cannot be removed from Wold's shiny
-  // cards; cannot be added to evo cards (evo foil comes from the Foil core).
+  // cards; cannot be added to evo cards (evo foil comes from the Shiny core).
   const foilLocked = $derived(
     app.mode !== "vanilla" && app.cardClass === CardClass.SHINY,
   );
@@ -121,7 +121,7 @@
           <button type="button" class="chip"
             class:sel={currentGroups.includes("Foil")}
             disabled={(foilLocked && currentGroups.includes("Foil")) || (!foilAddable && !currentGroups.includes("Foil"))}
-            title={foilLocked ? "Wold's shiny cards are always foil" : !foilAddable ? "Evo cards take foil from the Foil core, not per card" : "Foil"}
+            title={foilLocked ? "Wold's shiny cards are always foil" : !foilAddable ? "Evo cards take foil from the Shiny core, not per card" : "Foil"}
             style:--c={NOTCH_COLOR.Foil} onclick={() => toggle("Foil")}>
             Foil {foilLocked && currentGroups.includes("Foil") ? "🔒" : ""}
           </button>

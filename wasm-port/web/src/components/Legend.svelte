@@ -63,9 +63,13 @@
         built in the inventory panel.</li>
     <li>The <em>Depth</em> slider trades speed for search quality
         (Fast 50k×6 · Default 75k×12 · Deep 125k×24).</li>
-    <li>Toggle the cores you own. Overrides replace the config default —
-        for <code>PURE</code> / <code>DELUXE_CORE</code> / <code>VOID_CORE</code>
-        only the <em>scale</em> term; static cores get a flat replacement.</li>
+    <li>Toggle the cores you own. Override boxes take the <strong>%</strong>
+        printed on your core item: scaling cores (<code>Pure</code> /
+        <code>Deluxe Core</code> / <code>Void</code>) take the per-unit
+        increment (a +6.3%-per-card Pure roll → enter <code>6.3</code>);
+        every other core takes its flat bonus (a +150% Shiny core → enter
+        <code>150</code>; Archive's % is per placed arcane card). Blank =
+        best-possible roll.</li>
     <li>Hit <em>Run</em>. Tiles show the card glyph, its NDM, and colored
         <em>notches</em> for carried tags. <strong>Hover</strong> a card to
         list its tags; <strong>click</strong> to add/remove tags as a live

@@ -29,6 +29,14 @@ excluded_decks: []
 decks:
   json_file: wolds_decks.json
 
+# Which game-card dump (repo root, relative path) feeds the Preview chooser
+# and the legal tag-combo catalog. Verbatim copies of the game's
+# `config/the_vault/card/modifiers.json` — wolds from the pack repo, vanilla
+# from a stock Vault Hunters instance (the_vault 3.21.1). Per-mode: the two
+# games have different card rosters (303 vs 183 entries).
+cards:
+  json_file: modifiers.json
+
 greed:
   dir_vert:      4
   dir_horiz:     4
@@ -37,12 +45,17 @@ greed:
   dir_diag_up:   0    # NE / NW diagonal greed
   dir_diag_down: 0    # SE / SW diagonal greed
 
+# Core defaults = the BEST possible in-game roll (greater-tier max) from the
+# pack's `config/the_vault/card/deck_modifiers.json` + the woldsvaults addon
+# datagen (`new_cores.json`). Re-synced 2026-07-14 against the current pack
+# pull; flat cores store the whole multiplier (game value + 1), scaling cores
+# store the per-unit increment. The web UI converts to/from % for display.
 cores:
   pure_base:   1.0
-  pure_scale:  0.07
-  equilibrium: 3.0
-  foil:        2.5    # the shiny core
-  steadfast:   2.2
+  pure_scale:  0.07   # greater pure 0.05–0.07 /non-foil card
+  equilibrium: 1.5    # greater equilibrium 0.3–0.5 (was 3.0 — stale pre-nerf value)
+  foil:        2.5    # the SHINY core (greater shiny 1.0–1.5 on Foil cards)
+  steadfast:   2.1    # greater steadfast 0.7–1.1 (was 2.2 — pack retuned it)
   # Sparkling core — flat SHINY-only multiplier; behaves like steadfast with a
   # higher number. Wold's-only (vanilla flips `sparkling_allow` off below).
   sparkling:       2.5
@@ -146,9 +159,22 @@ modes:
       construction_allow: false
       arcane_core_allow:  false
       sparkling_allow:    false
+      # Best rolls from vanilla VH's own deck_modifiers.json (read from the
+      # local "Vault Hunters Third Edition" instance, the_vault 3.21.1).
+      # NOTE: vanilla's greater tier is a copy-pasted 0.3–0.5 block on several
+      # cores (greater shiny/steadfast roll BELOW their base tier; greater
+      # pure literally reads 0.3–0.5 = 10× base — the bug Wold's fixed
+      # downstream). Where that block is the "best" number we don't trust it:
+      # pure uses the base-tier max (0.05) instead of the absurd 0.5.
+      equilibrium: 1.7    # greater 0.5–0.7
+      steadfast:   2.2    # base 0.6–1.2 (greater is the broken 0.3–0.5)
+      color:       1.5    # greater 0.3–0.5 edges out base 0.1–0.4
+      pure_scale:  0.05   # base 0.02–0.05; greater 0.3–0.5 treated as a bug
     stacking:
       additive_cores: false
     shiny:
       positional: false
     decks:
       json_file: vh_decks.json
+    cards:
+      json_file: vh_modifiers.json

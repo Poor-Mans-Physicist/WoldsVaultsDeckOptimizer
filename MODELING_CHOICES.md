@@ -191,11 +191,11 @@ base, multiplicative scales it.
 | Core            | Default value (Wold's)                  | What it boosts                                                          | What it does NOT boost                   | Scaling formula                                          | Class gating                                                                   |
 | --------------- | --------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `PURE`        | base**1.0**, scale **0.07** | regulars, deluxe cards (additive baseline), typeless                    | greed                                    | `pure_base + pure_scale × n_ns` (variable per layout) | Universal                                                                      |
-| `EQUILIBRIUM` | **3.0**                           | regulars, typeless                                                      | deluxe cards (additive), greed           | Flat                                                     | **SHINY-only**                                                           |
-| `STEADFAST`   | **2.2**                           | regulars, typeless                                                      | deluxe cards, greed                      | Flat                                                     | **SHINY-only**                                                           |
+| `EQUILIBRIUM` | **1.5**                           | regulars, typeless                                                      | deluxe cards (additive), greed           | Flat                                                     | **SHINY-only**                                                           |
+| `STEADFAST`   | **2.1**                           | regulars, typeless                                                      | deluxe cards, greed                      | Flat                                                     | **SHINY-only**                                                           |
 | `SPARKLING`   | **2.5**                           | regulars, typeless                                                      | deluxe cards, greed                      | Flat                                                     | **SHINY-only**; gated by `cores.sparkling_allow` (off in vanilla)        |
 | `COLOR`       | **1.75**                          | every scorable card (WASM model: only matching-color cards)             | greed                                    | Flat                                                     | Universal                                                                      |
-| `FOIL`        | **2.5**                           | regulars, deluxe cards (baseline), typeless                             | greed                                    | Flat                                                     | Universal;**also flips EVO's `n_ns` to the SHINY formula** (see below) |
+| `FOIL`        | **2.5**                           | regulars, deluxe cards (baseline), typeless                             | greed                                    | Flat                                                     | Universal;**also flips EVO's `n_ns` to the SHINY formula** (see below). Displayed as **"Shiny"** in the UI — the in-game name (`foil` stays the internal key everywhere) |
 | `DELUXE_CORE` | base**1.0**, scale **0.2**  | regulars, typeless                                                      | **deluxe cards themselves**, greed | `deluxe_core_base + deluxe_core_scale × n_deluxe`     | Universal; gated by `deluxe.allow` (off in vanilla)                          |
 | `VOID_CORE`   | base**1.0**, scale **0.3**  | regulars, deluxe cards, typeless                                        | dead cards themselves, greed             | `void_base + void_scale × n_dead`                     | Universal; gated by `cores.void_allow` (off in vanilla)                      |
 | `ARCHIVE_CORE` | per-arcane base **1.2**           | regulars, deluxe cards, typeless                                        | greed (arcane/dead score 0 anyway)       | `archive_core ^ n_arcane_placed` — applied **outside** the per-card `core_mult` (see callout below) | Gated by `cores.archive_allow` (off in vanilla); when on, additionally **enumerated only when the deck has ≥ 1 arcane slot** |
@@ -582,8 +582,8 @@ ROW card in an additive deck with FOIL + COLOR + DELUXE_CORE (any deluxe
 cards) gets:
 
 ```
-core_mult = 1 + (2.8 − 1) + (1.75 − 1) + (deluxe_value − 1)
-          = 1 + 1.8 + 0.75 + (deluxe_value − 1)
+core_mult = 1 + (2.5 − 1) + (1.75 − 1) + (deluxe_value − 1)
+          = 1 + 1.5 + 0.75 + (deluxe_value − 1)
 ```
 
 ---
@@ -651,10 +651,28 @@ identical.
 | `cores.sparkling_allow`   | **true**       | **false**   | Vanilla hides the SHINY-only Sparkling core               |
 | `stacking.additive_cores` | **true**       | **false**   | Vanilla multiplies cores instead of summing                                                                 |
 | `decks.json_file`         | `wolds_decks.json` | `vh_decks.json` | Different deck rosters per mode                                                                             |
+| `cards.json_file`         | `modifiers.json` | `vh_modifiers.json` | Different game-card rosters (303 vs 183 entries) — feeds the Preview chooser + the legal tag-combo catalog (28 vs 17 combos) |
+| `cores.equilibrium`       | **1.5**        | **1.7**     | Best in-game roll per mode (see convention below)                                                           |
+| `cores.steadfast`         | **2.1**        | **2.2**     | Best in-game roll per mode                                                                                  |
+| `cores.color`             | **1.75**       | **1.5**     | Best in-game roll per mode                                                                                  |
+| `cores.pure_scale`        | **0.07**       | **0.05**    | Wold's greater-pure max vs vanilla base max (vanilla's greater tier is a broken 0.3–0.5 placeholder — see below) |
 
-Greed defaults (`dir_vert: 4`, `dir_horiz: 4`, others 0) and core multipliers
-(`pure_scale: 0.07`, `equilibrium: 3.0`, `foil: 2.5`, `steadfast: 2.2`,
-`sparkling: 2.5`, `color: 1.75`, `void_scale: 0.3`, `deluxe.flat: 2`) are shared.
+Greed defaults (`dir_vert: 4`, `dir_horiz: 4`, others 0) and the remaining
+core multipliers (`foil: 2.5`, `sparkling: 2.5`, `void_scale: 0.3`,
+`archive_core: 1.2`, `deluxe.core_scale: 0.2`, `deluxe.flat: 2`) are shared.
+
+**Core-default convention**: each default is the **best roll the game can
+drop** for that core — the max of the base/lesser/greater tiers in the
+game's `card/deck_modifiers.json` (Wold's: the pack repo; the addon cores
+void/archive/sparkling/premium come from the woldsvaults datagen
+`new_cores.json`). Re-synced 2026-07-14. Vanilla values were read from a
+stock Vault Hunters instance (`the_vault 3.21.1`); its greater tier is a
+copy-pasted `0.3–0.5` block on several cores (greater shiny/steadfast roll
+*below* their base tiers, greater pure reads 10× base — the exact values the
+Wold's pack later "fixed"), so where that block would be the max we use the
+best *coherent* tier instead: vanilla pure stays `0.05` (base max), while
+vanilla color takes the `0.5` (plausible greater). If VH ever fixes the
+block, re-sync.
 
 The UI also relabels in Vanilla: SHINY → "Stat" in class pickers
 (`wasm-port/web/src/lib/visibility.ts::classSelectLabel`).
@@ -895,3 +913,38 @@ shared vocabulary, Python reference `simulate()` vs Rust `score_tagged`;
 passes at rel-Δ ≤ 5e-16), **Part B** checks SA-optimum convergence
 (classic vs tagged-Max with implicits stripped and §6 off; all combos
 converge at the 60k×12 production budget). Run it after any kernel change.
+
+### Core value entry is % (2026-07-14 rework)
+
+The side-panel override boxes take the **% printed on the core item
+in-game**, converted at the UI boundary only — config.yaml, snapshots and
+the kernel payload keep raw stored units, so nothing downstream changed:
+
+- **Scaling cores** (`PURE`, `DELUXE_CORE`, `VOID_CORE`): the box is the
+  per-unit increment; stored = pct / 100 (a +6.3%-per-card Pure roll is
+  entered as `6.3` → 0.063).
+- **Everything else** (`EQUILIBRIUM`, `STEADFAST`, `SPARKLING`, `FOIL`,
+  `COLOR`, `ARCHIVE_CORE`): the box is the flat bonus above 1; stored =
+  1 + pct / 100 (a +150% Shiny core is entered as `150` → 2.5). Archive's
+  % reads "per placed arcane card" (stored 1.2 ⇄ 20%) — numerically the
+  same rule.
+
+Mapping lives in `wasm-port/web/src/lib/coreOptions.ts`
+(`coreValueKind` / `storedToPct` / `pctToStored`); placeholders show the
+config default in the same % units. The `FOIL` core is displayed as
+**"Shiny"** (its in-game name — it boosts Foil-group cards; the *Sparkling*
+core is the one that boosts shiny cards); `foil` remains the internal key in
+config / kernel / snapshots, so old snapshots restore unchanged.
+
+### Per-mode game-card dumps (2026-07-14)
+
+`cards.json_file` in config.yaml picks the mode's card dump:
+`modifiers.json` (Wold's — verbatim from the pack's
+`config/the_vault/card/modifiers.json`, refreshed 2026-07-14: 28 entries had
+been retuned upstream) vs `vh_modifiers.json` (vanilla — verbatim from a
+stock VH `the_vault 3.21.1` instance). `build_data.py` ships them as
+`modifiers_<mode>.json` and computes `_tagCombos` **per mode** (wolds 28
+combos, vanilla 17), so the Preview chooser, the Exact builder chips, the
+what-if popup and the kernel's tag toggles all enforce the active mode's own
+card reality. The CLI reads the same per-mode file via
+`src/config.py::CARDS_JSON_FILE` → `src/implicits.py`.

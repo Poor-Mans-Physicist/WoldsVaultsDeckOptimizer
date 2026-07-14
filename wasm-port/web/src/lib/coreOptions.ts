@@ -28,10 +28,56 @@ export function coreLabel(opt: CoreOption): string {
   if (opt.coreType === CoreType.COLOR && opt.color !== null) {
     return `Color · ${opt.color.charAt(0).toUpperCase() + opt.color.slice(1)}`;
   }
+  // In-game this core is the SHINY core (it boosts Foil-group cards; the
+  // separate Sparkling core is the one that boosts shiny cards). Display
+  // follows the game; `foil` stays the internal key (config / kernel /
+  // snapshots) everywhere.
+  if (opt.coreType === CoreType.FOIL) return "Shiny";
   return opt.coreType
     .split("_")
     .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
     .join(" ");
+}
+
+/** Display form of a raw `core_type` key (result chip etc.) — identity except
+ *  the foil→Shiny rename above. */
+export function coreKeyDisplay(coreType: string): string {
+  return coreType === CoreType.FOIL ? "shiny" : coreType;
+}
+
+/**
+ * How a core's number is entered and displayed (always as a % — matching the
+ * in-game item tooltip), while config / kernel / snapshots keep the raw
+ * stored units:
+ *  - "increment": stored value IS the per-unit bonus fraction (the scale term
+ *    of Pure / Deluxe Core / Void). Stored 0.063 ⇄ entered 6.3 (%).
+ *  - "flat": stored value is a whole multiplier; the item shows the bonus
+ *    above 1. Stored 2.5 ⇄ entered 150 (%). Archive's per-arcane base is the
+ *    same shape (stored 1.2 ⇄ 20% per arcane card).
+ */
+export type CoreValueKind = "increment" | "flat";
+
+export function coreValueKind(coreType: CoreType): CoreValueKind {
+  switch (coreType) {
+    case CoreType.PURE:
+    case CoreType.DELUXE_CORE:
+    case CoreType.VOID_CORE:
+      return "increment";
+    default:
+      return "flat";
+  }
+}
+
+/** Stored units → the % shown in the input (float dust stripped so
+ *  0.07 renders as 7, not 7.000000000000001). */
+export function storedToPct(v: number, kind: CoreValueKind): number {
+  const pct = kind === "increment" ? v * 100 : (v - 1) * 100;
+  return Number(pct.toFixed(6));
+}
+
+/** The % the user typed → stored units. */
+export function pctToStored(pct: number, kind: CoreValueKind): number {
+  return kind === "increment" ? pct / 100 : 1 + pct / 100;
 }
 
 /**
@@ -64,7 +110,8 @@ export function coreDefaultValue(opt: CoreOption, cfg: ResolvedConfig): number {
   }
 }
 
-/** Numeric default rendered as placeholder text in the override input. */
+/** Default rendered as placeholder text in the override input — in %, the
+ *  same units the user types (e.g. Shiny 2.5 stored → "150"). */
 export function coreDefaultPlaceholder(opt: CoreOption, cfg: ResolvedConfig): string {
-  return coreDefaultValue(opt, cfg).toFixed(3);
+  return String(storedToPct(coreDefaultValue(opt, cfg), coreValueKind(opt.coreType)));
 }
