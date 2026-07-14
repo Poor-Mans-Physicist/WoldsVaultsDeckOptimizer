@@ -146,6 +146,7 @@ class Deck:
         min_regular:  int = -1,
         max_greed:    int = -1,
         name:         str = "Unnamed Deck",
+        key:          str = "",
     ) -> None:
         # ``slots`` is the FULL slot set (regular ∪ arcane). ``arcane_slots`` is
         # the subset that holds the ARCANE/DEAD-only restriction. Geometry
@@ -157,6 +158,9 @@ class Deck:
         self.min_regular  = min_regular
         self.max_greed    = max_greed
         self.name         = name
+        # Roster key (JSON values.<key> / YAML stem). Used to look up the
+        # deck's implicit modifier in decks/wolds_implicits.json.
+        self.key          = key
 
         # Convenience: the complement of arcane_slots, where any non-ARCANE
         # placement is legal.
@@ -231,6 +235,7 @@ class Deck:
             min_regular  = min_regular,
             max_greed    = max_greed,
             name         = self.name,
+            key          = self.key,
         )
 
     def with_core_slots(self, core_slots: int) -> "Deck":
@@ -247,6 +252,7 @@ class Deck:
             min_regular  = self.min_regular,
             max_greed    = self.max_greed,
             name         = self.name,
+            key          = self.key,
         )
 
     def constraint_str(self) -> str:
@@ -367,6 +373,7 @@ def _load_yaml_decks(seen_keys: Set[str]) -> List[Deck]:
             min_regular  = int(data.get("min_regular", -1)),
             max_greed    = int(data.get("max_greed", -1)),
             name         = str(data["name"]),
+            key          = key,
         ))
         seen_keys.add(key)
     return decks
@@ -425,6 +432,7 @@ def _load_json_decks(seen_keys: Set[str]) -> List[Deck]:
             min_regular  = -1,
             max_greed    = -1,
             name         = str(entry.get("name") or key),
+            key          = key,
         ))
         seen_keys.add(key)
     return decks

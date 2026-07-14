@@ -4,6 +4,12 @@ This file is the source-of-truth specification for **how the Vault Hunters
 Deck Optimizer scores a deck**. It pins down every multiplier, every
 class-gating rule, every counting rule for cores and cards.
 
+> **Optimizer 2.0:** the tag-aware kernel (`ndm_core/src/tagsim.rs`, shared
+> verbatim with the wasm crate) now backs both channels. Everything below
+> still holds — 2.0's Max mode reproduces it bit-for-bit (see the parity
+> gate) — and the new mechanics are specified in the
+> **[Optimizer 2.0 addendum](#optimizer-20-addendum)** at the bottom.
+
 Authoritative behavior described here = the **WASM web app**
 (`wasm-port/web/` + `wasm-port/ndm_core/src/inventory.rs`). The Python
 spreadsheet CLI (outer `src/` + outer `ndm_core/`) tracks the same model
@@ -744,3 +750,114 @@ Touch points to keep in sync, by surface:
 If a code change touches scoring and you can't figure out which section
 applies, add a note under the most-related section explaining the new
 behavior — better to have an awkward note than a silent divergence.
+
+---
+
+## Optimizer 2.0 addendum
+
+One tag-aware SA kernel (`ndm_core/src/tagsim.rs`, included verbatim by the
+wasm crate via `#[path]`) backs three run modes. The design spec is
+`WV_DECK_OPTIMIZER_2.0.md`; this section pins the behaviors as implemented.
+
+### The three modes (one kernel, three configurations)
+
+| Mode | Supply | Colors | Tags | Extra |
+|---|---|---|---|---|
+| **Max** | unlimited, mono-color | color-blind (`colors_real=false`) | blanket favorable (implicit-rewarded groups free on every non-greed card) | = spreadsheet engine; reproduces classic 1.x numbers (see parity gate) |
+| **Targeted** | unlimited | real per-card colors **iff** any color rule or Complex Cards is active, else Max-style | per-tag Min/Max rules; capped implicit-relevant groups become per-slot SA toggle moves | multi-tag counting: a card counts toward every rule it matches |
+| **Exact** | finite per-stack multiset (+ per-stack must-place minimum) | always real | real per-card groups from the builder | no blanket assumptions anywhere |
+
+### Card model
+
+`Card = (type, card_color, scale_color, groups: u16 bitmask)`. Groups =
+the 9 category tags (Offensive, Defensive, Physical, Magical, Utility,
+Resource, Knack, Temporal, Essence) + `Foil` + `Stat`. Category tags are
+**NDM-inert except through a deck implicit** (author-confirmed); the two
+NDM-relevant exceptions are **Foil** and **Wild**.
+
+- **Card-type vocabulary:** real greed = the 4 orthogonal directions only.
+  `SURR_GREED`, `EVO_GREED`, and diagonal greeds are gone from the 2.0
+  engine (unobtainable in-game; as 0-multiplier fillers they were
+  score-equivalent to an orthogonal greed, so optima are preserved).
+  `DEAD` = empty slot; always permitted, never capped.
+- **Wild** is its own card type: 0 NDM, counts as **any color and any
+  group for neighbors'** positional counts, chain connectivity, mirror
+  checks, and adjacency implicits. For Targeted rule counting it counts
+  toward only its own type + literal color (documented choice). Excluded
+  from Max supply (never optimal under mono assumptions).
+- **Stat** is shiny-only: Max/Targeted set it on every stat-giving card in
+  shiny runs (ideal cards); never on evo cards. Exact exposes it per card.
+
+### Foil, per-card (§5)
+
+`Foil` is a per-card tag. Run rule (Max/Targeted): **Wold's shiny ⇒ foil**
+on every scorable/arcane card; **evo ⇒ foil iff the FOIL core is in the
+candidate set**; vanilla shiny is never forced foil. Pure's `n_ns` is now
+per-card: `n_ns = greed + arcane + non-foil positionals` (typeless/deluxe
+still never count). This reproduces the classic class+FOIL table exactly
+while enabling:
+
+- **§6 non-foil-evo final pass** (Wold's only, evo+FOIL runs): after SA,
+  each *wasted* greed (orthogonal target off-deck or non-scorable) is
+  replaced by the best non-foil evo positional if that strictly improves
+  the full re-simulated score. This is an intentional model improvement
+  over 1.x — Wold's EVO+FOIL numbers may exceed the classic optimizer's.
+  Vanilla never runs the pass (it stays the regression baseline).
+- **Targeted foil ban (max 0):** evo cards all non-foil regardless of the
+  FOIL core; on a Wold's shiny run nothing is placeable → empty deck (UI
+  warns).
+
+### Deck implicits (Wold's only)
+
+Data: `decks/wolds_implicits.json`, extracted from the woldsvaults datagen
+(28 decks). Aggregation matches `MixinCardDeck`: implicit values fold
+**additively** into the per-card core multiplier (`1 + Σ(v−1) + …`),
+except **runic**, which **multiplies** the whole per-card value. Kinds:
+
+| kind | decks | per-card effect (additive unless noted) |
+|---|---|---|
+| `global` | treasure, idona/velara/tenos/wendarr, cactus (Off∧Def — ALL groups required), champion, anvil, belt, fairy, gilded/ornate/living (Foil+color) | `+value` when the card carries ALL required groups and a required color. Color-blind runs treat color conditions as satisfied (favorable blanket). |
+| `freq` | wall (col ×2), pillager (surr ×2), bishop (diag ×3) | multiplies the matching positional type's **count** by `round(value)`; DIAG keeps its ≥1 floor after scaling |
+| `adjacency` | merchant (column/Resource ×0.5), skull (surr/Knack ×0.5) | `+value ×` matching-group cards in range (greeds/dead never match; arcane can; wild always) |
+| `color_mismatch` | puzzle | `+value ×` orth neighbors of a different color (blanket: every filled orth neighbor) |
+| `row_pos` | cake | `+value × rows-from-bottom`, bottom row = 1 |
+| `chain` | snake | `+value × (component−1)`, same-color orthogonal flood-fill (blanket: filled connectivity; wild bridges) |
+| `empty_slots` | shadow | `+value × n_dead` on every scoring card |
+| `unique_groups` | mutant | Stat cards only: `+value ×` (distinct groups incl. class markers present) |
+| `mirror` | runic | **×value** when the horizontal bbox-mirror slot holds a same-color card; center column auto-passes; blanket: mirror filled |
+| `gameplay` | extended, arcane, relic, villager | NDM-inert (villager boosts only arcane-slot cards, which score 0) — display note only |
+| `mystery` | mystery | player picks the two rolled implicits in the UI; both evaluated; conflicting Max blankets resolved best-single-assumption |
+
+### Constraint semantics
+
+- **Tag rules** (`Targeted`): axes = color / card type / group / greed-total,
+  each with optional Min and Max. A card counts toward **every** rule it
+  matches. Min on an implicit-relevant group forces that many cards to
+  carry it (free — tags are inert); Max turns per-card carriage into SA
+  toggle moves. DEAD is exempt from all rules.
+- **Min-stat floor**: kernel-level lower bound on placed stat-giving cards
+  (positional + typeless; deluxe counts only when `floor_counts_deluxe` —
+  the web app says yes, the spreadsheet mirrors classic
+  `deluxe_counted_as_regular=false`).
+- **Spreadsheet panel configs** map: `min_regular → min-stat floor`
+  (with the classic conflict-nullification rule), `max_greed → greed-total
+  Max rule`.
+
+### Complex Cards (§7)
+
+Toggle, default OFF. OFF: `scale_color == card_color` everywhere; greed is
+color-agnostic; identical to 1.x (the validation gate runs this way). ON
+(forces real colors): a positional card counts neighbors whose
+**card_color == its own scale_color** (self counts only if its own color
+matches its scale color); greed boosts only targets matching the greed's
+scale_color; the Exact builder exposes both colors.
+
+### Engine switch + validation gate
+
+`config.yaml engine: tagged|classic` picks the spreadsheet kernel (default
+`tagged` — implicits included on Wold's). `scripts/parity_2_0.py` is the
+gate: **Part A** proves scoring equivalence (random assignments over the
+shared vocabulary, Python reference `simulate()` vs Rust `score_tagged`;
+passes at rel-Δ ≤ 5e-16), **Part B** checks SA-optimum convergence
+(classic vs tagged-Max with implicits stripped and §6 off; all combos
+converge at the 60k×12 production budget). Run it after any kernel change.

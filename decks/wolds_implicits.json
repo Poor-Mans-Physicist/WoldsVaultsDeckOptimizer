@@ -1,0 +1,207 @@
+{
+  "_source": "wv-development src/main/java/xyz/iwolfking/woldsvaults/datagen/ModDeckCoresProvider.java + ModImplicitDeckCoresProvider.java (feature/hyper-objective, 2026-07-13). Keys match decks/wolds_decks.json values.* keys. Aggregation: additive into the per-card core sum (MixinCardDeck getModifierValue: 1 + sum(v-1)), EXCEPT kind=mirror which multiplies the whole per-card value (IMultiplicativeDeckModifier).",
+  "implicits": {
+    "merchant": {
+      "kind": "adjacency",
+      "value": 0.5,
+      "group": "Resource",
+      "range": "column",
+      "name": "Merchant Deck Modifier",
+      "desc": "+50% efficiency per Resource card in the same column"
+    },
+    "extended": {
+      "kind": "gameplay",
+      "name": "Extended Deck Modifier",
+      "desc": "Increases vault duration contribution — no NDM effect"
+    },
+    "treasure": {
+      "kind": "global",
+      "value": 1.0,
+      "groups": ["Stat"],
+      "colors": [],
+      "name": "Treasure Deck Modifier",
+      "desc": "+100% efficiency to Stat cards (shiny runs only — evo cards never carry Stat)"
+    },
+    "arcane": {
+      "kind": "gameplay",
+      "name": "Arcane Deck Modifier",
+      "desc": "+2 ability levels on arcane cards — no NDM effect"
+    },
+    "idona": {
+      "kind": "global",
+      "value": 1.25,
+      "groups": [],
+      "colors": ["red"],
+      "name": "Idona Deck Modifier",
+      "desc": "+125% efficiency to Red cards"
+    },
+    "velara": {
+      "kind": "global",
+      "value": 1.25,
+      "groups": [],
+      "colors": ["green"],
+      "name": "Velara Deck Modifier",
+      "desc": "+125% efficiency to Green cards"
+    },
+    "tenos": {
+      "kind": "global",
+      "value": 1.25,
+      "groups": [],
+      "colors": ["blue"],
+      "name": "Tenos Deck Modifier",
+      "desc": "+125% efficiency to Blue cards"
+    },
+    "wendarr": {
+      "kind": "global",
+      "value": 1.25,
+      "groups": [],
+      "colors": ["yellow"],
+      "name": "Wendarr Deck Modifier",
+      "desc": "+125% efficiency to Yellow cards"
+    },
+    "cactus": {
+      "kind": "global",
+      "value": 2.0,
+      "groups": ["Offensive", "Defensive"],
+      "colors": [],
+      "name": "Cactus Deck Modifier",
+      "desc": "+200% efficiency to cards that are BOTH Offensive and Defensive"
+    },
+    "champion": {
+      "kind": "global",
+      "value": 1.5,
+      "groups": ["Physical"],
+      "colors": [],
+      "name": "Champion Deck Modifier",
+      "desc": "+150% efficiency to Physical cards"
+    },
+    "wall": {
+      "kind": "freq",
+      "value": 2.0,
+      "ptype": "col",
+      "name": "Rook Deck Modifier",
+      "desc": "Column-scaling cards count cards ×2"
+    },
+    "bishop": {
+      "kind": "freq",
+      "value": 3.0,
+      "ptype": "diag",
+      "name": "Bishop Deck Modifier",
+      "desc": "Diagonal-scaling cards count cards ×3"
+    },
+    "pillager": {
+      "kind": "freq",
+      "value": 2.0,
+      "ptype": "surr",
+      "name": "Pillager Deck Modifier",
+      "desc": "Surrounding-scaling cards count cards ×2"
+    },
+    "cake": {
+      "kind": "row_pos",
+      "value": 1.0,
+      "name": "Cake Deck Modifier",
+      "desc": "+100% efficiency per row from the bottom (bottom row counts as 1)"
+    },
+    "puzzle": {
+      "kind": "color_mismatch",
+      "value": 1.0,
+      "name": "Puzzle Deck Modifier",
+      "desc": "+100% efficiency per orthogonally-adjacent card of a different color"
+    },
+    "mutant": {
+      "kind": "unique_groups",
+      "value": 0.25,
+      "name": "Mutant Deck Modifier",
+      "desc": "Stat cards: +25% efficiency per unique group in the deck (shiny runs only)"
+    },
+    "belt": {
+      "kind": "global",
+      "value": 2.0,
+      "groups": ["Utility"],
+      "colors": [],
+      "name": "Belt Deck Modifier",
+      "desc": "+200% efficiency to Utility cards"
+    },
+    "villager": {
+      "kind": "gameplay",
+      "name": "Villager Deck Modifier",
+      "desc": "+300% efficiency to cards in arcane slots — arcane cards score 0 NDM, so no NDM effect"
+    },
+    "fairy": {
+      "kind": "global",
+      "value": 0.5,
+      "groups": ["Magical"],
+      "colors": [],
+      "name": "Fairy Deck Modifier",
+      "desc": "+50% efficiency to Magical cards"
+    },
+    "runic": {
+      "kind": "mirror",
+      "value": 2.0,
+      "name": "Runic Deck Modifier",
+      "desc": "×2 card value when the horizontally-mirrored slot holds a same-color card (center column always passes)"
+    },
+    "snake": {
+      "kind": "chain",
+      "value": 0.075,
+      "name": "Snake Deck Modifier",
+      "desc": "+7.5% efficiency per card in the same orthogonally-connected same-color chain (beyond the first)"
+    },
+    "gilded": {
+      "kind": "global",
+      "value": 1.5,
+      "groups": ["Foil"],
+      "colors": ["yellow"],
+      "name": "Gilded Deck Modifier",
+      "desc": "+150% efficiency to Yellow Foil cards"
+    },
+    "living": {
+      "kind": "global",
+      "value": 2.0,
+      "groups": ["Foil"],
+      "colors": ["green"],
+      "name": "Living Deck Modifier",
+      "desc": "+200% efficiency to Green Foil cards"
+    },
+    "ornate": {
+      "kind": "global",
+      "value": 1.75,
+      "groups": ["Foil"],
+      "colors": ["red"],
+      "name": "Ornate Deck Modifier",
+      "desc": "+175% efficiency to Red Foil cards"
+    },
+    "anvil": {
+      "kind": "global",
+      "value": 1.0,
+      "groups": ["Defensive"],
+      "colors": [],
+      "name": "Anvil Deck Modifier",
+      "desc": "+100% efficiency to Defensive cards"
+    },
+    "skull": {
+      "kind": "adjacency",
+      "value": 0.5,
+      "group": "Knack",
+      "range": "surrounding",
+      "name": "Skull Deck Modifier",
+      "desc": "+50% efficiency per surrounding Knack card"
+    },
+    "shadow": {
+      "kind": "empty_slots",
+      "value": 0.15,
+      "name": "Shadow Deck Modifier",
+      "desc": "+15% efficiency per empty (dead) slot in the deck"
+    },
+    "relic": {
+      "kind": "gameplay",
+      "name": "Relic Deck Modifier",
+      "desc": "Guaranteed tier-4 bounty crate — no NDM effect"
+    },
+    "mystery": {
+      "kind": "mystery",
+      "name": "Mystery Deck Modifier",
+      "desc": "Two random implicits rolled from the other decks' pool at craft time — pick the pair your deck rolled"
+    }
+  }
+}

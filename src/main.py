@@ -17,8 +17,14 @@ from .config import (
     _CFG,
     _get_test_configs,
 )
-from .simulate import candidate_cores, sa_optimize
+from .simulate import candidate_cores, sa_optimize, sa_optimize_tagged
+from .implicits import implicits_for_deck
 from .report import _report, generate_spreadsheet
+
+# Engine selection (Optimizer 2.0). "tagged" drives the same tag-aware Max
+# kernel the web app uses (deck implicits included on Wold's); "classic"
+# keeps the 1.x color-blind kernel for A/B comparison.
+ENGINE: str = str(_CFG.get("engine", "tagged"))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -34,6 +40,10 @@ def optimize(
     """Run SA across every candidate core set for both card classes."""
     results: Dict[CardClass, dict] = {}
 
+    # Deck implicits are a Wold's-only mechanic; the tagged engine evaluates
+    # them inside the kernel. Classic engine ignores them (pre-2.0 behavior).
+    implicits = implicits_for_deck(deck.key) if MODE != "vanilla" else []
+
     for card_class in CardClass:
         candidates = candidate_cores(card_class, deck)
         best: dict = {"score": -1.0}
@@ -45,6 +55,8 @@ def optimize(
             print(f"  Class : {card_class.value.upper()}   Deck : {deck.name}"
                   f"   Constraint : {deck.constraint_str()}")
             print(f"  Runs  : {len(candidates)} candidate(s) × {restarts} restarts = {total_runs}")
+            if implicits and ENGINE == "tagged":
+                print(f"  Implicit: {implicits[0][0]} (value {implicits[0][1]})")
             print(f"{'═'*66}")
 
         for cores in candidates:
@@ -53,7 +65,12 @@ def optimize(
                 print(f"\n  Candidate cores: {cores_str}")
             for _ in range(restarts):
                 run += 1
-                asgn, score = sa_optimize(deck, card_class, cores, n_iter=n_iter)
+                if ENGINE == "classic":
+                    asgn, score = sa_optimize(deck, card_class, cores, n_iter=n_iter)
+                else:
+                    asgn, score = sa_optimize_tagged(
+                        deck, card_class, cores, n_iter=n_iter, implicits=implicits,
+                    )
                 improved = score > best["score"]
                 if improved:
                     best = {"score": score, "cores": cores, "assignment": dict(asgn)}

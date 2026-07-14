@@ -31,6 +31,7 @@ from .config import (
     EXPERIMENTAL_BOOST,
     EXPERIMENTAL_EXPONENT,
     GREED_ADDITIVE,
+    MODE,
     MULT_COLOR,
     MULT_DELUXE_CORE_BASE,
     MULT_DELUXE_CORE_SCALE,
@@ -496,3 +497,140 @@ def sa_optimize(
         for i in range(len(slots_list))
     }
     return best_asgn, best_score
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Optimizer 2.0 — Max mode via the tag-aware kernel
+# ──────────────────────────────────────────────────────────────────────────────
+# The spreadsheet pipeline now drives the same kernel as the web app, run in
+# its Max configuration: unlimited mono-color supply, color-blind positional
+# counting, blanket favorable tags, and the deck's implicit (Wold's only).
+# `--engine classic` (config `engine: classic`) keeps the old kernel callable
+# for A/B comparison; the parity harness in scripts/ uses both.
+
+# Real greed in 2.0 = the 4 orthogonal directions only (spec §2.3). The
+# 0-multiplier greeds (surr/evo/diag) are score-equivalent as fillers, so
+# dropping them preserves optima (see MODELING_CHOICES.md).
+_TAGGED_GREEDS = [
+    CardType.DIR_GREED_UP, CardType.DIR_GREED_DOWN,
+    CardType.DIR_GREED_LEFT, CardType.DIR_GREED_RIGHT,
+]
+
+
+def _tagged_max_stacks(deck: Deck, card_class: CardClass) -> List[tuple]:
+    """Unlimited mono-color Max supply for this (deck, class)."""
+    mono = "red"
+    types: List[CardType] = []
+    if card_class == CardClass.SHINY and not SHINY_POSITIONAL:
+        types.append(CardType.TYPELESS)
+    else:
+        types += [CardType.ROW, CardType.COL, CardType.SURR, CardType.DIAG,
+                  CardType.TYPELESS]
+    if ALLOW_DELUXE:
+        types.append(CardType.DELUXE)
+    types += _TAGGED_GREEDS
+    if deck.arcane_slots:
+        types.append(CardType.ARCANE)
+    # (type, color, scale_color, groups, count(-1 = unlimited), min_place)
+    return [(t.value, mono, "", [], -1, 0) for t in types]
+
+
+def _tagged_rules(deck: Deck) -> Tuple[List[tuple], int]:
+    """Map classic min_regular / max_greed onto kernel rules.
+
+    Returns (tag_rules, min_stat_placed). Mirrors the classic kernel's
+    constraint semantics, including the min_regular nullification when
+    min_regular + max_greed exceed the slot count.
+    """
+    n = len(deck.slots)
+    rules: List[tuple] = []
+    if deck.max_greed >= 0:
+        rules.append(("greed", "", 0, deck.max_greed))
+    min_stat = deck.min_regular if deck.min_regular >= 0 else 0
+    if (deck.min_regular >= 0 and deck.max_greed >= 0
+            and deck.min_regular + deck.max_greed > n):
+        min_stat = 0   # classic: conflicting constraints disable the floor
+    return rules, min_stat
+
+
+def _live_auto_place_arcane() -> bool:
+    # Read live (not at import) so a runtime set_mode() flip is honored —
+    # same rule as sa_optimize().
+    from . import config as _cfg
+    return _cfg.AUTO_PLACE_ARCANE
+
+
+def sa_optimize_tagged(
+    deck:       Deck,
+    card_class: CardClass,
+    cores:      FrozenSet[CoreType],
+    n_iter:     int,
+    implicits:  Optional[List[tuple]] = None,
+    seed:       Optional[int] = None,
+    final_pass: Optional[bool] = None,
+) -> Tuple[Dict[Position, CardType], float]:
+    """One SA restart through the 2.0 tag-aware kernel in Max configuration.
+
+    ``final_pass`` overrides the §6 non-foil-evo cleanup (default: on for
+    Wold's, off for vanilla). The parity harness passes False to compare
+    against the classic kernel on its own model.
+    """
+    from .implicits import blanket_groups_for
+
+    slots_list = list(deck.slots)
+    slot_order = {p: i for i, p in enumerate(slots_list)}
+    imps = implicits or []
+
+    tag_rules, min_stat = _tagged_rules(deck)
+
+    asgn_list, score = _ndm_core.run_sa_tagged(
+        slots               = slots_list,
+        row_peers           = _peers_as_indices(slot_order, deck._row_peers, slots_list),
+        col_peers           = _peers_as_indices(slot_order, deck._col_peers, slots_list),
+        surr_peers          = _peers_as_indices(slot_order, deck._surr_peers, slots_list),
+        diag_peers          = _peers_as_indices(slot_order, deck._diag_peers, slots_list),
+        arcane_slot_indices = [slot_order[p] for p in deck.arcane_slots],
+        stacks              = _tagged_max_stacks(deck, card_class),
+        tag_rules           = tag_rules,
+        blanket_groups      = blanket_groups_for(imps, card_class == CardClass.SHINY),
+        assignable_groups   = [],
+        implicits           = imps,
+        cores               = [(c.value, "", -1.0) for c in cores],
+        min_stat_placed     = min_stat,
+        # §6 non-foil-evo cleanup: Wold's-only model improvement. Vanilla
+        # stays exactly on the classic model (it's the regression baseline).
+        final_pass_nonfoil_evo = (MODE != "vanilla") if final_pass is None else final_pass,
+        exact_groups        = False,
+        n_iter              = n_iter,
+        restarts            = 1,
+        mult_dir_vert          = MULT_DIR_GREED_VERT,
+        mult_dir_horiz         = MULT_DIR_GREED_HORIZ,
+        mult_pure_base         = MULT_PURE_BASE,
+        mult_pure_scale        = MULT_PURE_SCALE,
+        mult_equilibrium       = MULT_EQUILIBRIUM,
+        mult_foil              = MULT_FOIL,
+        mult_steadfast         = MULT_STEADFAST,
+        mult_sparkling         = MULT_SPARKLING,
+        mult_color             = MULT_COLOR,
+        mult_deluxe_flat       = MULT_DELUXE_FLAT,
+        mult_deluxe_core_base  = MULT_DELUXE_CORE_BASE,
+        mult_deluxe_core_scale = MULT_DELUXE_CORE_SCALE,
+        mult_void_core_base    = MULT_VOID_CORE_BASE,
+        mult_void_core_scale   = MULT_VOID_CORE_SCALE,
+        mult_archive_core      = MULT_ARCHIVE_CORE,
+        greed_additive         = GREED_ADDITIVE,
+        additive_cores         = ADDITIVE_CORES,
+        is_shiny               = (card_class == CardClass.SHINY),
+        auto_place_arcane      = _live_auto_place_arcane(),
+        colors_real            = False,
+        complex_cards          = False,
+        wv_foil_rules          = MODE != "vanilla",
+        floor_counts_deluxe    = DELUXE_COUNTED_AS_REGULAR,
+        seed                   = seed,
+    )
+
+    best_asgn = {
+        slots_list[i]: CardType(asgn_list[i][0])
+        for i in range(len(slots_list))
+    }
+    return best_asgn, score

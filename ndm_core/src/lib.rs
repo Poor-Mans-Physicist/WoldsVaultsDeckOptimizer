@@ -4,6 +4,10 @@ use rand::rngs::SmallRng;
 use std::collections::HashMap;
 
 mod inventory;
+// Optimizer 2.0 — tag-aware kernel (canonical source, shared with the wasm
+// crate via #[path] include) + its PyO3 boundary.
+pub mod tagsim;
+mod tagsim_py;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Card type constants (u8)
@@ -873,5 +877,7 @@ fn run_sa_optimize(
 fn ndm_core(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_sa_optimize, m)?)?;
     m.add_function(wrap_pyfunction!(inventory::run_sa_inventory, m)?)?;
+    m.add_function(wrap_pyfunction!(tagsim_py::run_sa_tagged, m)?)?;
+    m.add_function(wrap_pyfunction!(tagsim_py::score_tagged, m)?)?;
     Ok(())
 }

@@ -4,6 +4,11 @@
 # bottom contains overrides applied when --mode <name> is selected (deep merge).
 # Add a new top-level mode by adding another key under `modes:`.
 
+# Spreadsheet-CLI engine (Optimizer 2.0). "tagged" = the tag-aware Max kernel
+# shared with the web app (deck implicits included on Wold's). "classic" =
+# the 1.x color-blind kernel, kept for A/B comparison and parity checks.
+engine: tagged
+
 # Use this for "extra" core slots you can add to a deck. By default, deckmod = 1
 # because you can use the core expertise in Wold's to add a free core when
 # crafting, and remove it later in dungeons. For experimental cores like the
