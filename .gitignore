@@ -14,6 +14,12 @@ __pycache__/
 # Spreadsheet outputs
 *.xlsx
 
+# implicit-impact comparison outputs (scripts/implicit_impact.py)
+implicit_impact_with.json
+implicit_impact_without.json
+implicit_impact.html
+implicit_impact.md
+
 # Python virtual environment
 .venv/
 
