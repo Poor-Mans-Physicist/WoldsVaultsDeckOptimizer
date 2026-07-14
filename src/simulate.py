@@ -28,6 +28,7 @@ from .config import (
     Deck,
     DELUXE_COUNTED_AS_REGULAR,
     ENABLE_EXPERIMENTAL_EXPONENT,
+    EXPERIMENTAL_ARCHIVE_ADDITIVE,
     EXPERIMENTAL_BOOST,
     EXPERIMENTAL_EXPONENT,
     GREED_ADDITIVE,
@@ -653,6 +654,7 @@ def sa_optimize_tagged(
         floor_counts_deluxe    = DELUXE_COUNTED_AS_REGULAR,
         seed                   = seed,
         legal_combos           = LEGAL_COMBOS if assignable else None,
+        experimental_archive_additive = EXPERIMENTAL_ARCHIVE_ADDITIVE,
     )
 
     best_asgn = {

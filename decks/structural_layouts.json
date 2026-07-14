@@ -1,0 +1,28 @@
+{
+  "_note": [
+    "Pre-built structural-core balance layouts ('include selected construction",
+    "cores' mode — config structural_cores.include_selected / --structural-cores).",
+    "Each entry replaces the deck's stock layout with the player's chosen",
+    "GREATER Construction placements (+5 new O slots) and, where used, GREATER",
+    "Arcane-core conversions (5 O→A). 'structural_cores_used' is subtracted",
+    "from the deck's core budget so the optimizer fills only the remaining",
+    "sockets, exactly as in-game. 'implicits' (optional) forces those decks'",
+    "implicit keys — used by Mystery to run its chosen runic + bishop pair.",
+    "Layout rows use the standard grid chars: O regular, A arcane, X empty."
+  ],
+  "values": {
+    "wold": {
+      "structural_cores_used": 2,
+      "layout": null
+    },
+    "fairy": {
+      "structural_cores_used": 2,
+      "layout": null
+    },
+    "mystery": {
+      "structural_cores_used": 1,
+      "implicits": ["runic", "bishop"],
+      "layout": null
+    }
+  }
+}

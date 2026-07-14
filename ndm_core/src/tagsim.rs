@@ -292,6 +292,11 @@ pub struct TagSimConfig {
     /// user-facing floor counts it (deluxe gives stats); the spreadsheet
     /// CLI mirrors classic `deluxe_counted_as_regular` (false by default).
     pub floor_counts_deluxe: bool,
+    /// Experimental balance toggle: Archive keeps its self-compounding
+    /// `base^n_arcane` but joins the CORE STACK (adds `base^n − 1` alongside
+    /// the other cores) instead of multiplying every card's whole
+    /// contribution from outside. Default false = classic behavior.
+    pub experimental_archive_additive: bool,
 }
 
 pub struct TagRun<'a> {
@@ -601,7 +606,19 @@ fn simulate(
             _ => {}
         }
     }
-    let archive_mult = if archive_present { archive_base.powi(n_arcane as i32) } else { 1.0 };
+    // Archive: self-compounding base^n_arcane. Classic model multiplies every
+    // card's contribution OUTSIDE the core stack; the experimental balance
+    // toggle folds the same factor INTO the stack instead (additive with the
+    // other cores under Wold's stacking, ×-composed under multiplicative) —
+    // same per-arcane compounding, no whole-total multiplication.
+    let archive_pow = if archive_present { archive_base.powi(n_arcane as i32) } else { 1.0 };
+    let archive_mult = if cfg.experimental_archive_additive {
+        baseline_sum += archive_pow - 1.0;
+        baseline_prod *= archive_pow;
+        1.0
+    } else {
+        archive_pow
+    };
     let color_core_color = cores.color_core_color;
 
     // ── Implicit precompute (deck-global parts) ──────────────────────────

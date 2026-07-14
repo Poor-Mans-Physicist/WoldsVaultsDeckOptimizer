@@ -37,6 +37,19 @@ _mode_parser.add_argument(
     help="Score bare deck layouts: skip every deck implicit (Wold's only — "
          "vanilla never has them). For base-vs-implicit balance comparisons.",
 )
+_mode_parser.add_argument(
+    "--structural-cores",
+    action="store_true",
+    help="Include selected construction cores: swap in the pre-built "
+         "structural layouts (decks/structural_layouts.json) and subtract "
+         "the structural cores used from each deck's core budget.",
+)
+_mode_parser.add_argument(
+    "--archive-additive",
+    action="store_true",
+    help="Experimental archive balance: base^n_arcane joins the core stack "
+         "additively instead of multiplying every card's contribution.",
+)
 _cli_args = _mode_parser.parse_known_args()[0]
 MODE: str = _cli_args.mode
 _VANILLA: bool = MODE == "vanilla"
@@ -87,6 +100,25 @@ CARDS_JSON_FILE: str = (_CFG.get("cards") or {}).get("json_file", "") or "modifi
 IMPLICITS_ENABLED: bool = (
     bool((_CFG.get("implicits") or {}).get("enabled", True))
     and not _cli_args.no_implicits
+)
+
+# "Include selected construction cores" mode: swap in pre-built structural
+# layouts (greater Construction / Arcane core builds) and reduce the core
+# budget by the structural cores used, exactly as in-game.
+STRUCTURAL_INCLUDE: bool = (
+    bool((_CFG.get("structural_cores") or {}).get("include_selected", False))
+    or _cli_args.structural_cores
+)
+STRUCTURAL_LAYOUTS_FILE: str = (
+    (_CFG.get("structural_cores") or {}).get("layouts_file", "")
+    or "structural_layouts.json"
+)
+
+# Experimental archive balance (tagged engine only): base^n_arcane joins the
+# core stack additively rather than multiplying the whole card contribution.
+EXPERIMENTAL_ARCHIVE_ADDITIVE: bool = (
+    bool(_CFG["experimental"].get("archive_additive", False))
+    or _cli_args.archive_additive
 )
 
 MULT_DIR_GREED_VERT:      float = _CFG["greed"]["dir_vert"]
@@ -457,6 +489,66 @@ def _load_json_decks(seen_keys: Set[str]) -> List[Deck]:
     return decks
 
 
+#: deck key → implicit keys forced by the structural balance layouts
+#: (e.g. mystery → ["runic", "bishop"]). Populated by
+#: ``_apply_structural_layouts`` when STRUCTURAL_INCLUDE is on.
+STRUCTURAL_IMPLICITS: Dict[str, List[str]] = {}
+
+
+def _apply_structural_layouts(decks: List[Deck]) -> List[Deck]:
+    """Swap in the pre-built structural-core layouts.
+
+    ``decks/<STRUCTURAL_LAYOUTS_FILE>`` maps deck keys to a replacement
+    O/A/X layout (the player's chosen Construction placements + Arcane-core
+    conversions already applied) plus ``structural_cores_used`` — subtracted
+    from the deck's core budget so the run stays true to the game. Entries
+    with a missing/empty layout are skipped with a warning (stock layout).
+    """
+    if not STRUCTURAL_INCLUDE:
+        return decks
+    import sys as _sys
+    path = _DECKS_DIR / STRUCTURAL_LAYOUTS_FILE
+    if not path.is_file():
+        print(f"[ndm] WARN: structural-cores mode is ON but {path} not found "
+              f"— every deck runs its stock layout.", file=_sys.stderr)
+        return decks
+    with path.open("r", encoding="utf-8") as fh:
+        entries = (json.load(fh) or {}).get("values") or {}
+
+    out: List[Deck] = []
+    for deck in decks:
+        entry = entries.get(deck.key)
+        if not entry:
+            out.append(deck)
+            continue
+        rows = entry.get("layout") or []
+        if not rows:
+            print(f"[ndm] WARN: structural layout for '{deck.key}' is empty/"
+                  f"pending — stock layout used.", file=_sys.stderr)
+            out.append(deck)
+            continue
+        slots, arcane_slots = _parse_layout("\n".join(rows))
+        if not slots:
+            print(f"[ndm] WARN: structural layout for '{deck.key}' parsed to "
+                  f"zero slots — stock layout used.", file=_sys.stderr)
+            out.append(deck)
+            continue
+        used = int(entry.get("structural_cores_used", 0))
+        out.append(Deck(
+            slots        = slots,
+            core_slots   = max(0, deck.core_slots - used),
+            arcane_slots = arcane_slots,
+            min_regular  = deck.min_regular,
+            max_greed    = deck.max_greed,
+            name         = deck.name,
+            key          = deck.key,
+        ))
+        forced = entry.get("implicits") or []
+        if forced:
+            STRUCTURAL_IMPLICITS[deck.key] = [str(k) for k in forced]
+    return out
+
+
 def _load_decks() -> List[Deck]:
     if not _DECKS_DIR.is_dir():
         raise FileNotFoundError(
@@ -473,6 +565,7 @@ def _load_decks() -> List[Deck]:
         raise RuntimeError(
             f"No enabled deck files found in {_DECKS_DIR}."
         )
+    decks = _apply_structural_layouts(decks)
     # Alphabetize by display name (case-insensitive). One sort here gates the
     # ordering everywhere ``_cfg.DECKS`` is consumed: GUI dropdown, terminal
     # summary loop, and spreadsheet (summary block + per-deck breakdown).

@@ -17,6 +17,7 @@ __pycache__/
 # implicit-impact comparison outputs (scripts/implicit_impact.py)
 implicit_impact_with.json
 implicit_impact_without.json
+implicit_impact_balance.json
 implicit_impact.html
 implicit_impact.md
 

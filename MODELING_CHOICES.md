@@ -968,3 +968,25 @@ card reality. The CLI reads the same per-mode file via
   with every re-score under the new setting). Snapshots capture the flag
   (absent = ON). CLI equivalent: config `implicits.enabled` and the
   `--no-implicits` flag (vanilla is unaffected — it never has implicits).
+
+### "Include selected construction cores" + experimental additive Archive (2026-07-14 balance pass)
+
+- **Structural balance layouts** (`structural_cores.include_selected` /
+  `--structural-cores`, spreadsheet CLI only): decks listed in
+  `decks/structural_layouts.json` swap to their pre-built greater
+  Construction / Arcane-core layouts, and `structural_cores_used` is
+  subtracted from the deck's core budget (Wold −2, Fairy −2, Mystery −1) so
+  the run matches the in-game cost. A layout entry may force implicit keys —
+  Mystery runs its chosen **runic + bishop** pair this way (each key resolves
+  through the normal per-deck implicit catalog, so the kernel receives the
+  two implicits exactly like a web Mystery pair). Empty/pending layouts warn
+  to stderr and fall back to stock.
+- **Experimental additive Archive** (`experimental.archive_additive` /
+  `--archive-additive`): Archive keeps its self-compounding `base^n_arcane`,
+  but the factor **joins the core stack** — `base^n − 1` is added alongside
+  the other cores (×-composed under multiplicative stacking) — instead of
+  multiplying every card's whole contribution from outside the stack.
+  Coverage is unchanged (baseline applies to every scoring card, exactly the
+  set the outside factor used to hit); only the composition softens. Default
+  OFF everywhere; the web app never sets it (wasm payload field defaults
+  false; the deployed wasm is unchanged until the next wasm-pack build).

@@ -14,6 +14,7 @@ from .config import (
     IMPLICITS_ENABLED,
     MODE,
     SPREADSHEET_PREFIX,
+    STRUCTURAL_IMPLICITS,
     Deck,
     _CFG,
     _get_test_configs,
@@ -49,6 +50,11 @@ def optimize(
         implicits_for_deck(deck.key)
         if MODE != "vanilla" and IMPLICITS_ENABLED else []
     )
+    # Structural balance layouts may force a pair (Mystery → runic + bishop):
+    # each forced key resolves through the same per-deck implicit catalog.
+    forced = STRUCTURAL_IMPLICITS.get(deck.key)
+    if forced and MODE != "vanilla" and IMPLICITS_ENABLED:
+        implicits = [t for k in forced for t in implicits_for_deck(k)]
 
     for card_class in CardClass:
         candidates = candidate_cores(card_class, deck)
