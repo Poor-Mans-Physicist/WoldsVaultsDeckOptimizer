@@ -803,6 +803,24 @@ NDM-relevant exceptions are **Foil** and **Wild**.
   ornate ⇒ red, …) so the displayed deck matches the build guidance;
   scoring stays color-blind either way. Score-tied COLOR-core candidates
   resolve toward the same color.
+- **Arcane cards carry no tags, ever** (playtest ruling): no categories,
+  no Foil, in every mode (the kernel strips them even off Exact stacks).
+  A foil arcane could only cost you; our `n_ns` counts arcane
+  unconditionally, which always matches the never-foil reality. The
+  builder and tag-edit popup refuse tags on arcane.
+- **Legal tag combos**: the distinct category-tag sets on REAL cards
+  (extracted from `modifiers.json` gear + task_loot entries — 28 combos,
+  emitted into the web bundle as `_tagCombos` and loaded by the CLI from
+  the same file) bound every tag surface. A card's category set must be a
+  **subset** of some real card's set (Wild exempt). Enforced in: the SA's
+  tag-toggle moves (kernel `legal_combos`), the Exact builder's chips,
+  and the what-if popup. A blanket UNION that isn't buildable as one real
+  card (Mystery pairs like champion+fairy, mutant's all-category
+  diversity) demotes wholesale to assignable — the SA then distributes
+  legal per-card subsets.
+- **Preview chooser** (UI consequence): a slot only offers real cards
+  carrying ALL of its optimized category tags; non-stat (Resource /
+  Temporal) battery slots are not assignable at all for now.
 
 ### Foil, per-card (§5)
 

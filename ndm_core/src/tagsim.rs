@@ -308,6 +308,12 @@ pub struct TagRun<'a> {
     pub blanket_groups: u16,
     /// Capped implicit-relevant groups the SA may toggle per slot (Targeted).
     pub assignable_groups: u16,
+    /// Category-tag combinations that exist on REAL cards (masks over the 9
+    /// category bits, extracted from the game's card data). A card's category
+    /// set must be a SUBSET of one of these — no optimizer surface may invent
+    /// a tag combination no buildable card has (Wild excepted; it never goes
+    /// through tag moves). Empty = unconstrained (back-compat).
+    pub legal_combos: Vec<u16>,
     pub implicits: Vec<Implicit>,
     pub cores: Vec<CoreSpecIn>,
     pub min_stat_placed: u32,
@@ -966,10 +972,14 @@ impl RuleBook {
 /// Run-level foil rule (§5): which placed cards carry the Foil bit.
 /// Applied on top of stack groups unless `exact_groups` (Exact mode builds
 /// foil per card, with shiny⇒foil enforced in the UI builder).
+/// ARCANE never takes foil (playtest ruling): a foil arcane would only ever
+/// cost you (it can't gain from foil-gated implicits — it scores 0 — and
+/// foil-ness could only threaten its Pure contribution). Our n_ns counts
+/// arcane unconditionally, which now always matches the never-foil reality.
 fn run_foil_groups(t: u8, cfg: &TagSimConfig, foil_core_active: bool, foil_banned: bool) -> u16 {
     if foil_banned { return 0; }
     let foil = if cfg.is_shiny { cfg.wv_foil_rules } else { foil_core_active };
-    if foil && (is_scorable(t) || t == T_ARCANE) { G_FOIL } else { 0 }
+    if foil && is_scorable(t) { G_FOIL } else { 0 }
 }
 
 fn stat_groups(t: u8, cfg: &TagSimConfig) -> u16 {
@@ -987,12 +997,15 @@ fn materialize(
 ) -> SlotCard {
     let mut groups = spec.groups;
     if !run.exact_groups {
-        if is_scorable(spec.t) || spec.t == T_ARCANE {
+        if is_scorable(spec.t) {
             groups |= run.blanket_groups & !run.assignable_groups;
         }
         groups |= run_foil_groups(spec.t, &run.cfg, foil_core_active, foil_banned);
         if is_greed(spec.t) { groups = 0; }   // greed cards carry no groups
     }
+    // Arcane cards carry NO tags in any mode (playtest ruling) — no foil,
+    // no categories, regardless of what a stack claims.
+    if spec.t == T_ARCANE { groups = 0; }
     // Stat is run-derived in EVERY mode (shiny ⇒ stat-giving cards carry it,
     // evo ⇒ never) — it stopped being a user-facing tag.
     groups |= stat_groups(spec.t, &run.cfg);
@@ -1281,6 +1294,15 @@ fn sa_one_restart(
             let bit = assignable_bits[rng.gen_range(0..assignable_bits.len())];
             let adding = c.groups & bit == 0;
             if !rules.toggle_ok(bit, adding) { continue; }
+            // Adding a category bit must keep the card's category set a
+            // subset of some REAL card's set (removal can't break subset
+            // legality). Wild never reaches here (not scorable).
+            if adding && !run.legal_combos.is_empty() {
+                let next_cats = (c.groups | bit) & ALL_CATEGORY_GROUPS;
+                if !run.legal_combos.iter().any(|&m| next_cats & !m == 0) {
+                    continue;
+                }
+            }
             // Non-stat bits (Resource/Temporal) flip the card's floor status.
             let mut flipped = c;
             flipped.groups ^= bit;

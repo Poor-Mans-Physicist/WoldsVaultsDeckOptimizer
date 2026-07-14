@@ -11,6 +11,8 @@
   } from "../lib/types";
   import { NOTCH_COLOR } from "../lib/notches";
   import { TYPE_LABEL } from "../lib/palette";
+  import { isLegalCategorySet } from "../lib/implicits";
+  import { legalTagCombos } from "../lib/deck";
 
   interface Props {
     open: boolean;
@@ -39,8 +41,15 @@
   const editable = $derived(
     baseCard !== null && baseCard.t !== CardType.DEAD
     && baseCard.t !== CardType.WILD
+    && baseCard.t !== CardType.ARCANE   // arcane cards carry no tags
     && !baseCard.t.startsWith("dir_greed"),
   );
+
+  /** Would adding `g` create a category set no real card has? */
+  function comboIllegal(g: GroupTag): boolean {
+    if (currentGroups.includes(g)) return false;   // removal always fine
+    return !isLegalCategorySet([...currentGroups, g], legalTagCombos());
+  }
 
   // Foil rules in the popup (§9.6): cannot be removed from Wold's shiny
   // cards; cannot be added to evo cards (evo foil comes from the Foil core).
@@ -101,6 +110,10 @@
         <div class="chips">
           {#each CATEGORY_GROUPS as g}
             <button type="button" class="chip" class:sel={currentGroups.includes(g)}
+              disabled={comboIllegal(g)}
+              title={comboIllegal(g)
+                ? `No real card combines these tags with ${g}`
+                : g}
               style:--c={NOTCH_COLOR[g]} onclick={() => toggle(g)}>
               {g}
             </button>

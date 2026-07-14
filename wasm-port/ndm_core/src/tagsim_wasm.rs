@@ -76,6 +76,10 @@ pub struct TagRunInput {
     pub blanket_groups: Vec<String>,
     #[serde(default)]
     pub assignable_groups: Vec<String>,
+    /// Category-tag combos that exist on real cards; a card's category set
+    /// must stay a subset of one. Empty = unconstrained.
+    #[serde(default)]
+    pub legal_combos: Vec<Vec<String>>,
     #[serde(default)]
     pub implicits: Vec<ImplicitIn>,
     /// Each entry: [core_type, color_or_empty, override_or_negative].
@@ -215,6 +219,7 @@ fn build_run(inp: &TagRunInput) -> TagRun<'_> {
         stacks, tag_rules,
         blanket_groups: parse_group_list(&inp.blanket_groups),
         assignable_groups: parse_group_list(&inp.assignable_groups),
+        legal_combos: inp.legal_combos.iter().map(|c| parse_group_list(c)).collect(),
         implicits, cores,
         min_stat_placed: inp.min_stat_placed,
         final_pass_nonfoil_evo: inp.final_pass_nonfoil_evo,

@@ -582,7 +582,7 @@ def sa_optimize_tagged(
     Wold's, off for vanilla). The parity harness passes False to compare
     against the classic kernel on its own model.
     """
-    from .implicits import split_blanket_assignable
+    from .implicits import split_blanket_assignable, LEGAL_COMBOS
 
     slots_list = list(deck.slots)
     slot_order = {p: i for i, p in enumerate(slots_list)}
@@ -635,6 +635,7 @@ def sa_optimize_tagged(
         wv_foil_rules          = MODE != "vanilla",
         floor_counts_deluxe    = DELUXE_COUNTED_AS_REGULAR,
         seed                   = seed,
+        legal_combos           = LEGAL_COMBOS if assignable else None,
     )
 
     best_asgn = {

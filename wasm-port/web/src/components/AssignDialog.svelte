@@ -2,15 +2,20 @@
   // Modal: pick a stat card + tier for a single deck slot. Mirrors
   // `open_assign_dialog` in src/preview.py — searchable list + tier buttons.
 
-  import type { Position } from "../lib/types";
+  import type { GroupTag, Position } from "../lib/types";
   import type { CardEntry } from "../lib/modifiers";
   import { cardsByFamily } from "../lib/modifiers";
+  import { cardMatchesSlotTags } from "../lib/preview";
   import type { CardFamily } from "../lib/preview";
+  import { NOTCH_COLOR } from "../lib/notches";
 
   interface Props {
     open:       boolean;
     pos:        Position | null;
     family:     CardFamily | null;
+    /** The slot's optimized category tags — only cards carrying ALL of
+     *  them are offered (the optimizer demanded those tags there). */
+    slotTags:   GroupTag[];
     ndm:        number;
     modifiers:  Map<string, CardEntry> | null;
     current:    { cardKey: string; tier: number } | null;
@@ -18,14 +23,20 @@
     onClear:    () => void;
     onClose:    () => void;
   }
-  let { open, pos, family, ndm, modifiers, current, onAssign, onClear, onClose }: Props = $props();
+  let {
+    open, pos, family, slotTags, ndm, modifiers, current,
+    onAssign, onClear, onClose,
+  }: Props = $props();
 
   let query = $state("");
   // Reset the search box every time the dialog re-opens.
   $effect(() => { if (open) query = ""; });
 
   const allCards = $derived<CardEntry[]>(
-    (modifiers && family) ? cardsByFamily(modifiers, family) : [],
+    (modifiers && family)
+      ? cardsByFamily(modifiers, family)
+          .filter((c) => cardMatchesSlotTags(c, slotTags))
+      : [],
   );
 
   const filtered = $derived.by(() => {
@@ -62,8 +73,22 @@
         <button type="button" class="close" onclick={onClose} aria-label="Close">×</button>
       </header>
 
+      {#if slotTags.length > 0}
+        <div class="tagline">
+          Needs
+          {#each slotTags as g}
+            <span class="tagchip" style:--c={NOTCH_COLOR[g]}>{g}</span>
+          {/each}
+          — showing only matching cards.
+        </div>
+      {/if}
+
       {#if allCards.length === 0}
-        <p class="empty">No {family} cards loaded from modifiers.json.</p>
+        <p class="empty">
+          {slotTags.length > 0
+            ? `No ${family} cards carry ${slotTags.join(" + ")}.`
+            : `No ${family} cards loaded from modifiers.json.`}
+        </p>
       {:else}
         <input
           type="search"
@@ -149,6 +174,24 @@
     padding: 0 6px;
   }
   .close:hover { color: #111827; }
+  /* Slot tag requirement line — chips colored to the notch palette. */
+  .tagline {
+    margin: 8px 14px 0;
+    font-size: 12px;
+    color: #374151;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .tagchip {
+    font-size: 10px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--c) 22%, #FFFFFF);
+    border: 1px solid var(--c);
+    color: #111827;
+  }
   input[type="search"] {
     margin: 10px 14px 6px;
     padding: 6px 8px;

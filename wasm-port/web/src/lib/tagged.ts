@@ -10,7 +10,7 @@ import {
 import type { Deck } from "./deck";
 import type { ResolvedConfig } from "./config";
 import {
-  blanketGroups, preferredMonoColor, resolveImplicits, splitBlanketAssignable,
+  preferredMonoColor, resolveImplicits, splitBlanketAssignable,
   type ImplicitDef, type ImplicitPayload,
 } from "./implicits";
 
@@ -23,6 +23,8 @@ export interface TaggedRunInput {
   exactStacks:   ExactStack[];     // Exact only
   mysteryPicks:  [string, string] | null;
   implicitCatalog: Record<string, ImplicitDef>;
+  /** Category combos that exist on real cards (deck.ts::legalTagCombos). */
+  legalCombos: string[][];
   complexCards: boolean;
   minStatPlaced: number;
   autoPlaceArcane: boolean;
@@ -160,7 +162,7 @@ function kernelRules(input: TaggedRunInput): { axis: string; key: string; min: n
  *  toggles (real cards keep their real tags). */
 function assignableGroups(input: TaggedRunInput, implicits: ImplicitPayload[]): GroupTag[] {
   if (input.mode === OptimizerMode.EXACT) return [];
-  const { blanket, assignable } = splitBlanketAssignable(implicits);
+  const { blanket, assignable } = splitBlanketAssignable(implicits, input.legalCombos);
   const out: GroupTag[] = [...assignable];
   if (input.mode === OptimizerMode.TARGETED) {
     const relevant = new Set(blanket);
@@ -188,7 +190,8 @@ export function buildTaggedPayload(
   const exact = input.mode === OptimizerMode.EXACT;
 
   const stacks = exact ? exactStacksToKernel(input) : unlimitedStacks(input, colorsReal, implicits);
-  const blanket = exact ? [] : blanketGroups(implicits);
+  const blanket = exact
+    ? [] : splitBlanketAssignable(implicits, input.legalCombos).blanket;
   const assignable = assignableGroups(input, implicits);
 
   return {
@@ -202,6 +205,7 @@ export function buildTaggedPayload(
     tag_rules: kernelRules(input),
     blanket_groups: blanket,
     assignable_groups: assignable,
+    legal_combos: input.legalCombos,
     implicits,
     cores: combo.map((s) => [s.core_type, s.color ?? "", s.override ?? -1.0]),
     min_stat_placed: Math.max(0, input.minStatPlaced | 0),

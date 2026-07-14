@@ -117,11 +117,19 @@ export function buildDeck(raw: RawDeck, deckmod: number): Deck {
  */
 let _decksCache: Record<string, RawDeck[]> | null = null;
 let _implicitCatalog: Record<string, ImplicitDef> = {};
+let _tagCombos: string[][] = [];
 
 /** Full implicit catalog (for the Mystery pair-picker). Populated by the
  *  first loadDecks() call — decks.json ships it under "_implicits". */
 export function implicitCatalog(): Record<string, ImplicitDef> {
   return _implicitCatalog;
+}
+
+/** Category-tag combos that exist on real cards (from the game data). A
+ *  chosen category set must be a subset of one of these — enforced in the
+ *  SA's tag toggles, the Exact builder, and the what-if popup. */
+export function legalTagCombos(): string[][] {
+  return _tagCombos;
 }
 
 export async function loadDecks(
@@ -136,7 +144,9 @@ export async function loadDecks(
     if (!res.ok) throw new Error(`Failed to load decks.json: ${res.status}`);
     const blob = await res.json();
     _implicitCatalog = (blob["_implicits"] ?? {}) as Record<string, ImplicitDef>;
+    _tagCombos = (blob["_tagCombos"] ?? []) as string[][];
     delete blob["_implicits"];
+    delete blob["_tagCombos"];
     _decksCache = blob;
   }
   const list = _decksCache?.[mode];

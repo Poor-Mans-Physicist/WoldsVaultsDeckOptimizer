@@ -38,6 +38,13 @@ export const FAMILIES: ReadonlyArray<CardFamily> = ["shiny", "evo", "deluxe", "t
 
 export interface CardTier { tier: number; value: number; }
 
+// The 9 freeform category tags (mirror of types.ts CATEGORY_GROUPS —
+// duplicated here so this module stays dependency-free).
+const CATEGORY_TAGS = new Set<string>([
+  "Offensive", "Defensive", "Physical", "Magical", "Utility",
+  "Resource", "Knack", "Temporal", "Essence",
+]);
+
 export interface CardEntry {
   key:            string;
   name:           string;
@@ -47,6 +54,9 @@ export interface CardEntry {
   isPercent:      boolean;
   tiers:          CardTier[];
   displayAttribute: string;
+  /** The card's category tags (Offensive, Utility, …) from the game data —
+   *  drives the tag-aware slot filter in the Preview chooser. */
+  categories:     string[];
 }
 
 function classifyFamily(groups: string[]): CardFamily | null {
@@ -119,6 +129,7 @@ export async function loadModifiers(baseUrl: string): Promise<Map<string, CardEn
       family, isPercent: isPercent(attribute),
       tiers,
       displayAttribute: humanize(attributeShort),
+      categories: groups.filter((g) => CATEGORY_TAGS.has(g)),
     });
   }
 

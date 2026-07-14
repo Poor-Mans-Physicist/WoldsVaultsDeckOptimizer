@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 _IMPLICITS_FILE = Path(__file__).resolve().parent.parent / "decks" / "wolds_implicits.json"
+_MODIFIERS_FILE = Path(__file__).resolve().parent.parent / "modifiers.json"
 
 # Kernel tuple: (kind, value, groups, colors, extra) — see tagsim_py.rs.
 ImplicitTuple = Tuple[str, float, List[str], List[str], str]
@@ -80,16 +81,54 @@ def _relevant_groups(implicits: List[ImplicitTuple]) -> List[str]:
     return out
 
 
+def _load_legal_combos() -> List[List[str]]:
+    """Distinct category-tag sets on REAL cards (gear + task_loot entries in
+    modifiers.json). Empty when the file is missing (→ unconstrained)."""
+    if not _MODIFIERS_FILE.is_file():
+        import sys as _sys
+        print("[implicits] WARN: modifiers.json not found — tag-combo "
+              "legality is unconstrained this run.", file=_sys.stderr)
+        return []
+    with _MODIFIERS_FILE.open("r", encoding="utf-8") as fh:
+        data = json.load(fh) or {}
+    combos = set()
+    for entry in (data.get("values") or {}).values():
+        if not isinstance(entry, dict) or entry.get("type") not in ("gear", "task_loot"):
+            continue
+        groups = entry.get("groups") or []
+        combos.add(tuple(sorted(g for g in groups if g in CATEGORY_GROUPS)))
+    return sorted(list(c) for c in combos)
+
+
+#: Category combos that exist on real cards; a card's category set must be a
+#: subset of one (Wild excepted). Fed to the kernel's toggle-move legality.
+LEGAL_COMBOS: List[List[str]] = _load_legal_combos()
+
+
+def _is_legal_set(tags: List[str]) -> bool:
+    cats = [g for g in tags if g in CATEGORY_GROUPS]
+    if not cats or not LEGAL_COMBOS:
+        return True
+    return any(all(g in combo for g in cats) for combo in LEGAL_COMBOS)
+
+
 def split_blanket_assignable(
     implicits: List[ImplicitTuple],
 ) -> Tuple[List[str], List[str]]:
     """(blanket, assignable) for Max: stat-safe relevant tags are assigned
     free to every card (NDM-inert); non-stat tags (Resource/Temporal) zero
-    the carrying card, so the SA decides per slot ("battery" cards)."""
+    the carrying card, so the SA decides per slot ("battery" cards).
+
+    A blanket union that isn't buildable as ONE real card (Mystery pairs,
+    mutant's all-categories diversity) demotes wholesale to assignable —
+    the SA then picks legal per-card subsets under the kernel combo check."""
     blanket: List[str] = []
     assignable: List[str] = []
     for g in _relevant_groups(implicits):
         (assignable if g in NONSTAT_GROUPS else blanket).append(g)
+    if not _is_legal_set(blanket):
+        assignable.extend(blanket)
+        blanket = []
     return blanket, assignable
 
 

@@ -4,8 +4,10 @@
 // assignment-reset after Run). The actual UI dialog lives in the Svelte
 // components; this module keeps the math + classification testable.
 
-import { CardClass, CardType, type Position } from "./types";
-import type { OptimizeResult } from "./optimize";
+import {
+  CardClass, CardType, CATEGORY_GROUPS, type GroupTag, type Position,
+} from "./types";
+import type { TaggedOptimizeResult } from "./taggedClient";
 import type { CardEntry } from "./modifiers";
 
 export type CardFamily = "shiny" | "evo" | "deluxe" | "typeless";
@@ -22,8 +24,35 @@ export function slotFamily(slotType: CardType, deckClass: CardClass): CardFamily
   return null;
 }
 
-export function isAssignableSlot(slotType: CardType, deckClass: CardClass): boolean {
+/** The slot's optimized CATEGORY tags (Foil/Stat stripped) — what a real
+ *  card placed there must carry. */
+export function slotCategoryTags(tags: readonly GroupTag[] | null | undefined): GroupTag[] {
+  if (!tags) return [];
+  return tags.filter((g) => (CATEGORY_GROUPS as readonly string[]).includes(g));
+}
+
+/** Non-stat slots (Resource / Temporal batteries) host cards that give no
+ *  stats — nothing to preview-assign. Plumbing for them can come later. */
+export function isNonStatSlot(tags: readonly GroupTag[] | null | undefined): boolean {
+  return !!tags && (tags.includes("Resource") || tags.includes("Temporal"));
+}
+
+export function isAssignableSlot(
+  slotType:  CardType,
+  deckClass: CardClass,
+  tags?:     readonly GroupTag[] | null,
+): boolean {
+  if (isNonStatSlot(tags)) return false;
   return slotFamily(slotType, deckClass) !== null;
+}
+
+/** Does this real card satisfy the slot's optimized tags? (must carry ALL
+ *  of them — extra tags on the card are harmless) */
+export function cardMatchesSlotTags(
+  card: CardEntry,
+  slotTags: readonly GroupTag[],
+): boolean {
+  return slotTags.every((g) => card.categories.includes(g));
 }
 
 // Short attribute badge — mirrors the _ATTR_ABBREV table in preview.py.
@@ -60,8 +89,21 @@ export interface PreviewAggregate {
   nAssignable: number;
 }
 
+/** Per-slot tags keyed `${r},${c}` from the run result. */
+export function resultTagsBySlot(
+  result: TaggedOptimizeResult | null,
+): Map<string, GroupTag[]> {
+  const m = new Map<string, GroupTag[]>();
+  if (!result) return m;
+  for (let i = 0; i < result.deck.slots.length; i++) {
+    const [r, c] = result.deck.slots[i];
+    m.set(`${r},${c}`, result.cards[i]?.groups ?? []);
+  }
+  return m;
+}
+
 export function aggregatePreview(
-  result:       OptimizeResult | null,
+  result:       TaggedOptimizeResult | null,
   assignments:  Map<AssignmentKey, AssignmentVal>,
   deckClass:    CardClass,
   modifiers:    Map<string, CardEntry>,
@@ -71,8 +113,9 @@ export function aggregatePreview(
   let nAssignable = 0, nAssigned = 0;
 
   if (result) {
-    for (const [, [t]] of result.assignment) {
-      if (isAssignableSlot(t, deckClass)) nAssignable++;
+    const tagsBySlot = resultTagsBySlot(result);
+    for (const [key, [t]] of result.assignment) {
+      if (isAssignableSlot(t, deckClass, tagsBySlot.get(key))) nAssignable++;
     }
   }
 
@@ -98,13 +141,14 @@ export function aggregatePreview(
  */
 export function resetAssignmentsOnRun(
   assignments: Map<AssignmentKey, AssignmentVal>,
-  result:      OptimizeResult | null,
+  result:      TaggedOptimizeResult | null,
   deckClass:   CardClass,
   modifiers:   Map<string, CardEntry>,
 ): { kept: Map<AssignmentKey, AssignmentVal>; dropped: number } {
   const kept = new Map<AssignmentKey, AssignmentVal>();
   let dropped = 0;
   const placedMap = result?.assignment ?? new Map();
+  const tagsBySlot = resultTagsBySlot(result);
 
   for (const [key, v] of assignments) {
     const card = modifiers.get(v.cardKey);
@@ -112,6 +156,9 @@ export function resetAssignmentsOnRun(
     const placed = placedMap.get(key);
     if (!placed) { dropped++; continue; }
     if (slotFamily(placed[0], deckClass) !== card.family) { dropped++; continue; }
+    const tags = tagsBySlot.get(key);
+    if (isNonStatSlot(tags)) { dropped++; continue; }
+    if (!cardMatchesSlotTags(card, slotCategoryTags(tags))) { dropped++; continue; }
     kept.set(key, v);
   }
   return { kept, dropped };

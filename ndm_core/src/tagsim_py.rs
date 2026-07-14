@@ -128,6 +128,7 @@ fn build_run<'a>(
     tag_rules: Vec<TagRule>,
     blanket_groups: u16,
     assignable_groups: u16,
+    legal_combos: Vec<u16>,
     implicits: Vec<Implicit>,
     cores: Vec<CoreSpecIn>,
     min_stat_placed: u32,
@@ -141,9 +142,15 @@ fn build_run<'a>(
     TagRun {
         slots, row_peers, col_peers, surr_peers, diag_peers,
         arcane_slot_indices, stacks, tag_rules, blanket_groups,
-        assignable_groups, implicits, cores, min_stat_placed,
+        assignable_groups, legal_combos, implicits, cores, min_stat_placed,
         final_pass_nonfoil_evo, exact_groups, n_iter, restarts, seed, cfg,
     }
+}
+
+fn parse_combo_masks(combos: &Option<Vec<Vec<String>>>) -> Vec<u16> {
+    combos.as_ref().map(|list| {
+        list.iter().map(|combo| parse_group_list(combo)).collect()
+    }).unwrap_or_default()
 }
 
 #[pyfunction]
@@ -158,7 +165,7 @@ fn build_run<'a>(
     mult_void_core_base, mult_void_core_scale, mult_archive_core,
     greed_additive, additive_cores, is_shiny, auto_place_arcane,
     colors_real, complex_cards, wv_foil_rules, floor_counts_deluxe,
-    seed = None,
+    seed = None, legal_combos = None,
 ))]
 pub fn run_sa_tagged(
     slots: Vec<(i32, i32)>,
@@ -202,6 +209,7 @@ pub fn run_sa_tagged(
     wv_foil_rules: bool,
     floor_counts_deluxe: bool,
     seed: Option<u64>,
+    legal_combos: Option<Vec<Vec<String>>>,
 ) -> PyResult<(Vec<PyPlaced>, f64)> {
     let cfg = TagSimConfig {
         mult_dir_vert, mult_dir_horiz, mult_pure_base, mult_pure_scale,
@@ -222,6 +230,7 @@ pub fn run_sa_tagged(
         &slots, row_peers, col_peers, surr_peers, diag_peers,
         arcane_slot_indices, parse_stacks(&stacks), parse_rules(&tag_rules),
         parse_group_list(&blanket_groups), parse_group_list(&assignable_groups),
+        parse_combo_masks(&legal_combos),
         parse_implicits(&implicits), cores_in, min_stat_placed,
         final_pass_nonfoil_evo, exact_groups, n_iter, restarts, seed, cfg,
     );
@@ -291,7 +300,7 @@ pub fn score_tagged(
 
     let run = build_run(
         &slots, row_peers, col_peers, surr_peers, diag_peers,
-        arcane_slot_indices, Vec::new(), Vec::new(), 0, 0,
+        arcane_slot_indices, Vec::new(), Vec::new(), 0, 0, Vec::new(),
         parse_implicits(&implicits), cores_in, 0, false, true, 0, 1, None, cfg,
     );
 

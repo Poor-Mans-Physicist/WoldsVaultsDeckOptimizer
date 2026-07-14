@@ -11,6 +11,8 @@
   } from "../lib/types";
   import { COLOR_HEX, TYPE_LABEL } from "../lib/palette";
   import { NOTCH_COLOR } from "../lib/notches";
+  import { isLegalCategorySet } from "../lib/implicits";
+  import { legalTagCombos } from "../lib/deck";
 
   interface Props {
     open: boolean;
@@ -49,7 +51,17 @@
 
   const isGreed = $derived((REAL_GREEDS as readonly CardType[]).includes(ctype));
   const isWild = $derived(ctype === CardType.WILD);
+  const isArcane = $derived(ctype === CardType.ARCANE);
   const isScorableOrArcane = $derived(!isGreed && !isWild);
+  // Arcane cards carry no tags at all (playtest ruling); greed likewise.
+  const tagsAllowed = $derived(!isGreed && !isWild && !isArcane);
+
+  /** Would adding `g` create a category set no real card has? (subset rule
+   *  over the game-data combo catalog; Wild exempt — no chips shown.) */
+  function comboIllegal(g: GroupTag): boolean {
+    if (groups.includes(g)) return false;   // removal is always fine
+    return !isLegalCategorySet([...groups, g], legalTagCombos());
+  }
 
   // Foil legality (§5): Wold's shiny ⇒ locked ON for scorable/arcane cards;
   // greed cards carry no groups; vanilla / evo cards are never foil at build
@@ -57,7 +69,7 @@
   // Stat is NOT offered — it's run-derived (shiny ⇒ stat cards carry it,
   // evo ⇒ never); the kernel adds it automatically.
   const foilLocked = $derived(
-    appMode !== "vanilla" && cardClass === CardClass.SHINY && isScorableOrArcane,
+    appMode !== "vanilla" && cardClass === CardClass.SHINY && !isGreed && !isWild && !isArcane,
   );
 
   function toggleGroup(g: GroupTag) {
@@ -66,7 +78,7 @@
   }
 
   function effectiveGroups(): GroupTag[] {
-    if (isGreed || isWild) return [];
+    if (isGreed || isWild || isArcane) return [];
     let out: GroupTag[] = groups.filter((g) => g !== "Foil" && g !== "Stat");
     if (foilLocked || groups.includes("Foil")) {
       if (foilLocked || cardClass !== CardClass.EVO) out = [...out, "Foil"];
@@ -132,13 +144,17 @@
         </div>
       </div>
 
-      {#if !isGreed && !isWild}
+      {#if tagsAllowed}
         <div class="field">
           <span class="lbl">Tags</span>
           <div class="chips wrap">
             {#each CATEGORY_GROUPS as g}
               <button type="button" class="chip plain notch"
                 class:sel={groups.includes(g)}
+                disabled={comboIllegal(g)}
+                title={comboIllegal(g)
+                  ? `No real card combines ${[...groups.filter((x) => x !== "Foil"), g].join(" + ")}`
+                  : g}
                 style:--chip={NOTCH_COLOR[g]}
                 onclick={() => toggleGroup(g)}>
                 {g}
@@ -162,7 +178,9 @@
         <div class="note">
           {isWild
             ? "Wild carries every group and matches every color for neighbors — no tags to pick."
-            : "Greed cards carry no tags."}
+            : isArcane
+              ? "Arcane cards carry no tags (and are never foil)."
+              : "Greed cards carry no tags."}
         </div>
       {/if}
 

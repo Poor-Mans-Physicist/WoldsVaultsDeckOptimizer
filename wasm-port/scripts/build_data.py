@@ -243,10 +243,32 @@ def main() -> None:
     else:
         print(f"[build_data] WARN: {_IMPLICITS} not found — decks ship without implicits.")
 
-    # decks.json: per-mode keyed dict + the implicit catalog under a reserved
-    # "_implicits" key (mode names never start with an underscore).
+    # Legal category-tag combos: the distinct category sets that exist on
+    # REAL cards (gear stat cards + task_loot resource cards). No optimizer
+    # surface may invent a combination outside this catalog (subset rule;
+    # Wild excepted). Shipped so the SA's tag toggles, the Exact builder,
+    # and the what-if popup all enforce the same reality.
+    categories = ["Offensive", "Defensive", "Physical", "Magical", "Utility",
+                  "Resource", "Knack", "Temporal", "Essence"]
+    combo_set = set()
+    if _MODIFIERS.exists():
+        with _MODIFIERS.open("r", encoding="utf-8") as fh:
+            mods = json.load(fh) or {}
+        for entry in (mods.get("values") or {}).values():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("type") not in ("gear", "task_loot"):
+                continue
+            groups = entry.get("groups") or []
+            combo = tuple(sorted(g for g in groups if g in categories))
+            combo_set.add(combo)
+    tag_combos = sorted(list(c) for c in combo_set)
+
+    # decks.json: per-mode keyed dict + reserved "_"-prefixed catalogs
+    # (mode names never start with an underscore).
     decks_blob: Dict[str, Any] = dict(decks_by_mode)
     decks_blob["_implicits"] = implicit_catalog
+    decks_blob["_tagCombos"] = tag_combos
     (out_dir / "decks.json").write_text(
         json.dumps(decks_blob, indent=2) + "\n",
         encoding="utf-8",

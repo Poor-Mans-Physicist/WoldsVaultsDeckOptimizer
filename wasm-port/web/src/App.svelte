@@ -14,7 +14,7 @@
     captureSnapshot, saveSnapshot, restoreSnapshot, reloadSnapshots,
   } from "./lib/state.svelte";
   import { loadConfigBundle, getMode } from "./lib/config";
-  import { loadDecks, implicitCatalog } from "./lib/deck";
+  import { loadDecks, implicitCatalog, legalTagCombos } from "./lib/deck";
   import {
     CardClass, OptimizerMode, DEPTH_PARAMS,
     type ExactStack, type GroupTag, type TagRuleRow,
@@ -22,7 +22,7 @@
   import { optimizeTaggedAsync } from "./lib/taggedClient";
   import { loadModifiers } from "./lib/modifiers";
   import {
-    isAssignableSlot, slotFamily, resetAssignmentsOnRun,
+    isAssignableSlot, slotFamily, slotCategoryTags, resetAssignmentsOnRun,
   } from "./lib/preview";
   import { classSelectLabel } from "./lib/visibility";
   import {
@@ -68,6 +68,7 @@
   let assignOpen = $state(false);
   let assignPos:  Position | null = $state(null);
   let assignSlotType: CardType | null = $state(null);
+  let assignSlotTags: GroupTag[] = $state([]);
   let assignNdm = $state(0);
 
   // Live breakdown: the run result, re-scored through the what-if overlay
@@ -370,6 +371,7 @@
         exactStacks:     $state.snapshot(app.exactStacks) as ExactStack[],
         mysteryPicks:    app.mysteryPicks ? [...app.mysteryPicks] : null,
         implicitCatalog: implicitCatalog(),
+        legalCombos:     legalTagCombos(),
         complexCards:    app.complexCards,
         minStatPlaced:   app.minRegularPlaced,
         autoPlaceArcane: app.autoPlaceArcane,
@@ -416,10 +418,12 @@
         tagEditOpen = true;
       }
     } else {
-      // Preview tab: only open the assign dialog on assignable, scoring slots.
-      if (!isAssignableSlot(bd.cardType, app.cardClass)) return;
+      // Preview tab: only open the assign dialog on assignable, scoring
+      // slots. Non-stat (Resource/Temporal) slots host no stat cards.
+      if (!isAssignableSlot(bd.cardType, app.cardClass, bd.groups)) return;
       assignPos      = pos;
       assignSlotType = bd.cardType;
+      assignSlotTags = slotCategoryTags(bd.groups);
       assignNdm      = bd.finalNdm;
       assignOpen     = true;
     }
@@ -653,6 +657,7 @@
   open={assignOpen}
   pos={assignPos}
   family={dialogFamily}
+  slotTags={assignSlotTags}
   ndm={assignNdm}
   modifiers={app.modifiers}
   current={currentAssignment}

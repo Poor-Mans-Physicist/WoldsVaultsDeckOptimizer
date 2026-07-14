@@ -92,21 +92,47 @@ export function relevantGroups(implicits: ImplicitPayload[]): GroupTag[] {
 }
 
 /**
+ * Is this category set buildable as a REAL card? True iff it's a subset of
+ * some real card's category set (Wild excepted — never checked here).
+ * An empty combo catalog means "no data" → unconstrained.
+ */
+export function isLegalCategorySet(
+  tags: readonly GroupTag[],
+  combos: readonly string[][],
+): boolean {
+  if (combos.length === 0) return true;
+  const cats = tags.filter((g) =>
+    (CATEGORY_GROUPS as readonly string[]).includes(g));
+  if (cats.length === 0) return true;
+  return combos.some((combo) => cats.every((g) => combo.includes(g)));
+}
+
+/**
  * Split the implicit-relevant tags for Max/Targeted (spec §3.1, amended):
  *  - blanket    — stat-safe tags, assigned free to every non-greed card
  *                 (genuinely NDM-inert, so "assign to all" stays exact).
  *  - assignable — non-stat tags (Resource/Temporal): carrying one zeroes
  *                 the card, so the SA decides per slot whether a battery
  *                 is worth it (merchant's column feeders, mutant diversity).
+ *
+ * When the blanket UNION isn't buildable as one real card (possible with
+ * Mystery pairs, e.g. champion+fairy wanting Physical+Magical), the whole
+ * blanket demotes to assignable — the SA then picks a legal subset per
+ * slot under the kernel's combo check.
  */
 export function splitBlanketAssignable(
   implicits: ImplicitPayload[],
+  combos: readonly string[][] = [],
 ): { blanket: GroupTag[]; assignable: GroupTag[] } {
-  const blanket: GroupTag[] = [];
+  let blanket: GroupTag[] = [];
   const assignable: GroupTag[] = [];
   for (const g of relevantGroups(implicits)) {
     if (NONSTAT_TAGS.includes(g)) assignable.push(g);
     else blanket.push(g);
+  }
+  if (!isLegalCategorySet(blanket, combos)) {
+    assignable.push(...blanket);
+    blanket = [];
   }
   return { blanket, assignable };
 }
