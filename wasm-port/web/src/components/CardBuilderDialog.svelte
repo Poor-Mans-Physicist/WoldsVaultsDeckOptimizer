@@ -54,11 +54,11 @@
   // Foil legality (§5): Wold's shiny ⇒ locked ON for scorable/arcane cards;
   // greed cards carry no groups; vanilla / evo cards are never foil at build
   // time (evo foil comes from the Foil core at run time).
+  // Stat is NOT offered — it's run-derived (shiny ⇒ stat cards carry it,
+  // evo ⇒ never); the kernel adds it automatically.
   const foilLocked = $derived(
     appMode !== "vanilla" && cardClass === CardClass.SHINY && isScorableOrArcane,
   );
-  // Stat legality: shiny-only (spec §2.2); never on evo cards (Wild aside).
-  const statAllowed = $derived(cardClass === CardClass.SHINY && !isGreed && !isWild);
 
   function toggleGroup(g: GroupTag) {
     if (groups.includes(g)) groups = groups.filter((x) => x !== g);
@@ -71,7 +71,6 @@
     if (foilLocked || groups.includes("Foil")) {
       if (foilLocked || cardClass !== CardClass.EVO) out = [...out, "Foil"];
     }
-    if (statAllowed && groups.includes("Stat")) out = [...out, "Stat"];
     return out;
   }
 
@@ -157,14 +156,6 @@
               onclick={() => toggleGroup("Foil")}>
               Foil {foilLocked ? "🔒" : ""}
             </button>
-            {#if statAllowed}
-              <button type="button" class="chip plain notch"
-                class:sel={groups.includes("Stat")}
-                style:--chip={NOTCH_COLOR.Stat}
-                onclick={() => toggleGroup("Stat")}>
-                Stat
-              </button>
-            {/if}
           </div>
         </div>
       {:else}

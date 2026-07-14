@@ -10,7 +10,7 @@ import {
 import type { Deck } from "./deck";
 import type { ResolvedConfig } from "./config";
 import {
-  blanketGroups, resolveImplicits,
+  blanketGroups, preferredMonoColor, resolveImplicits, splitBlanketAssignable,
   type ImplicitDef, type ImplicitPayload,
 } from "./implicits";
 
@@ -78,12 +78,19 @@ function scorableTypesFor(input: TaggedRunInput): CardType[] {
   return types;
 }
 
-/** Unlimited supply for Max / Targeted. Mono-color when colors aren't real;
+/** Unlimited supply for Max / Targeted. Mono-color when colors aren't real
+ *  (the mono color follows a color-keyed implicit so the displayed deck
+ *  matches the build guidance — scoring is color-blind regardless);
  *  full color (× scale-color under Complex) otherwise. */
-function unlimitedStacks(input: TaggedRunInput, colorsReal: boolean): KernelStack[] {
+function unlimitedStacks(
+  input: TaggedRunInput,
+  colorsReal: boolean,
+  implicits: ImplicitPayload[],
+): KernelStack[] {
   const stacks: KernelStack[] = [];
   const scorable = scorableTypesFor(input);
-  const colors: Color[] = colorsReal ? [...ALL_COLORS] : [Color.RED];
+  const mono = (preferredMonoColor(implicits) as Color | null) ?? Color.RED;
+  const colors: Color[] = colorsReal ? [...ALL_COLORS] : [mono];
   const push = (t: CardType, color: string, scale: string) =>
     stacks.push({ t, color, scale_color: scale, groups: [], count: null, min_place: 0 });
 
@@ -147,17 +154,22 @@ function kernelRules(input: TaggedRunInput): { axis: string; key: string; min: n
   return out;
 }
 
-/** Capped/min'd implicit-relevant category groups become per-slot SA
- *  variables (spec §1); everything else stays blanket. */
+/** Per-slot SA tag variables: non-stat implicit-relevant tags always
+ *  (carrying one zeroes the card — the SA weighs each battery), plus, in
+ *  Targeted, capped/min'd implicit-relevant tags (spec §1). Exact never
+ *  toggles (real cards keep their real tags). */
 function assignableGroups(input: TaggedRunInput, implicits: ImplicitPayload[]): GroupTag[] {
-  if (input.mode !== OptimizerMode.TARGETED) return [];
-  const relevant = new Set(blanketGroups(implicits));
-  const out: GroupTag[] = [];
-  for (const r of input.targetedRules) {
-    if (r.axis !== "group") continue;
-    if (r.min === null && r.max === null) continue;
-    if (relevant.has(r.key as GroupTag) && !out.includes(r.key as GroupTag)) {
-      out.push(r.key as GroupTag);
+  if (input.mode === OptimizerMode.EXACT) return [];
+  const { blanket, assignable } = splitBlanketAssignable(implicits);
+  const out: GroupTag[] = [...assignable];
+  if (input.mode === OptimizerMode.TARGETED) {
+    const relevant = new Set(blanket);
+    for (const r of input.targetedRules) {
+      if (r.axis !== "group") continue;
+      if (r.min === null && r.max === null) continue;
+      if (relevant.has(r.key as GroupTag) && !out.includes(r.key as GroupTag)) {
+        out.push(r.key as GroupTag);
+      }
     }
   }
   return out;
@@ -175,7 +187,7 @@ export function buildTaggedPayload(
   const implicits = activeImplicits(input);
   const exact = input.mode === OptimizerMode.EXACT;
 
-  const stacks = exact ? exactStacksToKernel(input) : unlimitedStacks(input, colorsReal);
+  const stacks = exact ? exactStacksToKernel(input) : unlimitedStacks(input, colorsReal, implicits);
   const blanket = exact ? [] : blanketGroups(implicits);
   const assignable = assignableGroups(input, implicits);
 

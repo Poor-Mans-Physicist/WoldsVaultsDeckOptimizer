@@ -26,7 +26,9 @@
   ];
   const entries = [...positional, ...other, ...dirGreeds];
 
-  const notchTags: GroupTag[] = [...CATEGORY_GROUPS, "Stat", "Foil"];
+  // Stat is run-derived (all shiny stat cards, never evo) — not shown as a
+  // notch anywhere, so it doesn't belong in the legend either.
+  const notchTags: GroupTag[] = [...CATEGORY_GROUPS, "Foil"];
 </script>
 
 <div class="card">

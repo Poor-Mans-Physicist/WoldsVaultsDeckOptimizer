@@ -12,6 +12,7 @@ import {
   activeImplicits, buildTaggedPayload, buildTasks, colorsRealFor,
   parseKernelAssignment, type TaggedRunInput,
 } from "./tagged";
+import { preferredMonoColor } from "./implicits";
 import {
   simulateTaggedBreakdown, type TaggedBreakdownResult,
 } from "./taggedBreakdown";
@@ -77,6 +78,18 @@ export async function optimizeTaggedAsync(
     input.deck.slots.length, input.deck.arcaneSlots.length, input.cfg,
   );
   if (candidates.length === 0) candidates = [[]];
+
+  // Color-blind runs score every COLOR-core color identically; stable-sort
+  // combos matching a color-keyed implicit first so score ties resolve
+  // toward the color the player should actually build (velara → green).
+  if (!colorsRealFor(input)) {
+    const pref = preferredMonoColor(activeImplicits(input));
+    if (pref) {
+      const matches = (combo: CoreSpec[]) =>
+        combo.some((s) => s.core_type === "color" && s.color === pref) ? 0 : 1;
+      candidates = [...candidates].sort((a, b) => matches(a) - matches(b));
+    }
+  }
 
   const poolSize = workerPoolSize();
   const tasks = buildTasks(candidates, input.restarts, poolSize);

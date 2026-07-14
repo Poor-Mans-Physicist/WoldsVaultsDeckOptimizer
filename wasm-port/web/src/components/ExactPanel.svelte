@@ -11,7 +11,7 @@
     type ExactProfile,
   } from "../lib/exactProfiles";
   import { COLOR_HEX, TYPE_LABEL } from "../lib/palette";
-  import { NOTCH_COLOR, sortTags } from "../lib/notches";
+  import { NOTCH_COLOR, displayTags } from "../lib/notches";
   import type { ExactStack } from "../lib/types";
 
   interface Props {
@@ -137,7 +137,7 @@
             {/if}
           </span>
           <span class="tags">
-            {#each sortTags(s.groups) as g}
+            {#each displayTags(s.groups) as g}
               <span class="notch" style:background={NOTCH_COLOR[g]} title={g}></span>
             {/each}
           </span>

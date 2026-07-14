@@ -521,6 +521,7 @@ export function captureSnapshot(label: string): Snapshot | null {
       base_core_slots: deckSrc.base_core_slots,
       min_regular:     deckSrc.min_regular,
       max_greed:       deckSrc.max_greed,
+      implicit:        deckSrc.implicit,
     },
     cardClass:       app.cardClass,
     bonusCores:      app.bonusCores,
@@ -599,6 +600,7 @@ export function restoreSnapshot(snap: Snapshot): void {
     base_core_slots: snap.deck.base_core_slots,
     min_regular:     snap.deck.min_regular,
     max_greed:       snap.deck.max_greed,
+    implicit:        snap.deck.implicit ?? null,
   };
   const deck = buildDeck(raw, app.cfg.deckmod);
 

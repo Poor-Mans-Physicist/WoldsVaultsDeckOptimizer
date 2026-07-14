@@ -108,6 +108,9 @@ export function effectiveDeck(base: Deck, sc: StructuralCores, deckmod: number):
     base_core_slots: base.base_core_slots,
     min_regular:     base.min_regular,
     max_greed:       base.max_greed,
+    // The deck's implicit survives layout mutation — dropping it here made
+    // every structural-core run silently lose the implicit.
+    implicit:        base.implicit,
   };
   return buildDeck(raw, deckmod);
 }

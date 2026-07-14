@@ -34,3 +34,10 @@ const ORDER: readonly GroupTag[] = [
 export function sortTags(tags: readonly GroupTag[]): GroupTag[] {
   return [...tags].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
 }
+
+/** Tags as shown to the user. Stat is run-derived (always on shiny stat
+ *  cards, never on evo) so it's noise on every surface — filtered out
+ *  everywhere; the kernel still tracks it for treasure/mutant. */
+export function displayTags(tags: readonly GroupTag[]): GroupTag[] {
+  return sortTags(tags.filter((g) => g !== "Stat"));
+}

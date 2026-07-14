@@ -55,6 +55,8 @@
       if (foilLocked && currentGroups.includes("Foil")) return;
       if (!foilAddable && !currentGroups.includes("Foil")) return;
     }
+    // Stat is run-derived and not toggleable — preserve whatever the card
+    // carries (the popup never offers it).
     const next = currentGroups.includes(g)
       ? currentGroups.filter((x) => x !== g)
       : [...currentGroups, g];
@@ -81,8 +83,6 @@
   const deckDelta = $derived(
     wb && app.result ? wb.total - app.result.tsScore : 0,
   );
-
-  const statAllowed = $derived(app.cardClass === CardClass.SHINY);
 </script>
 
 {#if open && baseCard}
@@ -112,12 +112,6 @@
             style:--c={NOTCH_COLOR.Foil} onclick={() => toggle("Foil")}>
             Foil {foilLocked && currentGroups.includes("Foil") ? "🔒" : ""}
           </button>
-          {#if statAllowed}
-            <button type="button" class="chip" class:sel={currentGroups.includes("Stat")}
-              style:--c={NOTCH_COLOR.Stat} onclick={() => toggle("Stat")}>
-              Stat
-            </button>
-          {/if}
         </div>
 
         {#if slotNdm !== null && wb && app.result}

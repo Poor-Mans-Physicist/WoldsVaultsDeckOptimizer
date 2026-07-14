@@ -6,7 +6,7 @@
   import { app, currentImplicits } from "../lib/state.svelte";
   import { CardType, type GroupTag } from "../lib/types";
   import { COLOR_HEX, TYPE_LABEL } from "../lib/palette";
-  import { NOTCH_COLOR, sortTags } from "../lib/notches";
+  import { NOTCH_COLOR, displayTags } from "../lib/notches";
 
   const STAT_TYPES = new Set<CardType>([
     CardType.ROW, CardType.COL, CardType.SURR, CardType.DIAG,
@@ -30,7 +30,7 @@
       const existing = byKey.get(k);
       if (existing) existing.count++;
       else byKey.set(k, {
-        t: c.t, color: c.color, groups: sortTags(c.groups),
+        t: c.t, color: c.color, groups: displayTags(c.groups),
         count: 1, stat: STAT_TYPES.has(c.t),
       });
     }

@@ -69,6 +69,13 @@ pub const G_STAT: u16      = 1 << 10;
 pub const N_GROUP_BITS: usize = 11;
 pub const ALL_CATEGORY_GROUPS: u16 = G_OFFENSIVE | G_DEFENSIVE | G_PHYSICAL
     | G_MAGICAL | G_UTILITY | G_RESOURCE | G_KNACK | G_TEMPORAL | G_ESSENCE;
+/// Non-stat categories (author-confirmed): a card carrying Resource or
+/// Temporal provides no player stats, so it scores **0 NDM itself**. It
+/// still fills its slot (row/col/peer counts, n_ns, chain connectivity)
+/// and feeds implicits that read it (merchant's column Resource count).
+/// Consequently these tags are never blanket-assigned — they are per-slot
+/// SA decisions ("battery" cards) via the assignable-groups toggle moves.
+pub const NONSTAT_GROUPS: u16 = G_RESOURCE | G_TEMPORAL;
 
 // Cores (same u8 space as the 1.x kernels).
 pub const CORE_PURE: u8        = 0;
@@ -166,9 +173,14 @@ fn is_greed(t: u8) -> bool { (T_G_UP..=T_G_RIGHT).contains(&t) }
 /// deluxe included only when the config says so (see `floor_counts_deluxe`).
 #[inline(always)]
 pub fn is_stat_giving(t: u8) -> bool { t <= T_TYPELESS }
+/// Floor predicate over a placed CARD: stat-giving type AND not carrying a
+/// non-stat tag (a Resource/Temporal card gives no stats — see
+/// `NONSTAT_GROUPS`).
 #[inline(always)]
-fn counts_toward_floor(t: u8, cfg: &TagSimConfig) -> bool {
-    if t == T_DELUXE { cfg.floor_counts_deluxe } else { is_stat_giving(t) }
+fn counts_toward_floor(c: &SlotCard, cfg: &TagSimConfig) -> bool {
+    if c.t == T_DEAD { return false; }
+    let type_ok = if c.t == T_DELUXE { cfg.floor_counts_deluxe } else { is_stat_giving(c.t) };
+    type_ok && c.groups & NONSTAT_GROUPS == 0
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -692,6 +704,9 @@ fn simulate(
     for i in 0..n {
         let c = asgn[i];
         if !is_scorable(c.t) { continue; }
+        // Non-stat card (Resource/Temporal): 0 NDM itself. It was already
+        // counted as a filled neighbor / n_ns / implicit-feeder above.
+        if c.groups & NONSTAT_GROUPS != 0 { continue; }
 
         // Positional base value.
         let base = if is_positional(c.t) {
@@ -976,9 +991,11 @@ fn materialize(
             groups |= run.blanket_groups & !run.assignable_groups;
         }
         groups |= run_foil_groups(spec.t, &run.cfg, foil_core_active, foil_banned);
-        groups |= stat_groups(spec.t, &run.cfg);
         if is_greed(spec.t) { groups = 0; }   // greed cards carry no groups
     }
+    // Stat is run-derived in EVERY mode (shiny ⇒ stat-giving cards carry it,
+    // evo ⇒ never) — it stopped being a user-facing tag.
+    groups |= stat_groups(spec.t, &run.cfg);
     SlotCard {
         t: spec.t,
         color: spec.color,
@@ -1205,7 +1222,7 @@ fn sa_one_restart(
 
     // Stat floor bookkeeping (min_stat_placed).
     let mut stat_placed: u32 = asgn.iter()
-        .filter(|c| c.t != T_DEAD && counts_toward_floor(c.t, cfg)).count() as u32;
+        .filter(|c| counts_toward_floor(c, cfg)).count() as u32;
     let effective_min_stat = run.min_stat_placed.min(stat_placed);
 
     // Per-stack min accounting: placed count per stack (for min_place floors).
@@ -1264,11 +1281,21 @@ fn sa_one_restart(
             let bit = assignable_bits[rng.gen_range(0..assignable_bits.len())];
             let adding = c.groups & bit == 0;
             if !rules.toggle_ok(bit, adding) { continue; }
+            // Non-stat bits (Resource/Temporal) flip the card's floor status.
+            let mut flipped = c;
+            flipped.groups ^= bit;
+            let stat_delta = (counts_toward_floor(&flipped, cfg) as i32)
+                - (counts_toward_floor(&c, cfg) as i32);
+            if effective_min_stat > 0 && stat_delta < 0
+                && (stat_placed as i32 + stat_delta) < effective_min_stat as i32 {
+                continue;
+            }
             asgn[p].groups ^= bit;
             let new_score = simulate(geom, &asgn, cores, &run.implicits, cfg, &mut s);
             let delta = new_score - score;
             if delta >= 0.0 || rng.gen::<f64>() < (delta / temperature).exp() {
                 rules.toggle_apply(bit, adding);
+                stat_placed = (stat_placed as i32 + stat_delta) as u32;
                 score = new_score;
                 if score > best_score { best_score = score; best_asgn = asgn.clone(); }
             } else {
@@ -1333,8 +1360,8 @@ fn sa_one_restart(
                 continue;
             }
             // Stat floor.
-            let old_stat = old.t != T_DEAD && counts_toward_floor(old.t, cfg);
-            let new_stat = new.t != T_DEAD && counts_toward_floor(new.t, cfg);
+            let old_stat = counts_toward_floor(&old, cfg);
+            let new_stat = counts_toward_floor(&new, cfg);
             let stat_delta = (new_stat as i32) - (old_stat as i32);
             if effective_min_stat > 0 && stat_delta < 0
                 && (stat_placed as i32 + stat_delta) < effective_min_stat as i32 {

@@ -255,6 +255,14 @@ export function simulateTaggedBreakdown(
       perSlot.set(k, zero(i, explain));
       continue;
     }
+    // Non-stat card (Resource/Temporal): provides no player stats → 0 NDM
+    // itself; still fills its slot and feeds implicits that read it.
+    if (c.groups.includes("Resource") || c.groups.includes("Temporal")) {
+      perSlot.set(k, zero(i,
+        "non-stat card (Resource/Temporal) — gives no stats, 0 NDM; still " +
+        "counts as a neighbor, in n_ns, and for implicits that read it"));
+      continue;
+    }
 
     // Positional base with freq implicit.
     let base: number, baseExplain: string;

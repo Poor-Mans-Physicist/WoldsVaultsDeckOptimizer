@@ -517,9 +517,16 @@ _TAGGED_GREEDS = [
 ]
 
 
-def _tagged_max_stacks(deck: Deck, card_class: CardClass) -> List[tuple]:
-    """Unlimited mono-color Max supply for this (deck, class)."""
-    mono = "red"
+def _tagged_max_stacks(
+    deck: Deck,
+    card_class: CardClass,
+    implicits: Optional[List[tuple]] = None,
+) -> List[tuple]:
+    """Unlimited mono-color Max supply for this (deck, class). The mono
+    color follows a color-keyed implicit (velara → green) so readouts match
+    the build guidance; scoring is color-blind regardless."""
+    from .implicits import preferred_mono_color
+    mono = preferred_mono_color(implicits or []) or "red"
     types: List[CardType] = []
     if card_class == CardClass.SHINY and not SHINY_POSITIONAL:
         types.append(CardType.TYPELESS)
@@ -575,11 +582,12 @@ def sa_optimize_tagged(
     Wold's, off for vanilla). The parity harness passes False to compare
     against the classic kernel on its own model.
     """
-    from .implicits import blanket_groups_for
+    from .implicits import split_blanket_assignable
 
     slots_list = list(deck.slots)
     slot_order = {p: i for i, p in enumerate(slots_list)}
     imps = implicits or []
+    blanket, assignable = split_blanket_assignable(imps)
 
     tag_rules, min_stat = _tagged_rules(deck)
 
@@ -590,10 +598,10 @@ def sa_optimize_tagged(
         surr_peers          = _peers_as_indices(slot_order, deck._surr_peers, slots_list),
         diag_peers          = _peers_as_indices(slot_order, deck._diag_peers, slots_list),
         arcane_slot_indices = [slot_order[p] for p in deck.arcane_slots],
-        stacks              = _tagged_max_stacks(deck, card_class),
+        stacks              = _tagged_max_stacks(deck, card_class, imps),
         tag_rules           = tag_rules,
-        blanket_groups      = blanket_groups_for(imps, card_class == CardClass.SHINY),
-        assignable_groups   = [],
+        blanket_groups      = blanket,
+        assignable_groups   = assignable,
         implicits           = imps,
         cores               = [(c.value, "", -1.0) for c in cores],
         min_stat_placed     = min_stat,

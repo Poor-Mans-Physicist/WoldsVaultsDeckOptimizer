@@ -31,6 +31,8 @@ export interface SnapshotDeck {
   base_core_slots: number;
   min_regular:     number;
   max_greed:       number;
+  /** The deck's implicit at capture time (2.0). Absent on v1 snapshots. */
+  implicit?:       import("./implicits").ImplicitDef | null;
 }
 
 export interface Snapshot {

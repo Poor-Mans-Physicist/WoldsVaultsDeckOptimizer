@@ -785,8 +785,24 @@ NDM-relevant exceptions are **Foil** and **Wild**.
   checks, and adjacency implicits. For Targeted rule counting it counts
   toward only its own type + literal color (documented choice). Excluded
   from Max supply (never optimal under mono assumptions).
-- **Stat** is shiny-only: Max/Targeted set it on every stat-giving card in
-  shiny runs (ideal cards); never on evo cards. Exact exposes it per card.
+- **Stat** is run-derived in EVERY mode and on NO user surface: shiny ⇒
+  every stat-giving card carries it, evo ⇒ never (playtest ruling). The
+  kernel adds it automatically (incl. Exact builds) for treasure/mutant;
+  it is not a builder chip, not a notch, not in the tag-edit popup.
+- **Non-stat categories (`Resource`, `Temporal`)** — a card carrying one
+  gives no player stats, so it scores **0 NDM itself** (playtest ruling;
+  kernel `NONSTAT_GROUPS`). It still fills its slot: row/col/peer counts,
+  `n_ns`, chain connectivity, and implicits that read it (merchant's
+  column Resource count) all see it. Consequences: these tags are
+  **never blanket-assigned**; wherever an implicit reads one (merchant;
+  mutant's diversity) it becomes an **assignable** per-slot SA decision —
+  the optimizer weighs each 0-NDM "battery" card against the implicit
+  value it feeds. Non-stat-tagged cards do NOT count toward the min-stat
+  floor (the toggle move updates the floor counter).
+- **Max mono color** follows a color-keyed implicit (velara ⇒ green,
+  ornate ⇒ red, …) so the displayed deck matches the build guidance;
+  scoring stays color-blind either way. Score-tied COLOR-core candidates
+  resolve toward the same color.
 
 ### Foil, per-card (§5)
 

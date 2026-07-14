@@ -62,14 +62,48 @@ def implicits_for_deck(key: str) -> List[ImplicitTuple]:
     return [tup]
 
 
-def blanket_groups_for(implicits: List[ImplicitTuple], is_shiny: bool) -> List[str]:
-    """The favorable free tags Max assigns (spec §3.1): exactly the category
-    groups an active implicit rewards. Stat/Foil are run-derived (handled in
-    the kernel), never blanket-assigned here."""
-    wanted: List[str] = []
-    for (_kind, _value, groups, _colors, _extra) in implicits:
+#: Non-stat categories: cards carrying these give no player stats → 0 NDM
+#: themselves (kernel NONSTAT_GROUPS). Never blanket-assigned.
+NONSTAT_GROUPS: List[str] = ["Resource", "Temporal"]
+
+
+def _relevant_groups(implicits: List[ImplicitTuple]) -> List[str]:
+    """Category tags the active implicits read. ``unique_groups`` (mutant)
+    rewards diversity, so every category is relevant to it."""
+    out: List[str] = []
+    for (kind, _value, groups, _colors, _extra) in implicits:
+        if kind == "unique_groups":
+            return list(CATEGORY_GROUPS)
         for g in groups:
-            if g in CATEGORY_GROUPS and g not in wanted:
-                wanted.append(g)
+            if g in CATEGORY_GROUPS and g not in out:
+                out.append(g)
+    return out
+
+
+def split_blanket_assignable(
+    implicits: List[ImplicitTuple],
+) -> Tuple[List[str], List[str]]:
+    """(blanket, assignable) for Max: stat-safe relevant tags are assigned
+    free to every card (NDM-inert); non-stat tags (Resource/Temporal) zero
+    the carrying card, so the SA decides per slot ("battery" cards)."""
+    blanket: List[str] = []
+    assignable: List[str] = []
+    for g in _relevant_groups(implicits):
+        (assignable if g in NONSTAT_GROUPS else blanket).append(g)
+    return blanket, assignable
+
+
+def blanket_groups_for(implicits: List[ImplicitTuple], is_shiny: bool) -> List[str]:
+    """The favorable free tags Max assigns (stat-safe only)."""
     del is_shiny  # reserved: shiny-only tag rules land here if ever needed
-    return wanted
+    return split_blanket_assignable(implicits)[0]
+
+
+def preferred_mono_color(implicits: List[ImplicitTuple]) -> str:
+    """The color a color-keyed implicit wants ('' when none). Max's mono
+    supply uses it so the readout matches the build guidance — scoring is
+    color-blind either way."""
+    for (_kind, _value, _groups, colors, _extra) in implicits:
+        if colors:
+            return colors[0]
+    return ""

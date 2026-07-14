@@ -4,7 +4,7 @@
   import type { Placed } from "../lib/types";
   import type { TaggedSlotBreakdown } from "../lib/taggedBreakdown";
   import { slotBg, COLOR_HEX, TYPE_GLYPH } from "../lib/palette";
-  import { NOTCH_COLOR, sortTags } from "../lib/notches";
+  import { NOTCH_COLOR, displayTags } from "../lib/notches";
 
   type SlotBreakdown = TaggedSlotBreakdown;
 
@@ -74,7 +74,9 @@
   const hoverTags = $derived.by<GroupTag[] | null>(() => {
     if (hoverKey === null || !tagsBySlot) return null;
     const tags = tagsBySlot.get(hoverKey);
-    return tags && tags.length > 0 ? sortTags(tags) : null;
+    if (!tags) return null;
+    const shown = displayTags(tags);
+    return shown.length > 0 ? shown : null;
   });
 
   function onTileEnter(key: string, e: MouseEvent) {
@@ -277,9 +279,9 @@
           {#if color !== null}
             <span class="color-dot" style:background={COLOR_HEX[color]}></span>
           {/if}
-          {#if tags && tags.length > 0}
+          {#if tags && displayTags(tags).length > 0}
             <span class="notches">
-              {#each sortTags(tags) as g}
+              {#each displayTags(tags) as g}
                 <span class="notch" style:background={NOTCH_COLOR[g]} title={g}></span>
               {/each}
             </span>

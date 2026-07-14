@@ -18,7 +18,9 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
   const sep  = "─".repeat(Math.max(head.length, 24));
 
   const out: string[] = [head, sep];
-  if (b.groups.length > 0) out.push(`Tags: ${b.groups.join(", ")}`);
+  // Stat is run-derived — hidden on every surface, incl. here.
+  const shownTags = b.groups.filter((g) => g !== "Stat");
+  if (shownTags.length > 0) out.push(`Tags: ${shownTags.join(", ")}`);
   out.push("");
 
   // Base

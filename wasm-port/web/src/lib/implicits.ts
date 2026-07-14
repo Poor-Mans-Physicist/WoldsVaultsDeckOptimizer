@@ -69,14 +69,19 @@ export function resolveImplicits(
   return [toPayload(deckImplicit)];
 }
 
+/** Non-stat categories: cards carrying these give no player stats → 0 NDM
+ *  (kernel NONSTAT_GROUPS). Never blanket-assigned; always a per-slot SA
+ *  decision ("battery" cards). */
+export const NONSTAT_TAGS: readonly GroupTag[] = ["Resource", "Temporal"];
+
 /**
- * Favorable blanket groups for Max/Targeted (spec §3.1): exactly the
- * category tags the active implicits reward. Stat/Foil are run-derived in
- * the kernel and never blanket-assigned from here.
+ * Which category tags the active implicits actually read. `unique_groups`
+ * (mutant) rewards diversity, so every category is relevant to it.
  */
-export function blanketGroups(implicits: ImplicitPayload[]): GroupTag[] {
+export function relevantGroups(implicits: ImplicitPayload[]): GroupTag[] {
   const out: GroupTag[] = [];
   for (const imp of implicits) {
+    if (imp.kind === "unique_groups") return [...CATEGORY_GROUPS];
     for (const g of imp.groups) {
       if ((CATEGORY_GROUPS as readonly string[]).includes(g) && !out.includes(g as GroupTag)) {
         out.push(g as GroupTag);
@@ -84,6 +89,43 @@ export function blanketGroups(implicits: ImplicitPayload[]): GroupTag[] {
     }
   }
   return out;
+}
+
+/**
+ * Split the implicit-relevant tags for Max/Targeted (spec §3.1, amended):
+ *  - blanket    — stat-safe tags, assigned free to every non-greed card
+ *                 (genuinely NDM-inert, so "assign to all" stays exact).
+ *  - assignable — non-stat tags (Resource/Temporal): carrying one zeroes
+ *                 the card, so the SA decides per slot whether a battery
+ *                 is worth it (merchant's column feeders, mutant diversity).
+ */
+export function splitBlanketAssignable(
+  implicits: ImplicitPayload[],
+): { blanket: GroupTag[]; assignable: GroupTag[] } {
+  const blanket: GroupTag[] = [];
+  const assignable: GroupTag[] = [];
+  for (const g of relevantGroups(implicits)) {
+    if (NONSTAT_TAGS.includes(g)) assignable.push(g);
+    else blanket.push(g);
+  }
+  return { blanket, assignable };
+}
+
+/** Back-compat helper: the stat-safe blanket tags only. */
+export function blanketGroups(implicits: ImplicitPayload[]): GroupTag[] {
+  return splitBlanketAssignable(implicits).blanket;
+}
+
+/**
+ * The color a color-keyed implicit wants (idona/velara/tenos/wendarr,
+ * gilded/ornate/living). Max's mono-color supply uses it so the DISPLAYED
+ * deck matches the build guidance — scoring is color-blind either way.
+ */
+export function preferredMonoColor(implicits: ImplicitPayload[]): string | null {
+  for (const imp of implicits) {
+    if (imp.colors.length > 0) return imp.colors[0];
+  }
+  return null;
 }
 
 /** Short human line for the deck card / Max readout. */
