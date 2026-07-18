@@ -329,6 +329,8 @@ def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreTyp
         return m
 
     def best_fixed_evo_no_foil(slots: int) -> FrozenSet[CoreType]:
+        if slots <= 0:
+            return frozenset()
         pool   = [CoreType.PURE, CoreType.COLOR]
         cap    = min(slots, len(pool))
         best_m = -1.0

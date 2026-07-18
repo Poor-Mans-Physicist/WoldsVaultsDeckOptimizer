@@ -4,8 +4,16 @@ from __future__ import annotations
 import multiprocessing
 import os
 import random
+import sys
 import time
 from typing import Dict, List, Tuple
+
+# Windows pipes/consoles default to cp1252, which can't encode the ✓/█ the
+# progress prints use. Runs at import so spawned Pool workers get it too.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 from .types import CardClass
 from .config import (
