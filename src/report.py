@@ -134,8 +134,11 @@ def compute_heatmap(
         deluxe_core_mult = math.prod(deluxe_core_contributions) if deluxe_core_contributions else 1.0
 
     # Archive core — applied *outside* core_mult (bypasses the additive_cores
-    # switch). Multiplier = base ** n_arcane_placed.
-    archive_mult = MULT_ARCHIVE_CORE ** len(arcane) if CoreType.ARCHIVE_CORE in cores else 1.0
+    # switch). Live formula: base ** (2.1 * sqrt(n_arcane_placed)).
+    archive_mult = (
+        MULT_ARCHIVE_CORE ** (2.1 * math.sqrt(len(arcane)))
+        if CoreType.ARCHIVE_CORE in cores else 1.0
+    )
 
     row_count: Dict[int, int] = {}
     col_count: Dict[int, int] = {}

@@ -165,7 +165,7 @@ fn parse_combo_masks(combos: &Option<Vec<Vec<String>>>) -> Vec<u16> {
     mult_void_core_base, mult_void_core_scale, mult_archive_core,
     greed_additive, additive_cores, is_shiny, auto_place_arcane,
     colors_real, complex_cards, wv_foil_rules, floor_counts_deluxe,
-    seed = None, legal_combos = None, experimental_archive_additive = false,
+    seed = None, legal_combos = None,
 ))]
 pub fn run_sa_tagged(
     slots: Vec<(i32, i32)>,
@@ -210,7 +210,6 @@ pub fn run_sa_tagged(
     floor_counts_deluxe: bool,
     seed: Option<u64>,
     legal_combos: Option<Vec<Vec<String>>>,
-    experimental_archive_additive: bool,
 ) -> PyResult<(Vec<PyPlaced>, f64)> {
     let cfg = TagSimConfig {
         mult_dir_vert, mult_dir_horiz, mult_pure_base, mult_pure_scale,
@@ -219,7 +218,7 @@ pub fn run_sa_tagged(
         mult_deluxe_core_scale, mult_void_core_base, mult_void_core_scale,
         mult_archive_core, greed_additive, additive_cores, is_shiny,
         auto_place_arcane, colors_real, complex: complex_cards,
-        wv_foil_rules, floor_counts_deluxe, experimental_archive_additive,
+        wv_foil_rules, floor_counts_deluxe,
     };
     let cores_in: Vec<CoreSpecIn> = cores.iter().map(|(t, c, o)| CoreSpecIn {
         core_type: tag_core_from_str(t),
@@ -292,7 +291,6 @@ pub fn score_tagged(
         mult_archive_core, greed_additive, additive_cores, is_shiny,
         auto_place_arcane: true, colors_real, complex: complex_cards,
         wv_foil_rules, floor_counts_deluxe: false,
-        experimental_archive_additive: false,
     };
     let cores_in: Vec<CoreSpecIn> = cores.iter().map(|(t, c, o)| CoreSpecIn {
         core_type: tag_core_from_str(t),

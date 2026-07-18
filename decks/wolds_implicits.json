@@ -1,13 +1,13 @@
 {
-  "_source": "wv-development src/main/java/xyz/iwolfking/woldsvaults/datagen/ModDeckCoresProvider.java + ModImplicitDeckCoresProvider.java (feature/hyper-objective, 2026-07-13). Keys match decks/wolds_decks.json values.* keys. Aggregation: additive into the per-card core sum (MixinCardDeck getModifierValue: 1 + sum(v-1)), EXCEPT kind=mirror which multiplies the whole per-card value (IMultiplicativeDeckModifier).",
+  "_source": "wv-development src/main/java/xyz/iwolfking/woldsvaults/datagen/ModDeckCoresProvider.java + ModImplicitDeckCoresProvider.java (origin/master 0e54a67f, 2026-07-14 — treasure/merchant/cactus/bishop/snake retuned). Keys match decks/wolds_decks.json values.* keys. Aggregation: additive into the per-card core sum (MixinCardDeck getModifierValue: 1 + sum(v-1)), EXCEPT kind=mirror which multiplies the whole per-card value (IMultiplicativeDeckModifier).",
   "implicits": {
     "merchant": {
       "kind": "adjacency",
-      "value": 0.5,
+      "value": 1.0,
       "group": "Resource",
       "range": "column",
       "name": "Merchant Deck Modifier",
-      "desc": "+50% efficiency per Resource card in the same column"
+      "desc": "+100% efficiency per Resource card in the same column"
     },
     "extended": {
       "kind": "gameplay",
@@ -16,11 +16,11 @@
     },
     "treasure": {
       "kind": "global",
-      "value": 1.0,
+      "value": 1.25,
       "groups": ["Stat"],
       "colors": [],
       "name": "Treasure Deck Modifier",
-      "desc": "+100% efficiency to Stat cards (shiny runs only — evo cards never carry Stat)"
+      "desc": "+125% efficiency to Stat cards (shiny runs only — evo cards never carry Stat)"
     },
     "arcane": {
       "kind": "gameplay",
@@ -61,11 +61,11 @@
     },
     "cactus": {
       "kind": "global",
-      "value": 2.0,
+      "value": 2.5,
       "groups": ["Offensive", "Defensive"],
       "colors": [],
       "name": "Cactus Deck Modifier",
-      "desc": "+200% efficiency to cards that are BOTH Offensive and Defensive"
+      "desc": "+250% efficiency to cards that are BOTH Offensive and Defensive"
     },
     "champion": {
       "kind": "global",
@@ -84,10 +84,10 @@
     },
     "bishop": {
       "kind": "freq",
-      "value": 3.0,
+      "value": 2.0,
       "ptype": "diag",
       "name": "Bishop Deck Modifier",
-      "desc": "Diagonal-scaling cards count cards ×3"
+      "desc": "Diagonal-scaling cards count cards ×2"
     },
     "pillager": {
       "kind": "freq",
@@ -143,9 +143,9 @@
     },
     "snake": {
       "kind": "chain",
-      "value": 0.075,
+      "value": 0.05,
       "name": "Snake Deck Modifier",
-      "desc": "+7.5% efficiency per card in the same orthogonally-connected same-color chain (beyond the first)"
+      "desc": "+5% efficiency per card in the same orthogonally-connected same-color chain (beyond the first)"
     },
     "gilded": {
       "kind": "global",

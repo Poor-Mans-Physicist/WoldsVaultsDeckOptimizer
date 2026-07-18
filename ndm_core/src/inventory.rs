@@ -405,8 +405,9 @@ fn simulate(
     }
 
     // Archive multiplier — applied outside the per-card core_mult.
+    // Live formula (final balance): base^(2.1·√n_arcane).
     let archive_mult: f64 = if archive_present {
-        archive_base.powi(n_arcane as i32)
+        archive_base.powf(2.1 * (n_arcane as f64).sqrt())
     } else {
         1.0
     };

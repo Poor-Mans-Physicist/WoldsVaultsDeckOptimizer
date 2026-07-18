@@ -41,7 +41,9 @@ export function voidCoreMult(spec: CoreSpec, n_dead: number, cfg: ResolvedConfig
  *  replaces the per-arcane *base*; final mult = `base ^ n_arcane_placed`. */
 export function archiveCoreMult(spec: CoreSpec, n_arcane_placed: number, cfg: ResolvedConfig): number {
   const base = spec.override !== null ? spec.override : cfg.cores.archive_core;
-  return Math.pow(base, n_arcane_placed);
+  // Live formula (woldsvaults GroupSynergyMultiplierModifier, final balance):
+  // base^(2.1·√n) — √-exponent instead of per-card compounding.
+  return Math.pow(base, 2.1 * Math.sqrt(n_arcane_placed));
 }
 
 // ── Classified-core output (for breakdown re-score) ───────────────────────────

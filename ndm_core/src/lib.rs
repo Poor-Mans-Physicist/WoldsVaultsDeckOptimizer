@@ -329,8 +329,9 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
 
     // Archive core — applied *outside* the per-card core_mult below. Bypasses
     // the additive_cores stacking switch entirely.
+    // Live formula (final balance): base^(2.1·√n_arcane_placed).
     let archive_mult: f64 = if archive_present {
-        cfg.mult_archive_core.powi(n_arcane_placed as i32)
+        cfg.mult_archive_core.powf(2.1 * (n_arcane_placed as f64).sqrt())
     } else {
         1.0
     };

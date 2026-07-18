@@ -28,7 +28,6 @@ from .config import (
     Deck,
     DELUXE_COUNTED_AS_REGULAR,
     ENABLE_EXPERIMENTAL_EXPONENT,
-    EXPERIMENTAL_ARCHIVE_ADDITIVE,
     EXPERIMENTAL_BOOST,
     EXPERIMENTAL_EXPONENT,
     GREED_ADDITIVE,
@@ -153,7 +152,7 @@ def simulate(
     # candidate set.
     archive_mult = 1.0
     if CoreType.ARCHIVE_CORE in cores:
-        archive_mult = MULT_ARCHIVE_CORE ** len(arcane)
+        archive_mult = MULT_ARCHIVE_CORE ** (2.1 * math.sqrt(len(arcane)))
 
     if ADDITIVE_CORES:
         baseline_sum  = sum(v - 1.0 for v in baseline_contribs)
@@ -654,7 +653,6 @@ def sa_optimize_tagged(
         floor_counts_deluxe    = DELUXE_COUNTED_AS_REGULAR,
         seed                   = seed,
         legal_combos           = LEGAL_COMBOS if assignable else None,
-        experimental_archive_additive = EXPERIMENTAL_ARCHIVE_ADDITIVE,
     )
 
     best_asgn = {

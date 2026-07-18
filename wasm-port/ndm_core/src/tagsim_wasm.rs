@@ -127,11 +127,6 @@ pub struct TagRunInput {
     pub wv_foil_rules: bool,
     #[serde(default = "default_true")]
     pub floor_counts_deluxe: bool,
-    /// Experimental balance toggle (spreadsheet-driven; the web app never
-    /// sets it): Archive's base^n joins the core stack instead of
-    /// multiplying the whole card contribution.
-    #[serde(default)]
-    pub experimental_archive_additive: bool,
 
     /// scoreTagged only: fixed assignment, parallel to `slots`.
     /// Each entry: [type, color, scale_color, groups[]].
@@ -256,7 +251,6 @@ fn build_run(inp: &TagRunInput) -> TagRun<'_> {
             complex: inp.complex_cards,
             wv_foil_rules: inp.wv_foil_rules,
             floor_counts_deluxe: inp.floor_counts_deluxe,
-            experimental_archive_additive: inp.experimental_archive_additive,
         },
     }
 }

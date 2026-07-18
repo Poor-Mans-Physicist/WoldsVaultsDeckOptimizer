@@ -58,9 +58,9 @@ deck slots, then computes one NDM value.
    `regular_core_mult`, `deluxe_card_core_mult`, `typeless_core_mult` —
    because DELUXE_CORE skips deluxe cards.
 4. **Compute `archive_mult`** — a single deck-wide factor of
-   `archive_core_base ^ n_arcane_placed` when ARCHIVE_CORE is picked,
-   else `1.0`. Bypasses the additive-vs-multiplicative stacking switch
-   entirely; applied as a final outside-the-stack factor on every
+   `archive_core_base ^ (2.1·√n_arcane_placed)` when ARCHIVE_CORE is
+   picked, else `1.0`. Bypasses the additive-vs-multiplicative stacking
+   switch entirely; applied as a final outside-the-stack factor on every
    scoring card. See **Archive core** below.
 5. **Greed boosts.** Every greed card applies its target-specific boost
    to a `boost: position → float` map (only scorable targets receive it).
@@ -198,7 +198,7 @@ base, multiplicative scales it.
 | `FOIL`        | **2.5**                           | regulars, deluxe cards (baseline), typeless                             | greed                                    | Flat                                                     | Universal;**also flips EVO's `n_ns` to the SHINY formula** (see below). Displayed as **"Shiny"** in the UI — the in-game name (`foil` stays the internal key everywhere) |
 | `DELUXE_CORE` | base**1.0**, scale **0.2**  | regulars, typeless                                                      | **deluxe cards themselves**, greed | `deluxe_core_base + deluxe_core_scale × n_deluxe`     | Universal; gated by `deluxe.allow` (off in vanilla)                          |
 | `VOID_CORE`   | base**1.0**, scale **0.3**  | regulars, deluxe cards, typeless                                        | dead cards themselves, greed             | `void_base + void_scale × n_dead`                     | Universal; gated by `cores.void_allow` (off in vanilla)                      |
-| `ARCHIVE_CORE` | per-arcane base **1.2**           | regulars, deluxe cards, typeless                                        | greed (arcane/dead score 0 anyway)       | `archive_core ^ n_arcane_placed` — applied **outside** the per-card `core_mult` (see callout below) | Gated by `cores.archive_allow` (off in vanilla); when on, additionally **enumerated only when the deck has ≥ 1 arcane slot** |
+| `ARCHIVE_CORE` | rolled base **1.2**           | regulars, deluxe cards, typeless                                        | greed (arcane/dead score 0 anyway)       | `archive_core ^ (2.1·√n_arcane_placed)` — applied **outside** the per-card `core_mult` (see callout below) | Gated by `cores.archive_allow` (off in vanilla); when on, additionally **enumerated only when the deck has ≥ 1 arcane slot** |
 
 Cores **never** apply to greed cards. They never apply to ARCANE cards
 (arcane = 0 NDM, fixed). DEAD cards score 0 regardless and so are not
@@ -210,29 +210,37 @@ Every other core folds into one per-card `core_mult` that respects the
 `stacking.additive_cores` flag (sum in Wold's, product in Vanilla).
 Archive does **not**. After all the other math, each scoring card's
 contribution is multiplied by an Archive factor of
-`archive_core ^ n_arcane_placed`:
+`archive_core ^ (2.1·√n_arcane_placed)` — the live
+`GroupSynergyMultiplierModifier` formula from the pack's final Archive
+balance pass (upstream 0e54a67f, 2026-07-14; replaced per-card compounding,
+which itself had briefly been a log-softcap the optimizer never shipped):
 
 ```
 final_ndm_per_card = base × core_mult × greed_boost × archive_mult
                                                      ^^^^^^^^^^^^
                                                     where archive_mult =
-                                                      base_value ^ n_arcane_placed
+                                                      base_value ^ (2.1·√n_arcane_placed)
                                                       (1.0 when Archive isn't picked)
 ```
 
-Worked example (Wold's default `archive_core: 1.2`):
+Worked example (Wold's default `archive_core: 1.2`, vs the old `base^n`):
 
-| Arcane cards placed | Archive factor on every scoring card |
-| --- | --- |
-| 0 | 1.0  |
-| 1 | 1.2  |
-| 2 | 1.44 |
-| 3 | 1.728 |
-| 4 | 2.0736 |
+| Arcane cards placed | Archive factor (live √) | old `base^n` |
+| --- | --- | --- |
+| 0 | 1.0  | 1.0 |
+| 1 | 1.47 | 1.2  |
+| 2 | 1.72 | 1.44 |
+| 4 | 2.15 | 2.07 |
+| 8 | 2.95 | 4.30 |
+| 12 | 3.77 | 8.92 |
+
+Small counts got a mild buff; big stacks are tamed. (A short-lived
+"experimental additive Archive" toggle explored folding `base^n` into the
+core stack — superseded by this live formula and removed.)
 
 Override semantics: when the user sets an override on Archive, the
-override replaces the **per-arcane base**, not the final multiplier. So
-an override of `1.5` yields a final factor of `1.5 ^ n_arcane_placed`.
+override replaces the **rolled base** `(1 + v)`, not the final multiplier.
+So an override of `1.5` yields a final factor of `1.5 ^ (2.1·√n)`.
 Mirrors PURE / DELUXE_CORE / VOID_CORE, where the override replaces the
 per-N scale term rather than the resolved value.
 
@@ -297,10 +305,11 @@ that compares every deck at its stock layout.
 | Arcane Core       | Convert existing regular slots to arcane (`A`)    | ≤ 3   | `cores.arcane_core_allow`   | Yes (1)          |
 
 > ⚠️ **Arcane Core ≠ Archive Core.** The Archive Core (scoring
-> multiplier, `base ^ n_arcane_placed`) is unchanged. The Arcane Core
-> is a **structural** core that creates new arcane slots. They synergize
-> hard: each Arcane Core conversion bumps `n_arcane_placed` (assuming
-> the SA fills the new arcane slot), which compounds the Archive factor.
+> multiplier, `base ^ (2.1·√n_arcane_placed)`) is unchanged by structural
+> cores themselves. The Arcane Core is a **structural** core that creates
+> new arcane slots. They synergize: each Arcane Core conversion bumps
+> `n_arcane_placed` (assuming the SA fills the new arcane slot), which
+> raises the Archive exponent — though the √ softens stacking deep.
 
 ### Allow flags and platform gating
 
@@ -990,3 +999,13 @@ card reality. The CLI reads the same per-mode file via
   set the outside factor used to hit); only the composition softens. Default
   OFF everywhere; the web app never sets it (wasm payload field defaults
   false; the deployed wasm is unchanged until the next wasm-pack build).
+
+### Upstream final Archive formula + implicit retunes (2026-07-14, wv 0e54a67f)
+
+- **Archive is now `base^(2.1·√n_arcane)`** in every model surface (tagged
+  kernel, both classic kernels, the Python reference `simulate()`, the
+  heatmap, and the TS mirrors). Still an outside-the-stack whole-contribution
+  multiplier; only the exponent function changed. The short-lived
+  `experimental.archive_additive` toggle is removed (superseded).
+- **Implicit value sync** (`decks/wolds_implicits.json`): treasure 1.0→1.25,
+  merchant 0.5→1.0, cactus 2.0→2.5, **bishop 3.0→2.0**, snake 0.075→0.05.

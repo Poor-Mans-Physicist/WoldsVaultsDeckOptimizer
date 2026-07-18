@@ -120,11 +120,6 @@ experimental:
   enable_exponent: false   # experimental balance-core behavior
   exponent: 0.65           # 1.0 = no change; <1 penalises dominance; >1 rewards it
   boost:    0.4
-  # Archive balance toggle (tagged engine): keep the self-compounding
-  # base^n_arcane but ADD it to the core stack (base^n − 1 joins the other
-  # cores) instead of multiplying every card's whole contribution.
-  # CLI flag --archive-additive forces this on for one run.
-  archive_additive: false
 
 # "Include selected construction cores": swap in the pre-built structural-core
 # layouts from decks/structural_layouts.json (Wold / Fairy / Mystery balance

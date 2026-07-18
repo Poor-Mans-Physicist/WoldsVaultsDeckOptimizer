@@ -44,12 +44,6 @@ _mode_parser.add_argument(
          "structural layouts (decks/structural_layouts.json) and subtract "
          "the structural cores used from each deck's core budget.",
 )
-_mode_parser.add_argument(
-    "--archive-additive",
-    action="store_true",
-    help="Experimental archive balance: base^n_arcane joins the core stack "
-         "additively instead of multiplying every card's contribution.",
-)
 _cli_args = _mode_parser.parse_known_args()[0]
 MODE: str = _cli_args.mode
 _VANILLA: bool = MODE == "vanilla"
@@ -114,13 +108,6 @@ STRUCTURAL_LAYOUTS_FILE: str = (
     or "structural_layouts.json"
 )
 
-# Experimental archive balance (tagged engine only): base^n_arcane joins the
-# core stack additively rather than multiplying the whole card contribution.
-EXPERIMENTAL_ARCHIVE_ADDITIVE: bool = (
-    bool(_CFG["experimental"].get("archive_additive", False))
-    or _cli_args.archive_additive
-)
-
 MULT_DIR_GREED_VERT:      float = _CFG["greed"]["dir_vert"]
 MULT_DIR_GREED_HORIZ:     float = _CFG["greed"]["dir_horiz"]
 MULT_EVO_GREED:           float = _CFG["greed"]["evo"]
@@ -141,7 +128,8 @@ MULT_COLOR:       float = _CFG["cores"]["color"]
 ALLOW_VOID:           bool  = _CFG["cores"]["void_allow"]
 MULT_VOID_CORE_BASE:  float = _CFG["cores"]["void_base"]
 MULT_VOID_CORE_SCALE: float = _CFG["cores"]["void_scale"]
-# Archive core: per-arcane-card base; final multiplier = base ** n_arcane_placed.
+# Archive core: rolled base (1 + v); final multiplier = base ** (2.1·√n_arcane)
+# (live GroupSynergyMultiplierModifier formula, final balance pass).
 # ALLOW_ARCHIVE gates enumeration and (in the GUI) row visibility — vanilla off.
 ALLOW_ARCHIVE:        bool  = _CFG["cores"]["archive_allow"]
 MULT_ARCHIVE_CORE:    float = _CFG["cores"]["archive_core"]

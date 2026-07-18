@@ -81,7 +81,7 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
   const showArchive = b.archiveMult !== 1.0;
   if (showArchive) {
     out.push("Archive core (outside core stack):");
-    out.push(`  • ${b.archiveArcaneCount} arcane placed → ${b.archiveBase.toFixed(3)}^${b.archiveArcaneCount} = ×${b.archiveMult.toFixed(3)}`);
+    out.push(`  • ${b.archiveArcaneCount} arcane placed → ${b.archiveBase.toFixed(3)}^(2.1·√${b.archiveArcaneCount}) = ×${b.archiveMult.toFixed(3)}`);
     out.push("");
   }
   // Runic mirror — multiplicative on the whole card value.

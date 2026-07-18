@@ -1,9 +1,9 @@
 """Balance sheet + base-vs-implicit comparison (Optimizer 2.0).
 
-Default: ONE spreadsheet-engine pass over the wolds roster under the proposed
-balance regime — implicits on, the selected structural-core layouts
-(`--structural-cores`) and the experimental additive Archive
-(`--archive-additive`) — rendered as a two-column, screenshot-ready HTML
+Default: ONE spreadsheet-engine pass over the wolds roster under the current
+balance regime — implicits on + the selected structural-core layouts
+(`--structural-cores`); the kernel models the live archive formula
+(base^(2.1·√n)) — rendered as a two-column, screenshot-ready HTML
 leaderboard sorted by NDM (plus markdown + console).
 
 `--compare`: the older mode — two passes (with / without implicits) and a
@@ -80,7 +80,6 @@ def collect(out_path: Path) -> None:
     label = " ".join([
         "WITH implicits" if config.IMPLICITS_ENABLED else "WITHOUT implicits",
         "+structural" if config.STRUCTURAL_INCLUDE else "",
-        "+archive-additive" if config.EXPERIMENTAL_ARCHIVE_ADDITIVE else "",
     ]).strip()
     print(f"[implicit_impact] pass: {label} — {len(DECKS)} decks × "
           f"{n_iter}×{restarts} across {n_procs} processes")
@@ -92,7 +91,6 @@ def collect(out_path: Path) -> None:
     payload = {
         "implicits_enabled": config.IMPLICITS_ENABLED,
         "structural": config.STRUCTURAL_INCLUDE,
-        "archive_additive": config.EXPERIMENTAL_ARCHIVE_ADDITIVE,
         "mode": config.MODE,
         "n_iter": n_iter,
         "restarts": restarts,
@@ -267,11 +265,11 @@ def build_sheet() -> None:
     md = [
         f"# Wold's Vaults — deck NDM balance sheet ({stamp})",
         "",
-        f"Optimizer 2.0 spreadsheet engine, proposed balance regime: deck "
-        f"implicits on; greater structural-core builds for {struct_names} "
-        f"(core budget reduced accordingly); experimental ADDITIVE Archive "
-        f"(base^n joins the core stack); best of Shiny/Evo per deck; every "
-        f"candidate core set; search budget {budget}; best-roll cores.",
+        f"Optimizer 2.0 spreadsheet engine, current balance: deck implicits "
+        f"on; greater structural-core builds for {struct_names} (core budget "
+        f"reduced accordingly); live archive formula (1+v)^(2.1·√n); best of "
+        f"Shiny/Evo per deck; every candidate core set; search budget "
+        f"{budget}; best-roll cores.",
         "",
         "| # | Deck | Implicit | NDM |",
         "| ---: | --- | --- | ---: |",
@@ -318,9 +316,9 @@ def build_sheet() -> None:
   .foot {{ color:#6B7280; font-size:11px; margin-top:12px; line-height:1.5; }}
 </style></head><body><div class="wrap">
 <h1>Wold's Vaults — deck NDM balance sheet</h1>
-<div class="sub">Optimizer&nbsp;2.0 spreadsheet engine · proposed balance regime: deck implicits on ·
-greater structural-core builds for {struct_names} (core budget reduced accordingly) ·
-<strong>experimental additive Archive</strong> (base<sup>n</sup> joins the core stack) ·
+<div class="sub">Optimizer&nbsp;2.0 spreadsheet engine · current balance: deck implicits on
+(incl. the latest implicit retunes) · greater structural-core builds for {struct_names}
+(core budget reduced accordingly) · <strong>live Archive formula</strong> (1+v)<sup>2.1·√n</sup> ·
 best of Shiny/Evo per deck (marked <sup>S</sup>/<sup>E</sup>) · every candidate core set ·
 search budget {budget} · best-roll cores · {stamp}</div>
 <div class="cols">
@@ -370,8 +368,8 @@ def main() -> None:
                     help="skip the runs; rebuild the sheet/table from existing JSONs")
     ap.add_argument("--compare", action="store_true",
                     help="legacy mode: two passes (with/without implicits) + diff table")
-    # config-gate flags (--no-implicits / --structural-cores /
-    # --archive-additive) are consumed by src.config at import; accept & ignore.
+    # config-gate flags (--no-implicits / --structural-cores) are consumed by
+    # src.config at import; accept & ignore.
     args, _ = ap.parse_known_args()
 
     if args.collect:
@@ -390,7 +388,7 @@ def main() -> None:
     # Default: single balance-regime pass → two-column leaderboard.
     if not args.table_only:
         t0 = time.perf_counter()
-        _run_pass(["--structural-cores", "--archive-additive"], _OUT_BALANCE)
+        _run_pass(["--structural-cores"], _OUT_BALANCE)
         print(f"[implicit_impact] balance pass done in {time.perf_counter() - t0:.0f}s")
     build_sheet()
 
