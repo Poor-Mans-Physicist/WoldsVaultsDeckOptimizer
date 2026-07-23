@@ -45,7 +45,7 @@ const CORE_COLOR: u8       = 3;
 const CORE_FOIL: u8        = 4;
 const CORE_DELUXE: u8      = 5;
 const CORE_VOID: u8        = 6;
-// Archive core: base ** n_arcane_placed, applied *outside* per-card core_mult.
+// Archive core: per-card value base ** n_arcane_placed, additive in core_mult.
 const CORE_ARCHIVE: u8     = 7;
 // Sparkling: flat SHINY-only multiplier — Wold's-only.
 const CORE_SPARKLING: u8   = 8;
@@ -194,7 +194,8 @@ struct SimConfig {
     mult_deluxe_core_scale: f64,
     mult_void_core_base: f64,
     mult_void_core_scale: f64,
-    /// Archive core per-arcane base; final mult = `base ^ n_arcane_placed`.
+    /// Archive core per-arcane base; per-card value = `base ^ n_arcane_placed`,
+    /// aggregated additively with the other cores in `core_mult`.
     mult_archive_core: f64,
     greed_additive: bool,
     additive_cores: bool,
@@ -327,13 +328,15 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
         }
     }
 
-    // Archive core — applied *outside* the per-card core_mult below. Bypasses
-    // the additive_cores stacking switch entirely.
-    // Live formula (final balance): base^(2.1·√n_arcane_placed).
-    let archive_mult: f64 = if archive_present {
-        cfg.mult_archive_core.powf(2.1 * (n_arcane_placed as f64).sqrt())
+    // Archive core (live semantics, wv aa5e7b39): per-card modifier value =
+    // base^n_arcane_placed, aggregated ADDITIVELY with the other cores
+    // (MixinCardDeck: value += mod − 1). Folds into the per-card core_mult
+    // triple below; the multiplicative path multiplies like every other core.
+    let (archive_addend, archive_factor): (f64, f64) = if archive_present {
+        let f = cfg.mult_archive_core.powf(n_arcane_placed as f64);
+        (f - 1.0, f)
     } else {
-        1.0
+        (0.0, 1.0)
     };
 
     let (regular_core_mult, deluxe_card_core_mult, typeless_core_mult) = if cfg.additive_cores {
@@ -341,18 +344,18 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
         let deluxe_addend: f64 = deluxe_core_value.map_or(0.0, |v| v - 1.0);
         let void_addend:   f64 = void_core_value.map_or(0.0, |v| v - 1.0);
         (
-            1.0 + baseline_sum + deluxe_addend + void_addend,
-            1.0 + baseline_sum                  + void_addend,
-            1.0 + baseline_sum + deluxe_addend + void_addend,
+            1.0 + baseline_sum + deluxe_addend + void_addend + archive_addend,
+            1.0 + baseline_sum                  + void_addend + archive_addend,
+            1.0 + baseline_sum + deluxe_addend + void_addend + archive_addend,
         )
     } else {
         let baseline_prod: f64 = if baseline_c.is_empty() { 1.0 } else { baseline_c.iter().product() };
         let deluxe_factor: f64 = deluxe_core_value.unwrap_or(1.0);
         let void_factor:   f64 = void_core_value.unwrap_or(1.0);
         (
-            baseline_prod * deluxe_factor * void_factor,
-            baseline_prod                 * void_factor,
-            baseline_prod * deluxe_factor * void_factor,
+            baseline_prod * deluxe_factor * void_factor * archive_factor,
+            baseline_prod                 * void_factor * archive_factor,
+            baseline_prod * deluxe_factor * void_factor * archive_factor,
         )
     };
     // n_regular is kept in the classifier for symmetry with future per-card
@@ -472,13 +475,13 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
                 _    => 0,
             };
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
-            ndm += contrib(pos as f64 * regular_core_mult * b * archive_mult);
+            ndm += contrib(pos as f64 * regular_core_mult * b);
         } else if is_deluxe[i] {
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
-            ndm += contrib(cfg.mult_deluxe_flat * deluxe_card_core_mult * b * archive_mult);
+            ndm += contrib(cfg.mult_deluxe_flat * deluxe_card_core_mult * b);
         } else if is_typeless[i] {
             let b = if cfg.greed_additive { boost[i].max(1.0) } else { boost[i] };
-            ndm += contrib(1.0_f64 * typeless_core_mult * b * archive_mult);
+            ndm += contrib(1.0_f64 * typeless_core_mult * b);
         }
     }
 

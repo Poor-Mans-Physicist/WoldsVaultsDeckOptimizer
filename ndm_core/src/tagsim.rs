@@ -601,14 +601,17 @@ fn simulate(
             _ => {}
         }
     }
-    // Archive (live formula, woldsvaults GroupSynergyMultiplierModifier):
-    // base^(2.1·√n_arcane), applied OUTSIDE the per-card core stack. The
-    // √-exponent is the pack's final balance pass — small arcane counts get
-    // slightly more than the old per-card compounding, big stacks far less.
-    let archive_mult = if archive_present {
-        archive_base.powf(2.1 * (n_arcane as f64).sqrt())
+    // Archive (live semantics, woldsvaults GroupSynergyMultiplierModifier as
+    // of aa5e7b39): per-card modifier value = base^n_arcane, aggregated
+    // ADDITIVELY with the other cores by MixinCardDeck (value += mod − 1).
+    // No longer an IMultiplicativeDeckModifier — runic alone multiplies the
+    // whole card. On the multiplicative (vanilla) path it folds into the
+    // per-card product like every other core. No per-card gate.
+    let (archive_addend, archive_factor) = if archive_present {
+        let f = archive_base.powf(n_arcane as f64);
+        (f - 1.0, f)
     } else {
-        1.0
+        (0.0, 1.0)
     };
     let color_core_color = cores.color_core_color;
 
@@ -851,6 +854,7 @@ fn simulate(
                 + if color_applies { color_addend } else { 0.0 }
                 + if deluxe_applies { deluxe_addend } else { 0.0 }
                 + if void_applies { void_addend } else { 0.0 }
+                + archive_addend
                 + imp_addend
         } else {
             // Vanilla path — implicits never active there; keep the pure
@@ -859,7 +863,7 @@ fn simulate(
             if color_applies { m *= color_factor; }
             if deluxe_applies { m *= deluxe_factor; }
             if void_applies { m *= void_factor; }
-            m
+            m * archive_factor
         };
 
         // Runic (multiplicative mirror).
@@ -876,7 +880,7 @@ fn simulate(
         } else { 1.0 };
 
         let b = if cfg.greed_additive { s.boost[i].max(1.0) } else { s.boost[i] };
-        ndm += base * core_mult * b * archive_mult * mirror_factor;
+        ndm += base * core_mult * b * mirror_factor;
     }
 
     ndm

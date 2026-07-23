@@ -33,8 +33,9 @@ export interface SlotBreakdown {
   coreMultFormula:     string;
   boost:               number;
   boostSources:        GreedSource[];
-  // Archive core (applied OUTSIDE core_mult). = 1.0 when archive isn't picked
-  // or doesn't apply to this card class.
+  // Archive core (live semantics: additive term INSIDE coreMult). archiveMult
+  // is the stack value base^n — kept for the popup's exponent explainer; 1.0
+  // when archive isn't picked.
   archiveMult:         number;
   archiveArcaneCount:  number;
   archiveBase:         number;       // per-arcane base used (default or override)
@@ -112,8 +113,8 @@ export function simulateInventoryBreakdown(
 
   const { baseline, colorComp, deluxeComp, voidComp, archiveComp, classExcluded } =
     classifyCores(cores, card_class, n_ns, n_deluxe, n_dead, arcane.size, cfg);
-  // Archive multiplier — applied *outside* the per-card core_mult (bypasses
-  // the additive_cores stacking switch). Value = base ^ n_arcane_placed.
+  // Archive (live semantics, wv aa5e7b39): additive stack term inside the
+  // per-card core_mult like every other core. Value = base ^ n_arcane_placed.
   const archiveMult = archiveComp !== null ? archiveComp.value : 1.0;
   // Pull the picked spec so we can show "base ^ n = mult" in the popup.
   const archiveSpec = cores.find((s) => s.core_type === CoreType.ARCHIVE_CORE) ?? null;
@@ -213,6 +214,10 @@ export function simulateInventoryBreakdown(
       }
     }
 
+    // Archive: applies to every scoring card (additive stack term; value =
+    // base ^ n_arcane_placed). No per-card gate.
+    if (archiveComp !== null) applied.push(archiveComp);
+
     const vals = applied.map((c) => c.value);
     let mult: number, formula: string;
     if (cfg.stacking.additive_cores) {
@@ -286,7 +291,7 @@ export function simulateInventoryBreakdown(
     }
     const { applied, excluded, mult, formula } = cardBreakdown(t, c);
     const b = additive ? Math.max(boost.get(k)!, 1.0) : boost.get(k)!;
-    const v = posVal * mult * b * archiveMult;
+    const v = posVal * mult * b;
     perSlot.set(k, {
       cardType: t, color: c,
       baseValue: posVal, baseExplain: explain,
@@ -303,7 +308,7 @@ export function simulateInventoryBreakdown(
   for (const [k, [t, c]] of deluxe) {
     const { applied, excluded, mult, formula } = cardBreakdown(CardType.DELUXE, c);
     const b = additive ? Math.max(boost.get(k)!, 1.0) : boost.get(k)!;
-    const v = cfg.deluxe.flat * mult * b * archiveMult;
+    const v = cfg.deluxe.flat * mult * b;
     perSlot.set(k, {
       cardType: t, color: c,
       baseValue: cfg.deluxe.flat, baseExplain: `deluxe flat value = ${cfg.deluxe.flat}`,
@@ -320,7 +325,7 @@ export function simulateInventoryBreakdown(
   for (const [k, [t, c]] of typeless) {
     const { applied, excluded, mult, formula } = cardBreakdown(CardType.TYPELESS, c);
     const b = additive ? Math.max(boost.get(k)!, 1.0) : boost.get(k)!;
-    const v = 1.0 * mult * b * archiveMult;
+    const v = 1.0 * mult * b;
     perSlot.set(k, {
       cardType: t, color: c,
       baseValue: 1.0, baseExplain: "typeless flat value = 1.0",

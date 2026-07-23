@@ -57,7 +57,7 @@ const CORE_COLOR:       u8 = 3;
 const CORE_FOIL:        u8 = 4;
 const CORE_DELUXE:      u8 = 5;
 const CORE_VOID:        u8 = 6;
-// Archive core: base ** n_arcane_placed, applied *outside* the per-card core_mult.
+// Archive core: per-card value base ** n_arcane_placed, additive in core_mult.
 const CORE_ARCHIVE:     u8 = 7;
 // Sparkling core: flat SHINY-only multiplier — Wold's-only.
 const CORE_SPARKLING:   u8 = 8;
@@ -218,7 +218,8 @@ struct SimConfig {
     mult_deluxe_core_scale: f64,
     mult_void_core_base: f64,
     mult_void_core_scale: f64,
-    /// Archive core per-arcane base; final mult = `base ^ n_arcane_placed`.
+    /// Archive core per-arcane base; per-card value = `base ^ n_arcane_placed`,
+    /// aggregated additively with the other cores in `card_core_mult`.
     mult_archive_core: f64,
     greed_additive: bool,
     additive_cores: bool,
@@ -341,9 +342,9 @@ fn simulate(
     let mut void_addend   = 0.0f64;
     let mut void_factor   = 1.0f64;
     let mut void_present  = false;
-    // Archive core: per-arcane base; final multiplier is base ** n_arcane_placed.
-    // Applied *outside* the per-card core_mult, so it bypasses the additive_cores
-    // stacking switch.
+    // Archive core: per-arcane base; per-card value is base ** n_arcane_placed,
+    // aggregated additively with the other cores inside card_core_mult (live
+    // semantics, wv aa5e7b39).
     let mut archive_base    = 1.0f64;
     let mut archive_present = false;
     let color_core_color = cores.color_core_color;
@@ -404,12 +405,14 @@ fn simulate(
         }
     }
 
-    // Archive multiplier — applied outside the per-card core_mult.
-    // Live formula (final balance): base^(2.1·√n_arcane).
-    let archive_mult: f64 = if archive_present {
-        archive_base.powf(2.1 * (n_arcane as f64).sqrt())
+    // Archive (live semantics, wv aa5e7b39): per-card modifier value =
+    // base^n_arcane, aggregated additively with the other cores
+    // (MixinCardDeck: value += mod − 1). No per-card gate.
+    let (archive_addend, archive_factor): (f64, f64) = if archive_present {
+        let f = archive_base.powf(n_arcane as f64);
+        (f - 1.0, f)
     } else {
-        1.0
+        (0.0, 1.0)
     };
 
     // Per-card core multiplier — picks color/deluxe/void addends per
@@ -425,12 +428,13 @@ fn simulate(
                 + if color_applies  { color_addend  } else { 0.0 }
                 + if deluxe_applies { deluxe_addend } else { 0.0 }
                 + if void_applies   { void_addend   } else { 0.0 }
+                + archive_addend
         } else {
             let mut m = baseline_prod;
             if color_applies  { m *= color_factor_val; }
             if deluxe_applies { m *= deluxe_factor; }
             if void_applies   { m *= void_factor; }
-            m
+            m * archive_factor
         }
     };
     // n_positional is tracked in the classifier for symmetry with future
@@ -529,11 +533,11 @@ fn simulate(
                     _ => 0.0,
                 }
             };
-            ndm += pos_val * card_core_mult(t, c) * b * archive_mult;
+            ndm += pos_val * card_core_mult(t, c) * b;
         } else if t == DELUXE {
-            ndm += cfg.mult_deluxe_flat * card_core_mult(t, c) * b * archive_mult;
+            ndm += cfg.mult_deluxe_flat * card_core_mult(t, c) * b;
         } else if t == TYPELESS {
-            ndm += 1.0 * card_core_mult(t, c) * b * archive_mult;
+            ndm += 1.0 * card_core_mult(t, c) * b;
         }
         // GREED / DEAD contribute nothing.
     }

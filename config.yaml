@@ -73,13 +73,14 @@ cores:
   void_allow:  true
   void_base:   1.0
   void_scale:  0.3
-  # Archive core (special — applies its `base^n_arcane_placed` multiplier on top
-  # of the per-card `core_mult × greed_boost × base_value`, NOT folded into
-  # `core_mult`). So it bypasses the additive_cores stacking switch entirely.
+  # Archive core (live semantics, wv aa5e7b39): per-card modifier value =
+  # `base ^ n_arcane_placed`, aggregated ADDITIVELY with the other cores in
+  # the per-card core_mult (MixinCardDeck: value += mod − 1). Runic alone
+  # remains a whole-card multiplier.
   # `allow: true` lets the candidate enumerator and the core picker surface it;
   # vanilla sets false so the row is hidden mode-wide regardless of geometry.
   # Even with allow=true, enumeration still gates on the deck having ≥ 1 arcane
-  # slot (otherwise `n_arcane_placed` is permanently 0 → multiplier is 1.0).
+  # slot (otherwise `n_arcane_placed` is permanently 0 → the term is inert).
   archive_allow: true
   archive_core:  1.2
   # Structural cores (WEB ONLY — outer CLI ignores these flags).

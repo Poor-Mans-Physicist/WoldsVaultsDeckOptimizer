@@ -33,6 +33,8 @@ export interface TaggedSlotBreakdown {
   coreMultFormula: string;
   boost:      number;
   boostSources: { fromPosition: [number, number]; greedType: CardType; multiplier: number }[];
+  // Archive core (live semantics: additive term INSIDE coreMult). archiveMult
+  // is the stack value base^n — kept for the popup's exponent explainer.
   archiveMult: number;
   archiveArcaneCount: number;
   archiveBase: number;
@@ -325,6 +327,9 @@ export function simulateTaggedBreakdown(
       } else applied.push(deluxeComp);
     }
     if (voidComp !== null) applied.push(voidComp);
+    // Archive (live semantics): additive stack term like every other core;
+    // its value is base^n_arcane (see cores.archiveCoreMult). No per-card gate.
+    if (archiveComp !== null) applied.push(archiveComp);
 
     // Additive implicit addends for this card.
     const implicitParts: ImplicitPart[] = [];
@@ -421,7 +426,7 @@ export function simulateTaggedBreakdown(
     }
 
     const b = cfg.stacking.greed_additive ? Math.max(boost[i], 1.0) : boost[i];
-    const v = base * coreMult * b * archiveMult * mirrorFactor;
+    const v = base * coreMult * b * mirrorFactor;
     perSlot.set(k, {
       cardType: c.t, color: c.color, scaleColor: c.scaleColor, groups: c.groups,
       baseValue: base, baseExplain,

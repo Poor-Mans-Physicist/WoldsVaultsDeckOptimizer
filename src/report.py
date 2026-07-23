@@ -133,12 +133,15 @@ def compute_heatmap(
         core_mult        = math.prod(core_contributions)        if core_contributions        else 1.0
         deluxe_core_mult = math.prod(deluxe_core_contributions) if deluxe_core_contributions else 1.0
 
-    # Archive core — applied *outside* core_mult (bypasses the additive_cores
-    # switch). Live formula: base ** (2.1 * sqrt(n_arcane_placed)).
-    archive_mult = (
-        MULT_ARCHIVE_CORE ** (2.1 * math.sqrt(len(arcane)))
-        if CoreType.ARCHIVE_CORE in cores else 1.0
-    )
+    # Archive core (live semantics, wv aa5e7b39): per-card value = base ** N
+    # (N = placed ARCANE cards), aggregated additively with the other cores
+    # in the per-card stack; multiplicative path multiplies like the rest.
+    if CoreType.ARCHIVE_CORE in cores:
+        archive_factor = MULT_ARCHIVE_CORE ** len(arcane)
+        if ADDITIVE_CORES:
+            core_mult += archive_factor - 1.0
+        else:
+            core_mult *= archive_factor
 
     row_count: Dict[int, int] = {}
     col_count: Dict[int, int] = {}
@@ -200,15 +203,15 @@ def compute_heatmap(
         elif t == CardType.DIAG: pos = max(1, sum(1 for q in deck._diag_peers[p] if q in filled))
         else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
         b          = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        heatmap[p] = _contrib(pos * core_mult * deluxe_core_mult * b * archive_mult)
+        heatmap[p] = _contrib(pos * core_mult * deluxe_core_mult * b)
 
     for p in deluxe:
         b          = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        heatmap[p] = _contrib(MULT_DELUXE_FLAT * core_mult * b * archive_mult)
+        heatmap[p] = _contrib(MULT_DELUXE_FLAT * core_mult * b)
 
     for p in typeless:
         b          = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        heatmap[p] = _contrib(1.0 * core_mult * deluxe_core_mult * b * archive_mult)
+        heatmap[p] = _contrib(1.0 * core_mult * deluxe_core_mult * b)
 
     return heatmap
 

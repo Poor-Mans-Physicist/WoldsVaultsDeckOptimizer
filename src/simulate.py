@@ -146,28 +146,31 @@ def simulate(
         elif core == CoreType.VOID_CORE:
             void_core_value   = MULT_VOID_CORE_BASE   + MULT_VOID_CORE_SCALE   * n_dead
 
-    # Archive core (special — applied *outside* the per-card core_mult; bypasses
-    # the additive_cores stacking switch). Final multiplier is base ** N where
-    # N is the count of placed ARCANE cards. Skipped entirely when not in the
-    # candidate set.
-    archive_mult = 1.0
+    # Archive core (live semantics, wv aa5e7b39): per-card modifier value =
+    # base ** N (N = placed ARCANE cards), aggregated ADDITIVELY with the
+    # other cores by MixinCardDeck (value += mod - 1); runic alone still
+    # multiplies the whole card. On the multiplicative (vanilla) path it
+    # folds into the per-card product like every other core. No per-card gate.
+    archive_addend = 0.0
+    archive_factor = 1.0
     if CoreType.ARCHIVE_CORE in cores:
-        archive_mult = MULT_ARCHIVE_CORE ** (2.1 * math.sqrt(len(arcane)))
+        archive_factor = MULT_ARCHIVE_CORE ** len(arcane)
+        archive_addend = archive_factor - 1.0
 
     if ADDITIVE_CORES:
         baseline_sum  = sum(v - 1.0 for v in baseline_contribs)
         deluxe_addend = (deluxe_core_value - 1.0) if deluxe_core_value is not None else 0.0
         void_addend   = (void_core_value   - 1.0) if void_core_value   is not None else 0.0
-        regular_core_mult     = 1.0 + baseline_sum + deluxe_addend + void_addend
-        deluxe_card_core_mult = 1.0 + baseline_sum + void_addend
-        typeless_core_mult    = 1.0 + baseline_sum + deluxe_addend + void_addend
+        regular_core_mult     = 1.0 + baseline_sum + deluxe_addend + void_addend + archive_addend
+        deluxe_card_core_mult = 1.0 + baseline_sum + void_addend + archive_addend
+        typeless_core_mult    = 1.0 + baseline_sum + deluxe_addend + void_addend + archive_addend
     else:
         baseline_prod = math.prod(baseline_contribs) if baseline_contribs else 1.0
         deluxe_factor = deluxe_core_value if deluxe_core_value is not None else 1.0
         void_factor   = void_core_value   if void_core_value   is not None else 1.0
-        regular_core_mult     = baseline_prod * deluxe_factor * void_factor
-        deluxe_card_core_mult = baseline_prod * void_factor
-        typeless_core_mult    = baseline_prod * deluxe_factor * void_factor
+        regular_core_mult     = baseline_prod * deluxe_factor * void_factor * archive_factor
+        deluxe_card_core_mult = baseline_prod * void_factor * archive_factor
+        typeless_core_mult    = baseline_prod * deluxe_factor * void_factor * archive_factor
 
     row_count: Dict[int, int] = {}
     col_count: Dict[int, int] = {}
@@ -230,15 +233,15 @@ def simulate(
         elif t == CardType.DIAG: pos = max(1, sum(1 for q in deck._diag_peers[p] if q in filled))
         else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += _contrib(pos * regular_core_mult * b * archive_mult)
+        ndm += _contrib(pos * regular_core_mult * b)
 
     for p in deluxe:
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += _contrib(MULT_DELUXE_FLAT * deluxe_card_core_mult * b * archive_mult)
+        ndm += _contrib(MULT_DELUXE_FLAT * deluxe_card_core_mult * b)
 
     for p in typeless:
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
-        ndm += _contrib(1.0 * typeless_core_mult * b * archive_mult)
+        ndm += _contrib(1.0 * typeless_core_mult * b)
 
     return ndm
 

@@ -37,13 +37,15 @@ export function voidCoreMult(spec: CoreSpec, n_dead: number, cfg: ResolvedConfig
   return cfg.cores.void_base + scale * n_dead;
 }
 
-/** ARCHIVE_CORE multiplier given runtime `n_arcane_placed`. `override`
- *  replaces the per-arcane *base*; final mult = `base ^ n_arcane_placed`. */
+/** ARCHIVE_CORE per-card modifier value given runtime `n_arcane_placed`.
+ *  `override` replaces the per-arcane *base*. Live semantics (woldsvaults
+ *  GroupSynergyMultiplierModifier as of aa5e7b39): value = `base ^ n`,
+ *  aggregated ADDITIVELY with the other cores in the per-card stack
+ *  (MixinCardDeck: value += mod − 1) — no longer an outside whole-card
+ *  multiplier. */
 export function archiveCoreMult(spec: CoreSpec, n_arcane_placed: number, cfg: ResolvedConfig): number {
   const base = spec.override !== null ? spec.override : cfg.cores.archive_core;
-  // Live formula (woldsvaults GroupSynergyMultiplierModifier, final balance):
-  // base^(2.1·√n) — √-exponent instead of per-card compounding.
-  return Math.pow(base, 2.1 * Math.sqrt(n_arcane_placed));
+  return Math.pow(base, n_arcane_placed);
 }
 
 // ── Classified-core output (for breakdown re-score) ───────────────────────────

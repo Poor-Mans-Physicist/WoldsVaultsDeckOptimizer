@@ -96,8 +96,8 @@ export function coreDefaultValue(opt: CoreOption, cfg: ResolvedConfig): number {
     case CoreType.SPARKLING:   return cfg.cores.sparkling ?? 2.5;
     case CoreType.FOIL:        return cfg.cores.foil;
     case CoreType.COLOR:       return cfg.cores.color;
-    // Archive override replaces the rolled base (1 + v), not the final mult:
-    // final = base ^ (2.1·√n_arcane_placed) — the live game formula.
+    // Archive override replaces the rolled base (1 + v), not the final value:
+    // per-card stack term = base ^ n_arcane_placed — the live game formula.
     // Fallback `?? 1.2` defends against a stale cached `config.json` from
     // before Archive Core shipped — without it `undefined.toFixed(3)` in
     // coreDefaultPlaceholder would brick the entire page on first render.

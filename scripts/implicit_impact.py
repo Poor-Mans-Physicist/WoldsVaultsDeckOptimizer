@@ -2,9 +2,10 @@
 
 Default: ONE spreadsheet-engine pass over the wolds roster under the current
 balance regime — implicits on + the selected structural-core layouts
-(`--structural-cores`); the kernel models the live archive formula
-(base^(2.1·√n)) — rendered as a two-column, screenshot-ready HTML
-leaderboard sorted by NDM (plus markdown + console).
+(`--structural-cores`); the kernel models the live archive semantics
+(`base^n` additive with the other cores, wv aa5e7b39) — rendered as a
+two-column, screenshot-ready HTML leaderboard sorted by NDM (plus markdown
++ console).
 
 `--compare`: the older mode — two passes (with / without implicits) and a
 diff table.
@@ -267,9 +268,9 @@ def build_sheet() -> None:
         "",
         f"Optimizer 2.0 spreadsheet engine, current balance: deck implicits "
         f"on; greater structural-core builds for {struct_names} (core budget "
-        f"reduced accordingly); live archive formula (1+v)^(2.1·√n); best of "
-        f"Shiny/Evo per deck; every candidate core set; search budget "
-        f"{budget}; best-roll cores.",
+        f"reduced accordingly); live archive semantics (1+v)^n additive with "
+        f"the other cores; best of Shiny/Evo per deck; every candidate core "
+        f"set; search budget {budget}; best-roll cores.",
         "",
         "| # | Deck | Implicit | NDM |",
         "| ---: | --- | --- | ---: |",
@@ -318,7 +319,8 @@ def build_sheet() -> None:
 <h1>Wold's Vaults — deck NDM balance sheet</h1>
 <div class="sub">Optimizer&nbsp;2.0 spreadsheet engine · current balance: deck implicits on
 (incl. the latest implicit retunes) · greater structural-core builds for {struct_names}
-(core budget reduced accordingly) · <strong>live Archive formula</strong> (1+v)<sup>2.1·√n</sup> ·
+(core budget reduced accordingly) · <strong>live Archive semantics</strong> — (1+v)<sup>n</sup>,
+additive with the other cores (no longer a whole-card multiplier) ·
 best of Shiny/Evo per deck (marked <sup>S</sup>/<sup>E</sup>) · every candidate core set ·
 search budget {budget} · best-roll cores · {stamp}</div>
 <div class="cols">

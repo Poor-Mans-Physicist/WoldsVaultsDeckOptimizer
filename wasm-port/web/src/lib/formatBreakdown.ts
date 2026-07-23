@@ -76,12 +76,13 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
   out.push(`  → boost = ×${b.boost.toFixed(3)}`);
   out.push("");
 
-  // Archive core — applied OUTSIDE the per-card core_mult stack, so shown as
-  // its own factor. Only render when archive is actually contributing.
+  // Archive core — one of the additive core-stack terms (live semantics);
+  // spell out the base^n composition since the stack line only shows the
+  // final value. Only render when archive is actually contributing.
   const showArchive = b.archiveMult !== 1.0;
   if (showArchive) {
-    out.push("Archive core (outside core stack):");
-    out.push(`  • ${b.archiveArcaneCount} arcane placed → ${b.archiveBase.toFixed(3)}^(2.1·√${b.archiveArcaneCount}) = ×${b.archiveMult.toFixed(3)}`);
+    out.push("Archive core (in core stack):");
+    out.push(`  • ${b.archiveArcaneCount} arcane placed → ${b.archiveBase.toFixed(3)}^${b.archiveArcaneCount} = ${b.archiveMult.toFixed(3)} (adds +${(b.archiveMult - 1).toFixed(3)})`);
     out.push("");
   }
   // Runic mirror — multiplicative on the whole card value.
@@ -94,7 +95,6 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
     stripFloat(b.baseValue),
     b.coreMult.toFixed(3),
     b.boost.toFixed(3),
-    ...(showArchive ? [b.archiveMult.toFixed(3)] : []),
     ...(showMirror ? [b.mirrorFactor.toFixed(3)] : []),
   ];
   out.push(`Final: ${factors.join(" × ")}`);
