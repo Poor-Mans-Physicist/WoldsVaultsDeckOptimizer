@@ -2,7 +2,7 @@
 
 Computes optimal card-deck layouts for [Wold's Vaults](https://github.com/iwolfking/Wolds-Vaults) by maximizing **NDM** with a simulated-annealing kernel written in Rust. Two frontends share the same kernel, math, and config:
 
-- **Web app (recommended):** <https://poor-mans-physicist.github.io/woldsvaultsdeckoptimizer/> — runs entirely in your browser (WASM), nothing to install. Max / Targeted / Exact modes, deck implicits, structural cores, Complex Cards, per-slot math breakdowns, snapshots, and a deck builder.
+- **Web app (recommended):** <https://poor-mans-physicist.github.io/WoldsVaultsDeckOptimizer/> — runs entirely in your browser (WASM), nothing to install. Max / Targeted / Exact modes, deck implicits, structural cores, Complex Cards, per-slot math breakdowns, snapshots, and a deck builder.
 - **CLI spreadsheet optimizer:** batch-runs *every* deck × both card classes × several greed-constraint configs and writes a full `.xlsx` panel with layouts and heatmaps. This is what the balance sheets are made with.
 
 ## What NDM means
@@ -23,8 +23,8 @@ Two card classes are optimized separately: **Shiny** (stat cards; stat cores app
 ### Run
 
 ```
-git clone https://github.com/poor-mans-physicist/woldsvaultsdeckoptimizer.git
-cd woldsvaultsdeckoptimizer
+git clone https://github.com/Poor-Mans-Physicist/WoldsVaultsDeckOptimizer.git
+cd WoldsVaultsDeckOptimizer
 uv run optimize
 ```
 
