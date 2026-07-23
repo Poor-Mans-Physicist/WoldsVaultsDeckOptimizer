@@ -77,11 +77,6 @@
           <span class="pct" aria-hidden="true">%</span>
         </span>
       </div>
-      {#if opt.coreType === CoreType.ARCHIVE_CORE}
-        <!-- In-game caveat the optimizer can't enforce — Archive's effect only
-             resolves correctly when it's the last core slotted into the deck. -->
-        <div class="caveat">⚠ Archive Core must be the <strong>final</strong> core added to your deck to work properly.</div>
-      {/if}
     {/if}
   {/each}
 
@@ -143,9 +138,9 @@
     <div class="struct-section">
       <div class="struct-head">Structural</div>
 
-      <!-- Experimental "Greater" community variant — bumps both caps from
-           3 to 5. Sits at the top of the section so it's the first thing
-           the user sees when expanding the structural panel. -->
+      <!-- "Greater" structural variant — bumps both caps from 3 to 5. Sits
+           at the top of the section so it's the first thing the user sees
+           when expanding the structural panel. -->
       <div class="row greater-row">
         <label class="check">
           <input
@@ -157,7 +152,6 @@
         </label>
       </div>
       <div class="hint greater-hint">
-        <em>Experimental — not in the modpack yet.</em>
         Caps go from 3 → 5 for both Construction and Arcane Core.
       </div>
 
@@ -396,27 +390,6 @@
     padding-left: 6px;
     padding-bottom: 8px;
   }
-  .greater-hint em {
-    display: inline;
-    color: #FCD34D;
-    font-style: italic;
-    margin-right: 6px;
-  }
-
-  /* Inline caveat under a specific core row (e.g. Archive). Same column flow
-     as the row itself; uses warning yellow so it's visible without being
-     alarming. */
-  .caveat {
-    margin: 0 0 6px 22px;
-    padding: 4px 8px;
-    font-size: 11px;
-    line-height: 1.4;
-    color: #FCD34D;
-    background: rgba(252, 211, 77, 0.08);
-    border-left: 2px solid #FCD34D;
-    border-radius: 0 4px 4px 0;
-  }
-  .caveat strong { color: #FEF3C7; }
   .hint-plus {
     display: inline-block;
     width: 14px;

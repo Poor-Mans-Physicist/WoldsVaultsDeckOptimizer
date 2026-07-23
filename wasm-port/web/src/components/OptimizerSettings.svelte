@@ -166,6 +166,7 @@
     border-radius: 4px;
     font-size: 13px;
     width: 100%;
+    box-sizing: border-box;
     background: var(--bg-input);
     color: var(--text-primary);
   }
