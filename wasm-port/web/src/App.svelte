@@ -1,7 +1,8 @@
 <script lang="ts">
-  // Two-tab app: Optimize (run SA, view per-slot NDM, breakdown popup) and
+  // Four-tab app: Optimize (run SA, view per-slot NDM, breakdown popup),
   // Preview (assign concrete stat cards to scoring slots, view aggregate
-  // player stats). Mirrors the workflow of src/gui.py.
+  // player stats), Build (deck-layout builder + modpack JSON export), and
+  // Snapshots (saved runs).
 
   import { onMount } from "svelte";
   import {

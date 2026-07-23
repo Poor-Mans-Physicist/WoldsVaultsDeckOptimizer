@@ -9,7 +9,6 @@
   } from "../lib/coreOptions";
   import { hiddenCoreTypes } from "../lib/visibility";
   import { maxConstruction, maxArcaneConvert } from "../lib/structural";
-  import { CoreType } from "../lib/types";
 
   // Overrides are entered as a % (matching the in-game item tooltip) but
   // STORED in raw kernel units, so config defaults, snapshots and the SA

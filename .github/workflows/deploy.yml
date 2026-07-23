@@ -1,8 +1,8 @@
 name: Build & deploy web app to GitHub Pages
 
 # The Svelte/WASM web app lives under `wasm-port/`. Everything else in the
-# repo (Python optimizer, NiceGUI inventory tool, etc.) is desktop-only and
-# does not need to be built here. Two paths into this workflow:
+# repo (the CLI spreadsheet optimizer) is desktop-only and does not need to
+# be built here. Two paths into this workflow:
 #   * push to main (auto-deploy whatever's on main)
 #   * manual run from the Actions tab (Workflow Dispatch)
 on:

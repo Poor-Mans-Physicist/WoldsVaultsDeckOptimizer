@@ -1,8 +1,9 @@
 # Wold's Vaults Deck Optimizer — Web App
 
-Browser-only port of the inventory optimizer. The simulated-annealing core
-runs entirely client-side as WASM inside a Web Worker — no server, no API
-calls, no data leaves your machine. Deployed as a static site to GitHub Pages.
+The Optimizer 2.0 web frontend. The tag-aware simulated-annealing kernel
+runs entirely client-side as WASM inside a Web Worker pool — no server, no
+API calls, no data leaves your machine. Deployed as a static site to GitHub
+Pages.
 
 ---
 
@@ -93,13 +94,16 @@ cd web && npm run check
 
 The Python script reads the same authoritative inputs as the CLI optimizer:
 
-- `config.yaml` → resolved per mode (defaults deep-merged with each
+- `config.yaml` → every mode resolved (defaults deep-merged with each
   `modes.<name>` block) and emitted as `web/public/config.json`.
 - `decks/*.{yaml,json}` → flattened to `web/public/decks.json` with slot
-  geometry, `base_core_slots` (pre-deckmod), arcane count, and constraints.
-- `modifiers.json` → copied verbatim to `web/public/modifiers.json`.
+  geometry, `base_core_slots` (pre-deckmod), arcane count, constraints,
+  and implicit values.
+- `modifiers.json` / `vh_modifiers.json` → per-mode card rosters
+  `web/public/modifiers_wolds.json` / `modifiers_vanilla.json`, each with
+  its `_tagCombos` legal category-set catalog.
 
-The browser fetches these three JSON files at boot. The build script is
+The browser fetches these JSON files at boot. The build script is
 deliberately self-contained (no `import src.config`) so it doesn't trip the
 single-mode loader's argv parsing.
 
@@ -118,20 +122,22 @@ native build (~570 ms vs ~60 ms), which is acceptable for an interactive UI.
 
 ### 3. Svelte + TS glue
 
-The TS modules under `src/lib/` mirror the Python optimizer one-for-one so the
-Rust core's wasm entrypoint and the breakdown re-score agree to ≈1e-6:
+The TS modules under `src/lib/` mirror the kernel math one-for-one so the
+Rust core's wasm entrypoint and the TS re-score agree to ≈1e-6 (the badge):
 
-| Module                                                | Purpose                                                                 |
-|-------------------------------------------------------|-------------------------------------------------------------------------|
-| `lib/config.ts`, `lib/deck.ts`                        | typed loaders for the build-time JSON bundle                            |
-| `lib/types.ts`                                        | `CardType` / `Color` / `CardClass` / `CoreType` — must match Python+Rust|
-| `lib/cores.ts`                                        | candidate-core enumeration (port of `candidate_cores_inventory`)         |
-| `lib/breakdown.ts`                                    | per-slot NDM re-score (port of `simulate_inventory_breakdown`)          |
-| `lib/modifiers.ts`                                    | stat-card classifier (port of `src/modifiers.py`)                       |
-| `lib/preview.ts`                                      | slot-family resolution + Preview-mode aggregation                       |
-| `lib/optimize.ts`                                     | wasm dispatch + per-combo SA loop + cross-check re-score                |
-| `lib/workerClient.ts`, `worker/optimize.worker.ts`    | Promise wrapper around the optimize worker                              |
-| `lib/state.svelte.ts`                                 | central runes-based app state store                                     |
+| Module                                                | Purpose                                                                  |
+|-------------------------------------------------------|--------------------------------------------------------------------------|
+| `lib/config.ts`, `lib/deck.ts`                        | typed loaders for the build-time JSON bundle (per-mode)                  |
+| `lib/types.ts`                                        | `CardType` / `Color` / `CardClass` / `CoreType` — must match Python+Rust |
+| `lib/cores.ts`                                        | per-core math + candidate-core enumeration (override-aware)              |
+| `lib/tagged.ts`, `lib/taggedClient.ts`                | 2.0 payload build + `optimizeTaggedAsync` (candidate × restart fan-out)  |
+| `lib/taggedBreakdown.ts`, `lib/formatBreakdown.ts`    | tagged per-slot re-score mirror + Shift-click popup text                 |
+| `lib/implicits.ts`                                    | deck-implicit catalog → kernel tuples (Mystery pair picker included)     |
+| `lib/modifiers.ts`, `lib/preview.ts`                  | per-mode card roster + Preview-mode card chooser/aggregation             |
+| `lib/breakdown.ts`, `lib/optimize.ts`                 | classic 1.x mirror + slice dispatch — kept as the parity baseline        |
+| `lib/workerPool.ts`, `worker/optimize.worker.ts`      | lazily-spawned worker pool + in-worker wasm calls                        |
+| `lib/structural.ts`                                   | Construction / Arcane structural-core deck mutations                     |
+| `lib/state.svelte.ts`, `lib/snapshots.ts`             | central runes-based app state + saved-run snapshots                      |
 
 ### 4. Optimization flow
 
@@ -139,37 +145,38 @@ Rust core's wasm entrypoint and the breakdown re-score agree to ≈1e-6:
   user clicks Run
        │
        ▼
-  selectedCores() + inventory + deck + class
+  mode supply (Max / Targeted / Exact) + cores + implicits + deck + class
        │
        ▼
-  optimizeInventoryAsync (workerClient.ts)
-       │   postMessage(OptimizeInput)
+  optimizeTaggedAsync (taggedClient.ts)
+       │   candidate core sets × restart chunks → workerPool
        ▼
-  worker: candidateCoresInventory(...) ─── one wasm call per core combo
-       │                                          │
-       │                                          ▼
-       │                                   runSaInventory(payload) → (assignment, score)
+  workers: runSaTagged(payload) → (assignment, score)   (one wasm call per task)
        │
        ▼
   pick best (assignment, score)
        │
        ▼
-  simulateInventoryBreakdown(...) (TS re-score)
+  simulateTaggedBreakdown(...) (TS re-score mirror)
        │
        ▼
-  return { assignment, wasmScore, tsScore, coresUsed, breakdown }
+  result + green ✓ badge when |wasmScore − tsScore| ≤ 1e-6
 ```
 
-The UI shows a green ✓ badge when `|wasmScore − tsScore| ≤ 1e-6`, which
-verifies that the Rust SA kernel and the TS scorer agree.
+The badge verifies that the Rust SA kernel and the TS scorer agree on the
+winning layout's total.
 
-### 5. Two tabs
+### 5. Four tabs
 
-- **Optimize** — pick deck/class/cores/inventory, hit Run, see per-slot NDM
-  on the deck grid; click any slot for the full math breakdown.
+- **Optimize** — pick deck/class/mode/cores/implicits, hit Run, see per-slot
+  NDM on the deck grid; click a slot for a what-if tag editor, Shift-click
+  for the full math breakdown.
 - **Preview** — assign concrete stat cards (and tier) to each scoring slot;
   the right-side panel sums contributions as
   `Σ tier_value × per_slot_NDM` and splits flat vs percent attributes.
+- **Build** — freeform deck-layout builder with modpack-JSON export.
+- **Snapshots** — save/restore full runs (deck, cores, structural build,
+  implicit choices, result).
 
 Assignments survive an Optimize re-run as long as the slot in the new layout
 holds a card of the same family (Shiny / Evo / Deluxe / Typeless); otherwise
@@ -196,13 +203,14 @@ web/
     ├── App.svelte                  ← tabs, layout, dialog dispatch
     ├── components/                 ← presentational Svelte components
     │   ├── DeckGrid.svelte
-    │   ├── InventoryTable.svelte
-    │   ├── CorePicker.svelte
-    │   ├── ModeToggle.svelte
-    │   ├── Legend.svelte
-    │   ├── BreakdownDialog.svelte  ← Optimize-tab popup
+    │   ├── CorePicker.svelte       ← cores + structural-core toggles
+    │   ├── OptimizerSettings.svelte← mode/depth/Complex/min-stat + Run
+    │   ├── MaxReadout.svelte / TargetedPanel.svelte / ExactPanel.svelte
+    │   ├── ImplicitInfo.svelte     ← deck implicit display + on/off
+    │   ├── BreakdownDialog.svelte  ← Shift-click math popup
     │   ├── AssignDialog.svelte     ← Preview-tab popup
-    │   └── StatsPanel.svelte       ← Preview-tab aggregate
+    │   ├── BuilderPanel.svelte     ← Build tab
+    │   └── SnapshotsTab.svelte     ← Snapshots tab
     ├── lib/                        ← pure logic / data layer
     ├── worker/
     │   └── optimize.worker.ts
@@ -220,9 +228,9 @@ web/
 - **`Failed to fetch ndm_core_bg.wasm`** — you forgot step 2, or `web/src/wasm/`
   was wiped. Re-run the `wasm-pack build …` command.
 - **WASM/TS verification badge is red** — the Rust SA produced a layout that
-  the TS scorer disagrees with. This means a real divergence between
-  `ndm_core/src/inventory.rs` and `web/src/lib/breakdown.ts` (or the
-  candidate-cores enumerator). File an issue with the deck name + selected
-  cores + inventory so it can be reproduced.
+  the TS scorer disagrees with. This means a real divergence between the
+  tagged kernel (`ndm_core/src/tagsim.rs`) and its TS mirror
+  (`web/src/lib/taggedBreakdown.ts` + `cores.ts`). File an issue with the
+  deck name + mode + selected cores so it can be reproduced.
 - **Stuck on "Optimizing…"** — open DevTools → Console to see the worker's
   error; common cause is an empty inventory.
