@@ -1033,3 +1033,24 @@ card reality. The CLI reads the same per-mode file via
   heatmap (`report.py`), TS `cores.ts::archiveCoreMult` (= `base^n`) with
   both breakdown mirrors pushing Archive into the applied-cores stack, and
   the popup text (`formatBreakdown.ts`).
+
+### Balance-settings cycle log (2026-07-30)
+
+- The balance sheet (`scripts/implicit_impact.py`) now renders a **second
+  sheet** under the leaderboard: the *balance settings — cycle log* — every
+  core value, deck implicit, greed multiplier, stacking flag, and structural
+  set that produced the run's numbers, plus the DeckFAST commit and mode.
+- The snapshot is captured by the collect pass itself (same process, same
+  argv gates that scored the decks), so it can never drift from the
+  leaderboard it accompanies.
+- **Invariant: the cycle log is regenerated on EVERY sheet run and must
+  always ship with the leaderboard — that is what keeps balance data
+  trackable across cycles. Never hand-edit it; rerun the sheet instead.**
+  (`--table-only` re-renders from the stored JSON and warns if the snapshot
+  is missing from an old collect file.)
+- 2026-07-30 upstream sync check (pack `f7cef746`, wv `38b93dcf`): the
+  update ships the additive Archive + retuned implicits already modeled; the
+  new pack config `implicit_deck_modifiers.json` is the deck→implicit *map*
+  only (values unchanged, matches `decks/wolds_implicits.json`), and the
+  `MixinCardDeck` socket-count change is tooltip-display only. No value
+  changes required.

@@ -52,7 +52,7 @@ Layout-grid legend: `R`/`C`/`S`/`X` = row/col/surround/diagonal scaling cards, `
 
 ### Other scripts
 
-- `uv run python scripts/implicit_impact.py` — one-pass balance leaderboard (screenshot-ready HTML + markdown); `--compare` runs the implicit on/off diff instead.
+- `uv run python scripts/implicit_impact.py` — one-pass balance leaderboard (screenshot-ready HTML + markdown) plus a second **balance-settings cycle-log sheet** (every core / implicit / greed / structural value that produced the numbers). The log is regenerated from live config on every run and must always accompany the leaderboard so balance cycles stay trackable — never hand-edit it. `--compare` runs the implicit on/off diff instead.
 - `uv run python scripts/parity_2_0.py --fast` — validation gate: proves the Python reference and both Rust kernels score identically.
 
 ## Repo layout

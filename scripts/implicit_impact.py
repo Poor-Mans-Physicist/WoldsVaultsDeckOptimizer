@@ -7,6 +7,13 @@ balance regime — implicits on + the selected structural-core layouts
 two-column, screenshot-ready HTML leaderboard sorted by NDM (plus markdown
 + console).
 
+The HTML/markdown output carries a SECOND sheet: the "balance settings —
+cycle log" (every core value, implicit, greed multiplier, and structural
+set that produced the numbers). It is captured by the collect pass itself
+and REGENERATED ON EVERY RUN — it must always ship alongside the
+leaderboard so each balance cycle stays trackable. Never hand-edit it;
+rerun the sheet instead.
+
 `--compare`: the older mode — two passes (with / without implicits) and a
 diff table.
 
@@ -71,6 +78,86 @@ def _collect_worker(args):
     return deck.key, deck.name, out
 
 
+def _settings_snapshot(config) -> dict:
+    """Full balance-input dump for the settings sheet — captured by the SAME
+    process (and argv gates) that ran the optimization, so the logged values
+    are exactly what scored the leaderboard. Regenerated on every run; never
+    hand-edit (the sheet must stay trackable per balance cycle)."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=_REPO,
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip() or "?"
+    except Exception:
+        commit = "?"
+
+    cores = {
+        "Pure":        {"value": f"base {config.MULT_PURE_BASE} + {config.MULT_PURE_SCALE}/non-shiny card",
+                        "note": "scales with n_ns (greed + arcane + non-foil positionals)"},
+        "Equilibrium": {"value": f"{config.MULT_EQUILIBRIUM}", "note": "Shiny-only flat"},
+        "Steadfast":   {"value": f"{config.MULT_STEADFAST}", "note": "Shiny-only flat"},
+        "Sparkling":   {"value": f"{config.MULT_SPARKLING}",
+                        "note": "Shiny-only flat" + ("" if config.ALLOW_SPARKLING else " (DISABLED)")},
+        "Shiny (foil)": {"value": f"{config.MULT_FOIL}",
+                         "note": "flat; also flips EVO n_ns to the greed+arcane formula"},
+        "Color":       {"value": f"{config.MULT_COLOR}", "note": "flat, matching-color cards"},
+        "Deluxe Core": {"value": f"base {config.MULT_DELUXE_CORE_BASE} + {config.MULT_DELUXE_CORE_SCALE}/deluxe card",
+                        "note": ("never boosts deluxe cards themselves"
+                                 + ("" if config.ALLOW_DELUXE else " (DISABLED)"))},
+        "Deluxe card": {"value": f"{config.MULT_DELUXE_FLAT}", "note": "flat base value of a deluxe card"},
+        "Void":        {"value": f"base {config.MULT_VOID_CORE_BASE} + {config.MULT_VOID_CORE_SCALE}/dead card",
+                        "note": "" if config.ALLOW_VOID else "(DISABLED)"},
+        "Archive":     {"value": f"base {config.MULT_ARCHIVE_CORE}",
+                        "note": ("per-card stack term (1+v)^n_arcane, ADDITIVE with the "
+                                 "other cores (wv aa5e7b39); runic is the only whole-card "
+                                 "multiplier" + ("" if config.ALLOW_ARCHIVE else " (DISABLED)"))},
+    }
+    greeds = {
+        "dir vert": config.MULT_DIR_GREED_VERT,
+        "dir horiz": config.MULT_DIR_GREED_HORIZ,
+        "dir diag up": config.MULT_DIR_GREED_DIAG_UP,
+        "dir diag down": config.MULT_DIR_GREED_DIAG_DOWN,
+        "evo greed": config.MULT_EVO_GREED,
+        "surr greed": config.MULT_SURR_GREED,
+    }
+
+    imp_path = _REPO / "decks" / "wolds_implicits.json"
+    implicits_raw: dict = {}
+    implicits_src = ""
+    if imp_path.is_file():
+        blob = json.loads(imp_path.read_text(encoding="utf-8")) or {}
+        implicits_raw = blob.get("implicits") or {}
+        implicits_src = blob.get("_source", "")
+
+    structural: dict = {}
+    if config.STRUCTURAL_INCLUDE:
+        for deck in config.DECKS:
+            if deck.key in config.STRUCTURAL_IMPLICITS or deck.key in ("wold", "fairy", "mystery"):
+                forced = config.STRUCTURAL_IMPLICITS.get(deck.key) or []
+                structural[deck.key] = {
+                    "name": deck.name,
+                    "slots": len(deck.slots),
+                    "arcane": len(deck.arcane_slots),
+                    "core_slots_after": deck.core_slots,
+                    "forced_implicits": forced,
+                }
+
+    return {
+        "commit": commit,
+        "mode": config.MODE,
+        "engine": str(config._CFG.get("engine", "tagged")),
+        "stacking": {"additive_cores": config.ADDITIVE_CORES,
+                     "greed_additive": config.GREED_ADDITIVE},
+        "implicits_enabled": config.IMPLICITS_ENABLED,
+        "structural_enabled": config.STRUCTURAL_INCLUDE,
+        "cores": cores,
+        "greeds": greeds,
+        "implicits": implicits_raw,
+        "implicits_source": implicits_src,
+        "structural": structural,
+    }
+
+
 def collect(out_path: Path) -> None:
     from src import config
     from src.config import DECKS
@@ -95,6 +182,7 @@ def collect(out_path: Path) -> None:
         "mode": config.MODE,
         "n_iter": n_iter,
         "restarts": restarts,
+        "settings": _settings_snapshot(config),
         "decks": {key: {"name": name, "classes": classes} for key, name, classes in raw},
     }
     out_path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
@@ -234,9 +322,138 @@ gameplay-only implicits (Villager / Extended / Arcane / Relic) have no NDM effec
     print(f"\n[implicit_impact] wrote {_OUT_MD.name} + {_OUT_HTML.name}")
 
 
+def _settings_md(s: dict, stamp: str) -> list[str]:
+    """Sheet 2 (markdown): the balance-input log for this cycle."""
+    if not s:
+        return []
+    out = [
+        "",
+        "---",
+        "",
+        f"## Balance settings — cycle log ({stamp})",
+        "",
+        f"Captured from the live config by the run itself (DeckFAST commit "
+        f"`{s.get('commit', '?')}`, mode `{s.get('mode')}`, engine "
+        f"`{s.get('engine')}`). **This log is regenerated on every sheet run — "
+        f"it must always ship alongside the leaderboard so each balance cycle "
+        f"stays trackable. Never hand-edit it.**",
+        "",
+        "### Cores",
+        "",
+        "| Core | Value | Notes |",
+        "| --- | --- | --- |",
+    ]
+    for name, c in s.get("cores", {}).items():
+        out.append(f"| {name} | {c['value']} | {c['note']} |")
+    out += [
+        "",
+        "### Greed multipliers & stacking",
+        "",
+        "| Greed | Mult |",
+        "| --- | ---: |",
+    ]
+    for k, v in s.get("greeds", {}).items():
+        out.append(f"| {k} | ×{v} |")
+    st = s.get("stacking", {})
+    out += [
+        "",
+        f"Stacking: cores {'additive' if st.get('additive_cores') else 'multiplicative'}, "
+        f"greeds {'additive' if st.get('greed_additive') else 'multiplicative'}; "
+        f"implicits {'ON' if s.get('implicits_enabled') else 'OFF'}; "
+        f"structural builds {'ON' if s.get('structural_enabled') else 'OFF'}.",
+        "",
+        "### Deck implicits",
+        "",
+        "| Deck key | Implicit | Kind | Value | Effect |",
+        "| --- | --- | --- | ---: | --- |",
+    ]
+    for key in sorted(s.get("implicits", {})):
+        m = s["implicits"][key]
+        out.append(f"| {key} | {m.get('name', '—')} | {m.get('kind', '')} "
+                   f"| {m.get('value', '')} | {(m.get('desc') or '').strip()} |")
+    if s.get("implicits_source"):
+        out += ["", f"Implicit source: {s['implicits_source']}"]
+    if s.get("structural"):
+        out += [
+            "",
+            "### Structural balance builds",
+            "",
+            "| Deck | Slots | Arcane | Core budget after | Forced implicits |",
+            "| --- | ---: | ---: | ---: | --- |",
+        ]
+        for key, d in s["structural"].items():
+            forced = ", ".join(d["forced_implicits"]) or "—"
+            out.append(f"| {d['name']} | {d['slots']} | {d['arcane']} "
+                       f"| {d['core_slots_after']} | {forced} |")
+    return out
+
+
+def _settings_html(s: dict, stamp: str) -> str:
+    """Sheet 2 (HTML): the balance-input log rendered under the leaderboard."""
+    if not s:
+        return ""
+    core_rows = "".join(
+        f"<tr><td class='deck'>{n}</td><td>{c['value']}</td>"
+        f"<td class='note'>{c['note']}</td></tr>"
+        for n, c in s.get("cores", {}).items()
+    )
+    greed_rows = "".join(
+        f"<tr><td class='deck'>{k}</td><td class='num plain'>×{v}</td></tr>"
+        for k, v in s.get("greeds", {}).items()
+    )
+    imp_rows = "".join(
+        f"<tr><td class='deck'>{k}</td><td>{m.get('name', '—')}</td>"
+        f"<td>{m.get('kind', '')}</td><td class='num plain'>{m.get('value', '')}</td>"
+        f"<td class='note'>{(m.get('desc') or '').strip()}</td></tr>"
+        for k, m in sorted(s.get("implicits", {}).items())
+    )
+    struct_rows = "".join(
+        f"<tr><td class='deck'>{d['name']}</td><td class='num plain'>{d['slots']}</td>"
+        f"<td class='num plain'>{d['arcane']}</td>"
+        f"<td class='num plain'>{d['core_slots_after']}</td>"
+        f"<td>{', '.join(d['forced_implicits']) or '—'}</td></tr>"
+        for d in s.get("structural", {}).values()
+    )
+    st = s.get("stacking", {})
+    struct_table = ("" if not struct_rows else f"""
+<h3>Structural balance builds</h3>
+<table class="set"><tr><th>Deck</th><th class="num">Slots</th><th class="num">Arcane</th>
+<th class="num">Core budget after</th><th>Forced implicits</th></tr>{struct_rows}</table>""")
+    return f"""
+<div class="sect">
+<h1>Balance settings — cycle log</h1>
+<div class="sub"><strong>Regenerated from the live config on every sheet run</strong> — this log must
+always ship alongside the leaderboard above so each balance cycle stays trackable (never hand-edit).
+DeckFAST commit <code>{s.get('commit', '?')}</code> · mode <code>{s.get('mode')}</code> ·
+engine <code>{s.get('engine')}</code> · cores {'additive' if st.get('additive_cores') else 'multiplicative'} ·
+greeds {'additive' if st.get('greed_additive') else 'multiplicative'} ·
+implicits {'ON' if s.get('implicits_enabled') else 'OFF'} ·
+structural builds {'ON' if s.get('structural_enabled') else 'OFF'} · {stamp}</div>
+<div class="setcols">
+<div>
+<h3>Cores</h3>
+<table class="set"><tr><th>Core</th><th>Value</th><th>Notes</th></tr>{core_rows}</table>
+<h3>Greed multipliers</h3>
+<table class="set greed"><tr><th>Greed</th><th class="num">Mult</th></tr>{greed_rows}</table>
+{struct_table}
+</div>
+<div>
+<h3>Deck implicits</h3>
+<table class="set"><tr><th>Deck</th><th>Implicit</th><th>Kind</th><th class="num">Value</th>
+<th>Effect</th></tr>{imp_rows}</table>
+</div>
+</div>
+<div class="foot">Sources: <code>config.yaml</code> · <code>decks/wolds_implicits.json</code> ·
+<code>decks/structural_layouts.json</code>. Implicit provenance: {s.get('implicits_source') or '—'}</div>
+</div>"""
+
+
 def build_sheet() -> None:
     """Single-run balance leaderboard: two side-by-side columns sorted by
-    NDM (highest first), no comparisons — for Discord screenshots."""
+    NDM (highest first), no comparisons — for Discord screenshots. A second
+    sheet below logs every balance input (cores / implicits / greeds /
+    structural sets) for the cycle — regenerated on every run so balance
+    data stays trackable."""
     data = json.loads(_OUT_BALANCE.read_text(encoding="utf-8"))
     meta = _implicit_meta()
 
@@ -261,6 +478,11 @@ def build_sheet() -> None:
         data["decks"][k]["name"] for k in ("wold", "fairy", "mystery")
         if k in data["decks"]
     )
+    settings = data.get("settings") or {}
+    if not settings:
+        print("[implicit_impact] WARN: no settings snapshot in the balance JSON "
+              "(old collect run?) — the cycle-log sheet will be missing. Re-run "
+              "without --table-only to regenerate it.", file=sys.stderr)
 
     # — markdown —
     md = [
@@ -277,6 +499,7 @@ def build_sheet() -> None:
     ]
     for i, r in enumerate(rows, 1):
         md.append(f"| {i} | {r['name']} | {r['implicit']} | {r['score']:,.1f} ({r['cls']}) |")
+    md += _settings_md(settings, stamp)
     _OUT_MD.write_text("\n".join(md) + "\n", encoding="utf-8")
 
     # — screenshot-ready HTML: two side-by-side columns —
@@ -314,7 +537,19 @@ def build_sheet() -> None:
   .imp {{ display:block; font-weight:400; font-size:11px; color:#8B93A7; }}
   .cls {{ font-size:9px; color:#6B7280; margin-left:4px; vertical-align:super; }}
   td.num {{ color:#93C5FD; font-weight:600; }}
+  td.num.plain {{ color:#E5E7EB; font-weight:400; }}
   .foot {{ color:#6B7280; font-size:11px; margin-top:12px; line-height:1.5; }}
+  /* Sheet 2 — balance-settings cycle log. */
+  .sect {{ margin-top:40px; padding-top:22px; border-top:2px solid #374151; }}
+  .sect h3 {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em;
+             color:#9CA3AF; margin:16px 0 6px; }}
+  .setcols {{ display:flex; gap:26px; align-items:flex-start; }}
+  .setcols > div {{ flex:1; min-width:0; }}
+  table.set {{ width:100%; font-size:12px; }}
+  table.set td {{ padding:4px 8px; }}
+  table.set.greed {{ width:auto; min-width:220px; }}
+  .note {{ color:#8B93A7; font-size:11px; }}
+  code {{ background:#141821; padding:1px 5px; border-radius:3px; font-size:11px; }}
 </style></head><body><div class="wrap">
 <h1>Wold's Vaults — deck NDM balance sheet</h1>
 <div class="sub">Optimizer&nbsp;2.0 spreadsheet engine · current balance: deck implicits on
@@ -329,7 +564,8 @@ search budget {budget} · best-roll cores · {stamp}</div>
 </div>
 <div class="foot">Mystery is scored with its chosen runic&nbsp;+&nbsp;bishop implicit pair on the
 structural (greater Construction) build. Gameplay-only implicits (Villager / Extended / Arcane / Relic)
-have no NDM effect by design. DeckFAST · github.io/woldsvaultsdeckoptimizer</div>
+have no NDM effect by design. DeckFAST · github.io/WoldsVaultsDeckOptimizer</div>
+{_settings_html(settings, stamp)}
 </div></body></html>
 """
     _OUT_HTML.write_text(html, encoding="utf-8")
