@@ -88,6 +88,12 @@ def _settings_snapshot(config) -> dict:
             ["git", "rev-parse", "--short", "HEAD"], cwd=_REPO,
             capture_output=True, text=True, timeout=10,
         ).stdout.strip() or "?"
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=_REPO,
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        if dirty:
+            commit += "-dirty"
     except Exception:
         commit = "?"
 

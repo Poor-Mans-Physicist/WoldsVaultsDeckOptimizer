@@ -43,9 +43,13 @@ cards:
 implicits:
   enabled: true
 
+# Cardinal greeds = the BEST in-game roll: Wold's greed cards all carry the
+# multiplierPool [t1 ×3, t2 ×4, t3 ×5] (pack config/the_vault/card/
+# modifiers.json), so tier-3 max = 5. The old 4 was a 2026-06-15 playtest
+# calibration (DeckFAST 6867a78), not a game value — corrected 2026-07-30.
 greed:
-  dir_vert:      4
-  dir_horiz:     4
+  dir_vert:      5
+  dir_horiz:     5
   evo:           0    # set > 0 to enable
   surr:          0    # set > 0 to enable
   dir_diag_up:   0    # NE / NW diagonal greed
@@ -189,6 +193,15 @@ modes:
       pure_scale:  0.05   # base 0.02–0.05; greater 0.3–0.5 treated as a bug
     stacking:
       additive_cores: false
+    # Vanilla's greed cards are a DIFFERENT family with much lower rolls
+    # (vh_modifiers.json: stat-targeting directional greeds max ×2.5, evo
+    # greed max ×3, surrounding max ×1.75 — and they gate on the target's
+    # class, which the kernel doesn't model yet). Pinned at the legacy 4 so
+    # the Wold's-side correction to 5 doesn't silently shift vanilla numbers;
+    # a proper vanilla greed pass is a separate piece of work.
+    greed:
+      dir_vert:  4
+      dir_horiz: 4
     shiny:
       positional: false
     decks:
