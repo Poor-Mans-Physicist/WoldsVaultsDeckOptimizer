@@ -65,12 +65,13 @@ export function formatBreakdown(pos: Position, b: SlotBreakdown): string {
     out.push("");
   }
 
-  // Greed
+  // Greed. Each greed contributes an ADDITIVE bonus (game: ×(1 + Σ bonus)),
+  // so per-source lines print +x% and only the total is a ×.
   out.push("Boost (greed):");
   if (b.boostSources.length === 0) out.push("  (no greed targeting this slot)");
   for (const s of b.boostSources) {
     out.push(
-      `  • ${(s.greedType as string).padEnd(14)} from (${s.fromPosition[0]},${s.fromPosition[1]}) → ×${s.multiplier.toFixed(3)}`,
+      `  • ${(s.greedType as string).padEnd(14)} from (${s.fromPosition[0]},${s.fromPosition[1]}) → +${(s.multiplier * 100).toFixed(0)}%`,
     );
   }
   out.push(`  → boost = ×${b.boost.toFixed(3)}`);

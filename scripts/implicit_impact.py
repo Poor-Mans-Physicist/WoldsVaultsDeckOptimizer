@@ -353,13 +353,17 @@ def _settings_md(s: dict, stamp: str) -> list[str]:
         out.append(f"| {name} | {c['value']} | {c['note']} |")
     out += [
         "",
-        "### Greed multipliers & stacking",
+        "### Greed bonuses & stacking",
         "",
-        "| Greed | Mult |",
+        "Greeds are additive bonuses: the target card is worth "
+        "×(1 + Σ bonuses). A best-roll tier-3 greed card (in-game \"×5\") "
+        "contributes **+400%**.",
+        "",
+        "| Greed | Bonus |",
         "| --- | ---: |",
     ]
     for k, v in s.get("greeds", {}).items():
-        out.append(f"| {k} | ×{v} |")
+        out.append(f"| {k} | {'+' + format(v * 100, 'g') + '%' if v > 0 else 'off'} |")
     st = s.get("stacking", {})
     out += [
         "",
@@ -404,7 +408,8 @@ def _settings_html(s: dict, stamp: str) -> str:
         for n, c in s.get("cores", {}).items()
     )
     greed_rows = "".join(
-        f"<tr><td class='deck'>{k}</td><td class='num plain'>×{v}</td></tr>"
+        f"<tr><td class='deck'>{k}</td>"
+        f"<td class='num plain'>{'+' + format(v * 100, 'g') + '%' if v > 0 else 'off'}</td></tr>"
         for k, v in s.get("greeds", {}).items()
     )
     imp_rows = "".join(
@@ -439,8 +444,10 @@ structural builds {'ON' if s.get('structural_enabled') else 'OFF'} · {stamp}</d
 <div>
 <h3>Cores</h3>
 <table class="set"><tr><th>Core</th><th>Value</th><th>Notes</th></tr>{core_rows}</table>
-<h3>Greed multipliers</h3>
-<table class="set greed"><tr><th>Greed</th><th class="num">Mult</th></tr>{greed_rows}</table>
+<h3>Greed bonuses</h3>
+<div class="note" style="margin-bottom:4px">Additive: target ×(1 + Σ bonuses). A best-roll tier-3
+greed card (in-game “×5”) contributes +400%.</div>
+<table class="set greed"><tr><th>Greed</th><th class="num">Bonus</th></tr>{greed_rows}</table>
 {struct_table}
 </div>
 <div>

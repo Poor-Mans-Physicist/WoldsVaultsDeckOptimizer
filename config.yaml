@@ -43,13 +43,15 @@ cards:
 implicits:
   enabled: true
 
-# Cardinal greeds = the BEST in-game roll: Wold's greed cards all carry the
-# multiplierPool [t1 ×3, t2 ×4, t3 ×5] (pack config/the_vault/card/
-# modifiers.json), so tier-3 max = 5. The old 4 was a 2026-06-15 playtest
-# calibration (DeckFAST 6867a78), not a game value — corrected 2026-07-30.
+# Greed values are ADDITIVE BONUSES (+x), not standalone multipliers. The
+# game (base the_vault CardDeck.getGreedMultiplier, audited 2026-07-31)
+# computes target ×(1 + Σ(roll − 1)) — each greed contributes its roll
+# minus one. Wold's greed cards roll [t1 ×3, t2 ×4, t3 ×5] (pack
+# config/the_vault/card/modifiers.json), so a best-roll tier-3 card
+# contributes +4 = +400%. Enter the ADDEND here: 4, not 5.
 greed:
-  dir_vert:      5
-  dir_horiz:     5
+  dir_vert:      4    # +400% per greed (in-game "×5" tier-3 card)
+  dir_horiz:     4    # +400% per greed (in-game "×5" tier-3 card)
   evo:           0    # set > 0 to enable
   surr:          0    # set > 0 to enable
   dir_diag_up:   0    # NE / NW diagonal greed
@@ -193,12 +195,13 @@ modes:
       pure_scale:  0.05   # base 0.02–0.05; greater 0.3–0.5 treated as a bug
     stacking:
       additive_cores: false
-    # Vanilla's greed cards are a DIFFERENT family with much lower rolls
-    # (vh_modifiers.json: stat-targeting directional greeds max ×2.5, evo
-    # greed max ×3, surrounding max ×1.75 — and they gate on the target's
-    # class, which the kernel doesn't model yet). Pinned at the legacy 4 so
-    # the Wold's-side correction to 5 doesn't silently shift vanilla numbers;
-    # a proper vanilla greed pass is a separate piece of work.
+    # Vanilla ships a DIFFERENT greed family (vh_modifiers.json, from the
+    # stock VH 3.21.1 instance): group-gated directional greeds max ×2.5
+    # (addend +1.5), evo greed ×3 (+2), surrounding ×1.75 (+0.75). Under the
+    # same base-game 1+Σ(roll−1) formula their correct addends are far below
+    # 4 — but the kernel doesn't model their group/class targeting either,
+    # so this stays pinned at the legacy 4 until a dedicated vanilla greed
+    # pass. Deliberately NOT calibrated (user call, 2026-07-31).
     greed:
       dir_vert:  4
       dir_horiz: 4

@@ -140,10 +140,10 @@ greed cards are skipped.
 
 | Card type           | Target slot relative to greed (r, c)       | Multiplier source       | Default value | Notes                                                                                                         |
 | ------------------- | ------------------------------------------ | ----------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
-| `DIR_GREED_UP`    | `(r-1, c)` directly above                | `greed.dir_vert`      | **5**   | Wold's game max (tier-3 roll); vanilla mode pins 4 (see addendum)                                             |
-| `DIR_GREED_DOWN`  | `(r+1, c)` directly below                | `greed.dir_vert`      | **5**   |                                                                                                               |
-| `DIR_GREED_LEFT`  | `(r, c-1)` directly left                 | `greed.dir_horiz`     | **5**   |                                                                                                               |
-| `DIR_GREED_RIGHT` | `(r, c+1)` directly right                | `greed.dir_horiz`     | **5**   |                                                                                                               |
+| `DIR_GREED_UP`    | `(r-1, c)` directly above                | `greed.dir_vert`      | **4** (+400%) | Config = the ADDITIVE BONUS per greed, i.e. roll − 1 (an in-game "×5" tier-3 card = +400%; see the 2026-07-31 audit addendum) |
+| `DIR_GREED_DOWN`  | `(r+1, c)` directly below                | `greed.dir_vert`      | **4** (+400%) |                                                                                                               |
+| `DIR_GREED_LEFT`  | `(r, c-1)` directly left                 | `greed.dir_horiz`     | **4** (+400%) |                                                                                                               |
+| `DIR_GREED_RIGHT` | `(r, c+1)` directly right                | `greed.dir_horiz`     | **4** (+400%) |                                                                                                               |
 | `DIR_GREED_NE`    | `(r-1, c+1)`                             | `greed.dir_diag_up`   | **0**   | Diagonal greeds are inert at default 0                                                                        |
 | `DIR_GREED_NW`    | `(r-1, c-1)`                             | `greed.dir_diag_up`   | **0**   |                                                                                                               |
 | `DIR_GREED_SE`    | `(r+1, c+1)`                             | `greed.dir_diag_down` | **0**   |                                                                                                               |
@@ -160,15 +160,16 @@ Controlled by `stacking.greed_additive` (default **true** in both modes).
   `1.0 + Σ amount_i` over all greeds hitting the slot — so a no-greed
   slot stays at a neutral 1× and every greed adds on top of that base
   rather than replacing it.
-  Worked examples (default `dir_vert: 5`):
+  Worked examples (default `dir_vert: 4` = +400%; matches the in-game
+  `1 + Σ(roll − 1)` with tier-3 ×5 cards):
 
   | Greeds pointing at slot | Final boost |
   | --- | --- |
   | 0                            | 1   |
-  | 1× dir_vert                  | 6   |
-  | 2× dir_vert                  | 11  |
-  | 3× dir_vert                  | 16  |
-  | 1× dir_vert + 1× surr_greed at 3 | 9 |
+  | 1× dir_vert                  | 5   |
+  | 2× dir_vert                  | 9   |
+  | 3× dir_vert                  | 13  |
+  | 1× dir_vert + 1× surr_greed at 3 | 8 |
 
 - **Multiplicative** (`false`): each greed multiplies the running boost
   starting from 1.0. Final boost = `Π amount_i`. **Not clamped** — if any
@@ -1055,22 +1056,44 @@ card reality. The CLI reads the same per-mode file via
   `MixinCardDeck` socket-count change is tooltip-display only. No value
   changes required.
 
-### Cardinal greeds corrected 4 → 5 (2026-07-30)
+### Cardinal greed semantics settled by decompile audit: config = +% ADDEND (2026-07-31)
 
-- Every Wold's greed card carries the same multiplier pool
-  `[t1 ×3, t2 ×4, t3 ×5]` (pack `config/the_vault/card/modifiers.json`,
-  all 16 `greed_*` entries, `maxTier: 3`) — so under the optimizer's
-  best-possible-roll premise the cardinal greed value is **5**, not 4.
-- The old **4** was NOT a game value: DeckFAST commit `6867a78`
-  (2026-06-15, pre-2.0) reverted 5 → 4 as a playtest calibration. No
-  game-side greed nerf ever existed.
-- Truthfulness check before the fix (the cycle-log sheet said ×4): a
-  micro-score proved the kernel consumed exactly 4 (one DIR greed boost =
-  ×5 = 1+4), and Large Deck's optimum reproduced the sheet's 932.0 —
-  the log matched the machine. After the fix the same probes read ×6 = 1+5.
-- **Vanilla mode pins `greed: dir_vert/horiz: 4`** (status quo): vanilla's
-  greed cards are a different, weaker family (`vh_modifiers.json`:
-  stat-targeting directional greeds max ×2.5, evo greed max ×3,
-  surrounding ×1.75, all class/target-gated in ways the kernel doesn't
-  model). A correct vanilla greed pass is separate future work; pinning
-  keeps the Wold's correction from silently shifting vanilla numbers.
+- **The config greed value is the additive bonus each greed contributes
+  (roll − 1), not the card's face multiplier.** Correct Wold's value:
+  **4 = +400%** per cardinal greed. A short-lived 2026-07-30 change to 5
+  misread the card's "×5" face value as the addend and inflated every
+  greed-using deck ~20% — reverted same/next day after a source audit.
+- Ground truth (decompiled base `the_vault-1.18.2-3.21.5.6573` — the
+  exact jar the pack pins; audited 2026-07-31):
+  `CardDeck.getGreedMultiplier` computes
+  `bonus += greedValue − 1.0f` per matching greed and returns
+  `1.0f + bonus` — i.e. **target ×(1 + Σ(roll − 1))**. One tier-3 "×5"
+  card ⇒ target ×5 (bonus +4 = +400%); three ⇒ ×13 (1+4+4+4, the exact
+  arithmetic in DeckFAST commit `6867a78`, which had calibrated this
+  correctly back in June). The factor multiplies the card's whole value:
+  `totalMultiplier = modifierValue × greedMultiplier` in
+  `CardDeck.getSnapshotAttributes`, after scaler frequency.
+- The woldsvaults addon (0.32.3 / origin/master `38b93dcf`) was swept
+  mixin-by-mixin: **nothing touches greed math** (no reference to
+  `GreedCardModifier` / `getGreedMultiplier` anywhere). Greed additivity
+  is base-mod behavior; the addon's "additive" rework (`MixinCardDeck`)
+  covers deck modifiers (cores + implicits) only.
+- Presentation rule from this audit: greed values are always written as
+  **+x%** (+400%) in the cycle-log sheet, this doc, and config comments,
+  so the addend is never again confused with the in-game face multiplier.
+- Side findings (recorded, not modeled): greeds gate on the TARGET card's
+  colors/groups (`targetColorFilter`/`targetGroupFilter` in
+  `GreedCardModifier.getGreedMultiplier`) — inert under Max's mono-color
+  premise, a small kernel gap under colors-real modes. Two frequency-type
+  deck cores on the SAME neighbor-type would SUM in-game
+  (`MixinCardScaler` adds `round(value)`s before multiplying once) where
+  the kernel multiplies — currently impossible (rook/bishop/pillager use
+  disjoint types).
+- **Vanilla mode pins `greed: dir_vert/horiz: 4`** (status quo, user
+  call): vanilla VH ships its own weaker greed family
+  (`vh_modifiers.json` from the stock VH 3.21.1 instance: group-gated
+  directional greeds max ×2.5 ⇒ addend +1.5, evo greed ×3 ⇒ +2,
+  surrounding ×1.75 ⇒ +0.75). Under the same base formula its correct
+  addends are far below 4, but the kernel doesn't model their
+  group/class targeting either — a dedicated vanilla greed pass is
+  future work.
