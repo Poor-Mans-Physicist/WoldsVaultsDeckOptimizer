@@ -885,3 +885,123 @@ fn ndm_core(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tagsim_py::score_tagged, m)?)?;
     Ok(())
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// SA kernel micro-benchmark (ignored; run explicitly with --nocapture).
+// Lives here (not tagsim.rs) so an A/B via path-limited stash of tagsim.rs
+// keeps the harness identical on both sides.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod sa_bench {
+    use crate::tagsim::*;
+    use std::time::Instant;
+
+    fn peers(slots: &[(i32, i32)])
+        -> (Vec<Vec<usize>>, Vec<Vec<usize>>, Vec<Vec<usize>>, Vec<Vec<usize>>)
+    {
+        let n = slots.len();
+        let mut row = vec![Vec::new(); n];
+        let mut col = vec![Vec::new(); n];
+        let mut surr = vec![Vec::new(); n];
+        let mut diag = vec![Vec::new(); n];
+        for i in 0..n {
+            for j in 0..n {
+                if i == j { continue; }
+                let (r1, c1) = slots[i];
+                let (r2, c2) = slots[j];
+                if r1 == r2 { row[i].push(j); }
+                if c1 == c2 { col[i].push(j); }
+                if (r1 - r2).abs() <= 1 && (c1 - c2).abs() <= 1 { surr[i].push(j); }
+                if (r1 - r2).abs() == (c1 - c2).abs() { diag[i].push(j); }
+            }
+        }
+        (row, col, surr, diag)
+    }
+
+    fn bench_cores(label: &str, core_types: &[u8], implicits: Vec<Implicit>) {
+        let slots: Vec<(i32, i32)> = (0..4i32)
+            .flat_map(|r| (0..8i32).map(move |c| (r, c)))
+            .collect();
+        let (row_peers, col_peers, surr_peers, diag_peers) = peers(&slots);
+        let stack_types = [
+            T_ROW, T_COL, T_SURR, T_DIAG, T_TYPELESS, T_DELUXE,
+            T_G_UP, T_G_DOWN, T_G_LEFT, T_G_RIGHT, T_ARCANE,
+        ];
+        let stacks: Vec<CardSpec> = stack_types.iter().map(|&t| CardSpec {
+            t, color: RED, scale: RED, groups: 0,
+            count: u32::MAX, min_place: 0,
+        }).collect();
+        let cores: Vec<CoreSpecIn> = core_types.iter().map(|&ct| CoreSpecIn {
+            core_type: ct,
+            color: if ct == CORE_COLOR { RED } else { COLOR_NONE },
+            override_: -1.0,
+        }).collect();
+        const N_ITER: usize = 400_000;
+        let run = TagRun {
+            slots: &slots,
+            row_peers, col_peers, surr_peers, diag_peers,
+            arcane_slot_indices: vec![3, 28],
+            stacks,
+            tag_rules: Vec::new(),
+            blanket_groups: 0,
+            assignable_groups: 0,
+            legal_combos: Vec::new(),
+            implicits,
+            cores,
+            min_stat_placed: 0,
+            final_pass_nonfoil_evo: false,
+            exact_groups: false,
+            n_iter: N_ITER,
+            restarts: 1,
+            seed: Some(42),
+            cfg: TagSimConfig {
+                mult_dir_vert: 4.0,
+                mult_dir_horiz: 4.0,
+                mult_pure_base: 1.0,
+                mult_pure_scale: 0.05,
+                mult_equilibrium: 1.25,
+                mult_foil: 2.0,
+                mult_steadfast: 1.2,
+                mult_sparkling: 1.6,
+                mult_color: 1.5,
+                mult_deluxe_flat: 3.0,
+                mult_deluxe_core_base: 1.0,
+                mult_deluxe_core_scale: 0.1,
+                mult_void_core_base: 1.0,
+                mult_void_core_scale: 0.15,
+                mult_archive_core: 1.1,
+                greed_additive: true,
+                additive_cores: true,
+                is_shiny: true,
+                auto_place_arcane: true,
+                colors_real: false,
+                complex: false,
+                wv_foil_rules: true,
+                floor_counts_deluxe: false,
+            },
+        };
+        let t0 = Instant::now();
+        let (_asgn, score) = run_sa_tagged(run);
+        let el = t0.elapsed();
+        println!(
+            "BENCH {label}: {:.1} ms  ({:.0} ns/iter)  score={score:.3}",
+            el.as_secs_f64() * 1e3,
+            el.as_secs_f64() * 1e9 / N_ITER as f64,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_sa() {
+        for round in 0..3 {
+            println!("-- round {round} --");
+            bench_cores("pure+foil (tail-heavy)", &[CORE_PURE, CORE_FOIL], Vec::new());
+            bench_cores("color+foil (local)   ", &[CORE_COLOR, CORE_FOIL], Vec::new());
+            bench_cores("void+archive (tail)  ", &[CORE_VOID, CORE_ARCHIVE], Vec::new());
+            bench_cores("no cores (local)     ", &[], Vec::new());
+            bench_cores("mirror+freq (mystery)", &[CORE_PURE, CORE_FOIL],
+                vec![Implicit::Mirror { value: 1.5 },
+                     Implicit::Freq { mult: 2.0, ptype: T_DIAG }]);
+        }
+    }
+}

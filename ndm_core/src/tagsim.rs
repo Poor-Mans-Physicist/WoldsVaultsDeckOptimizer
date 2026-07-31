@@ -341,6 +341,9 @@ struct Geom {
     surr_peers: Vec<Vec<usize>>,
     diag_peers: Vec<Vec<usize>>,
     orth: Vec<[Option<usize>; 4]>,          // up, down, left, right
+    /// Present orthogonal neighbors, ascending — boost_fold() iterates these
+    /// so per-slot re-folds match boost_pass()'s source order exactly.
+    orth_sorted: Vec<Vec<usize>>,
     is_arcane_slot: Vec<bool>,
     row_min: i32,
     row_span: usize,
@@ -367,6 +370,13 @@ fn build_geom(run: &TagRun<'_>) -> Geom {
     };
     let orth: Vec<[Option<usize>; 4]> = (0..n)
         .map(|i| [dir(i, -1, 0), dir(i, 1, 0), dir(i, 0, -1), dir(i, 0, 1)])
+        .collect();
+    let orth_sorted: Vec<Vec<usize>> = (0..n)
+        .map(|i| {
+            let mut v: Vec<usize> = orth[i].iter().flatten().copied().collect();
+            v.sort_unstable();
+            v
+        })
         .collect();
 
     let row_min = *row_of.iter().min().unwrap_or(&0);
@@ -402,7 +412,7 @@ fn build_geom(run: &TagRun<'_>) -> Geom {
         col_peers: run.col_peers.clone(),
         surr_peers: run.surr_peers.clone(),
         diag_peers: run.diag_peers.clone(),
-        orth, is_arcane_slot,
+        orth, orth_sorted, is_arcane_slot,
         row_min, row_span: (row_max - row_min + 1) as usize,
         col_min, col_span: (col_max - col_min + 1) as usize,
         mirror_of, mirror_self, rows_from_bottom,
@@ -454,92 +464,168 @@ impl Cores {
     }
 }
 
-// Scratch buffers reused across simulate() calls (zero-alloc hot path).
-struct Scratch {
+// ─────────────────────────────────────────────────────────────────────────────
+// Deck-composition counts — the integer state everything global derives from.
+// Rebuilt from scratch by simulate(); maintained incrementally (one card at a
+// time) by the SA delta evaluator. Integer state, so both paths agree exactly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct Counts {
     row_color: Vec<u32>,     // row_span × N_COLORS same-color counts
     col_color: Vec<u32>,     // col_span × N_COLORS
     row_fill: Vec<u32>,      // row_span — color-blind filled counts
     col_fill: Vec<u32>,      // col_span
-    boost: Vec<f64>,
-    chain_id: Vec<u32>,      // snake component labels (0 = unlabeled)
-    chain_size: Vec<u32>,    // per component id (1-indexed)
-    chain_stack: Vec<usize>,
+    n_deluxe: u32,
+    n_arcane: u32,
+    n_greed: u32,
+    n_dead: u32,
+    n_ns_positional: u32,    // NON-FOIL positionals (per-card §5)
+    n_wild: u32,
+    group_refs: [u32; N_GROUP_BITS],   // per-bit placed-card counts → union
 }
 
-impl Scratch {
+impl Counts {
     fn new(geom: &Geom) -> Self {
-        Scratch {
+        Counts {
             row_color: vec![0; geom.row_span * N_COLORS],
             col_color: vec![0; geom.col_span * N_COLORS],
             row_fill: vec![0; geom.row_span],
             col_fill: vec![0; geom.col_span],
-            boost: vec![1.0; geom.n],
-            chain_id: vec![0; geom.n],
-            chain_size: vec![0; geom.n + 1],
-            chain_stack: Vec::with_capacity(geom.n),
+            n_deluxe: 0, n_arcane: 0, n_greed: 0, n_dead: 0,
+            n_ns_positional: 0, n_wild: 0,
+            group_refs: [0; N_GROUP_BITS],
         }
+    }
+
+    /// Union-contribution mask of one placed card. Wild counts as every
+    /// category + Stat on top of its literal groups; DEAD contributes none.
+    #[inline(always)]
+    fn union_mask(c: &SlotCard) -> u16 {
+        if c.t == T_WILD { c.groups | ALL_CATEGORY_GROUPS | G_STAT } else { c.groups }
+    }
+
+    /// Add (`sign`=+1) or remove (`sign`=-1) one card's contribution.
+    fn apply(&mut self, geom: &Geom, i: usize, c: &SlotCard, sign: i32) {
+        let s = i64::from(sign);
+        #[inline(always)]
+        fn bump(v: &mut u32, s: i64) { *v = (*v as i64 + s) as u32; }
+        if c.t == T_DEAD { bump(&mut self.n_dead, s); return; }
+        let r = (geom.row_of[i] - geom.row_min) as usize;
+        let cc = (geom.col_of[i] - geom.col_min) as usize;
+        bump(&mut self.row_fill[r], s);
+        bump(&mut self.col_fill[cc], s);
+        if c.t == T_WILD {
+            // Wild counts as every color for neighbors' same-color scans.
+            for k in 0..N_COLORS {
+                bump(&mut self.row_color[r * N_COLORS + k], s);
+                bump(&mut self.col_color[cc * N_COLORS + k], s);
+            }
+            bump(&mut self.n_wild, s);
+        } else if c.color != COLOR_NONE {
+            bump(&mut self.row_color[r * N_COLORS + c.color as usize], s);
+            bump(&mut self.col_color[cc * N_COLORS + c.color as usize], s);
+        }
+        let mut mask = Self::union_mask(c);
+        while mask != 0 {
+            bump(&mut self.group_refs[mask.trailing_zeros() as usize], s);
+            mask &= mask - 1;
+        }
+        if is_positional(c.t) {
+            if c.groups & G_FOIL == 0 { bump(&mut self.n_ns_positional, s); }
+        } else if c.t == T_DELUXE { bump(&mut self.n_deluxe, s); }
+        else if c.t == T_ARCANE { bump(&mut self.n_arcane, s); }
+        else if is_greed(c.t) { bump(&mut self.n_greed, s); }
+    }
+
+    fn rebuild(&mut self, geom: &Geom, asgn: &[SlotCard]) {
+        for v in self.row_color.iter_mut() { *v = 0; }
+        for v in self.col_color.iter_mut() { *v = 0; }
+        for v in self.row_fill.iter_mut() { *v = 0; }
+        for v in self.col_fill.iter_mut() { *v = 0; }
+        self.n_deluxe = 0; self.n_arcane = 0; self.n_greed = 0;
+        self.n_dead = 0; self.n_ns_positional = 0; self.n_wild = 0;
+        self.group_refs = [0; N_GROUP_BITS];
+        for (i, c) in asgn.iter().enumerate() {
+            self.apply(geom, i, c, 1);
+        }
+    }
+
+    #[inline(always)]
+    fn groups_union(&self) -> u16 {
+        let mut u = 0u16;
+        for b in 0..N_GROUP_BITS {
+            if self.group_refs[b] > 0 { u |= 1u16 << b; }
+        }
+        u
+    }
+
+    /// n_ns (Pure): greed + arcane always; positionals only while non-foil.
+    /// Typeless / deluxe never (classic-kernel design, preserved).
+    #[inline(always)]
+    fn n_ns(&self) -> usize {
+        (self.n_greed + self.n_arcane + self.n_ns_positional) as usize
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// simulate() — full-assignment scoring with tags + implicits
+// Derived deck-global scalars — the "cores → baseline + gated addends" block
+// and the implicit precompute, shared verbatim by full and delta evaluation.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-fn simulate(
-    geom: &Geom,
-    asgn: &[SlotCard],
+#[derive(Clone, Copy)]
+struct Derived {
+    baseline_sum: f64,
+    baseline_prod: f64,
+    color_addend: f64,
+    color_factor: f64,
+    deluxe_addend: f64,
+    deluxe_factor: f64,
+    deluxe_present: bool,
+    void_addend: f64,
+    void_factor: f64,
+    void_present: bool,
+    archive_addend: f64,
+    archive_factor: f64,
+    freq_mult: [f64; 4],
+    chain_value: f64,
+    have_chain: bool,
+    empty_addend: f64,
+    unique_value: f64,
+    unique_groups_count: f64,
+    mirror_value: f64,
+    have_mirror: bool,
+}
+
+impl Derived {
+    /// Do any count-DEPENDENT scalars differ (bitwise)? The constant-by-
+    /// construction fields (color, freq, chain/unique/mirror values) are
+    /// excluded; `unique_groups_count` is handled separately (it invalidates
+    /// per-slot implicit folds, not just the finish arithmetic).
+    fn tail_bits_differ(&self, other: &Derived) -> bool {
+        self.baseline_sum.to_bits() != other.baseline_sum.to_bits()
+            || self.baseline_prod.to_bits() != other.baseline_prod.to_bits()
+            || self.deluxe_addend.to_bits() != other.deluxe_addend.to_bits()
+            || self.deluxe_factor.to_bits() != other.deluxe_factor.to_bits()
+            || self.void_addend.to_bits() != other.void_addend.to_bits()
+            || self.void_factor.to_bits() != other.void_factor.to_bits()
+            || self.archive_addend.to_bits() != other.archive_addend.to_bits()
+            || self.archive_factor.to_bits() != other.archive_factor.to_bits()
+            || self.empty_addend.to_bits() != other.empty_addend.to_bits()
+    }
+}
+
+fn derive_scalars(
     cores: &Cores,
     implicits: &[Implicit],
     cfg: &TagSimConfig,
-    s: &mut Scratch,
-) -> f64 {
-    let n = geom.n;
-
-    for v in s.row_color.iter_mut() { *v = 0; }
-    for v in s.col_color.iter_mut() { *v = 0; }
-    for v in s.row_fill.iter_mut() { *v = 0; }
-    for v in s.col_fill.iter_mut() { *v = 0; }
-
-    // ── Pass 1: classify + row/col counts ────────────────────────────────
-    let mut n_deluxe = 0usize;
-    let mut n_arcane = 0usize;
-    let mut n_greed = 0usize;
-    let mut n_dead = 0usize;
-    let mut n_ns_positional = 0usize;   // NON-FOIL positionals (per-card §5)
-    let mut groups_union: u16 = 0;      // for mutant unique-groups
-    let mut any_wild = false;
-
-    for i in 0..n {
-        let c = asgn[i];
-        if c.t == T_DEAD { n_dead += 1; continue; }
-        let r = (geom.row_of[i] - geom.row_min) as usize;
-        let cc = (geom.col_of[i] - geom.col_min) as usize;
-        s.row_fill[r] += 1;
-        s.col_fill[cc] += 1;
-        if c.t == T_WILD {
-            // Wild counts as every color for neighbors' same-color scans.
-            for k in 0..N_COLORS {
-                s.row_color[r * N_COLORS + k] += 1;
-                s.col_color[cc * N_COLORS + k] += 1;
-            }
-            any_wild = true;
-            groups_union |= ALL_CATEGORY_GROUPS | G_STAT;
-        } else if c.color != COLOR_NONE {
-            s.row_color[r * N_COLORS + c.color as usize] += 1;
-            s.col_color[cc * N_COLORS + c.color as usize] += 1;
-        }
-        groups_union |= c.groups;
-        if is_positional(c.t) {
-            if c.groups & G_FOIL == 0 { n_ns_positional += 1; }
-        } else if c.t == T_DELUXE { n_deluxe += 1; }
-        else if c.t == T_ARCANE { n_arcane += 1; }
-        else if is_greed(c.t) { n_greed += 1; }
-    }
-
-    // n_ns (Pure): greed + arcane always; positionals only while non-foil.
-    // Typeless / deluxe never (classic-kernel design, preserved).
-    let n_ns = n_greed + n_arcane + n_ns_positional;
+    counts: &Counts,
+) -> Derived {
+    let n_ns = counts.n_ns();
+    let n_deluxe = counts.n_deluxe as usize;
+    let n_arcane = counts.n_arcane as usize;
+    let n_greed = counts.n_greed as usize;
+    let n_dead = counts.n_dead as usize;
+    let any_wild = counts.n_wild > 0;
 
     // ── Cores → baseline + gated addends (identical math to 1.x) ─────────
     let mut baseline_sum = 0.0f64;
@@ -613,7 +699,6 @@ fn simulate(
     } else {
         (0.0, 1.0)
     };
-    let color_core_color = cores.color_core_color;
 
     // ── Implicit precompute (deck-global parts) ──────────────────────────
     // Positional frequency multipliers (rook/pillager/bishop).
@@ -644,6 +729,7 @@ fn simulate(
     // Unique-groups count (mutant): union of category/Foil/Stat bits on
     // placed cards + class markers implied by the placement.
     let unique_groups_count = if have_unique {
+        let groups_union = counts.groups_union();
         let mut cnt = groups_union.count_ones() as f64;
         cnt += 1.0;                                  // Shiny or Evolution marker
         if n_deluxe > 0 { cnt += 1.0; }              // Deluxe marker
@@ -653,54 +739,73 @@ fn simulate(
         cnt
     } else { 0.0 };
 
-    // Snake chain labeling — one flood-fill pass over non-dead cards.
-    // colors_real: components are same-color (wild bridges any color).
-    // blanket (Max): components are filled-connectivity (mono assumption).
-    if have_chain {
-        for v in s.chain_id.iter_mut() { *v = 0; }
-        let mut next_id = 0u32;
-        for start in 0..n {
-            if asgn[start].t == T_DEAD || s.chain_id[start] != 0 { continue; }
-            next_id += 1;
-            let mut size = 0u32;
-            s.chain_stack.clear();
-            s.chain_stack.push(start);
-            s.chain_id[start] = next_id;
-            while let Some(i) = s.chain_stack.pop() {
-                size += 1;
-                for d in 0..4 {
-                    if let Some(j) = geom.orth[i][d] {
-                        if asgn[j].t == T_DEAD || s.chain_id[j] != 0 { continue; }
-                        let same = if !cfg.colors_real {
-                            true
-                        } else {
-                            let a = asgn[i]; let b = asgn[j];
-                            a.t == T_WILD || b.t == T_WILD
-                                || (a.color != COLOR_NONE && a.color == b.color)
-                        };
-                        if same {
-                            s.chain_id[j] = next_id;
-                            s.chain_stack.push(j);
-                        }
-                    }
-                }
-            }
-            s.chain_size[next_id as usize] = size;
-        }
+    Derived {
+        baseline_sum, baseline_prod, color_addend, color_factor,
+        deluxe_addend, deluxe_factor, deluxe_present,
+        void_addend, void_factor, void_present,
+        archive_addend, archive_factor,
+        freq_mult, chain_value, have_chain, empty_addend,
+        unique_value, unique_groups_count,
+        mirror_value, have_mirror,
     }
+}
 
-    // ── Greed boost pass (orthogonal only, §2.3) ─────────────────────────
-    for v in s.boost[..n].iter_mut() { *v = 1.0; }
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared per-slot evaluation — one code path for full AND delta scoring
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Scan-derived inputs of one slot (peer/grid reads). Cached by the delta
+/// evaluator; recomputed via slot_scan() when the slot or a peer changes.
+#[derive(Clone, Copy)]
+struct SlotInputs {
+    contributes: bool,
+    base: f64,
+    /// Implicit-loop fold EXCLUDING the empty-slots addend — finish_term()
+    /// adds `empty_addend` last, mirroring the 1.x accumulation order.
+    imp_local: f64,
+    color_applies: bool,
+    deluxe_applies: bool,
+}
+
+const SKIP_INPUTS: SlotInputs = SlotInputs {
+    contributes: false, base: 0.0, imp_local: 0.0,
+    color_applies: false, deluxe_applies: false,
+};
+
+/// Borrowed evaluation context — everything slot_scan()/finish_term() read.
+struct EvalCtx<'a> {
+    geom: &'a Geom,
+    cores: &'a Cores,
+    implicits: &'a [Implicit],
+    cfg: &'a TagSimConfig,
+    counts: &'a Counts,
+    der: &'a Derived,
+    chain_id: &'a [u32],
+    chain_size: &'a [u32],
+}
+
+/// Target slot + boost amount of a greed card (§2.3, orthogonal only).
+#[inline(always)]
+fn greed_target(geom: &Geom, i: usize, t: u8, cfg: &TagSimConfig) -> (Option<usize>, f64) {
+    match t {
+        T_G_UP => (geom.orth[i][0], cfg.mult_dir_vert),
+        T_G_DOWN => (geom.orth[i][1], cfg.mult_dir_vert),
+        T_G_LEFT => (geom.orth[i][2], cfg.mult_dir_horiz),
+        T_G_RIGHT => (geom.orth[i][3], cfg.mult_dir_horiz),
+        _ => (None, 0.0),
+    }
+}
+
+/// Full greed boost pass (§2.3): iterate greed SOURCES in ascending slot
+/// order, accumulating into each target. boost_fold() must visit sources in
+/// this same ascending order to stay bit-identical.
+fn boost_pass(geom: &Geom, asgn: &[SlotCard], cfg: &TagSimConfig, boost: &mut [f64]) {
+    let n = geom.n;
+    for v in boost[..n].iter_mut() { *v = 1.0; }
     for i in 0..n {
         let g = asgn[i];
         if !is_greed(g.t) { continue; }
-        let (target, amount) = match g.t {
-            T_G_UP => (geom.orth[i][0], cfg.mult_dir_vert),
-            T_G_DOWN => (geom.orth[i][1], cfg.mult_dir_vert),
-            T_G_LEFT => (geom.orth[i][2], cfg.mult_dir_horiz),
-            T_G_RIGHT => (geom.orth[i][3], cfg.mult_dir_horiz),
-            _ => (None, 0.0),
-        };
+        let (target, amount) = greed_target(geom, i, g.t, cfg);
         if let Some(j) = target {
             if is_scorable(asgn[j].t) {
                 // Complex Cards: greed boosts only its scale_color (§7).
@@ -709,180 +814,325 @@ fn simulate(
                     || asgn[j].t == T_WILD
                     || asgn[j].color == g.scale;
                 if color_ok {
-                    if cfg.greed_additive { s.boost[j] += amount; }
-                    else { s.boost[j] *= amount; }
+                    if cfg.greed_additive { boost[j] += amount; }
+                    else { boost[j] *= amount; }
                 }
             }
         }
     }
+}
 
-    // ── Accumulate NDM ───────────────────────────────────────────────────
-    let mut ndm = 0.0f64;
-    for i in 0..n {
-        let c = asgn[i];
-        if !is_scorable(c.t) { continue; }
-        // Non-stat card (Resource/Temporal): 0 NDM itself. It was already
-        // counted as a filled neighbor / n_ns / implicit-feeder above.
-        if c.groups & NONSTAT_GROUPS != 0 { continue; }
+/// Recompute ONE slot's boost by folding its orthogonal greed sources in
+/// ascending slot order — the same contribution order boost_pass() produces,
+/// so the result is bit-identical to a full pass.
+fn boost_fold(geom: &Geom, asgn: &[SlotCard], cfg: &TagSimConfig, j: usize) -> f64 {
+    let mut b = 1.0f64;
+    if !is_scorable(asgn[j].t) { return b; }
+    for &si in &geom.orth_sorted[j] {
+        let g = asgn[si];
+        if !is_greed(g.t) { continue; }
+        let (target, amount) = greed_target(geom, si, g.t, cfg);
+        if target != Some(j) { continue; }
+        let color_ok = !(cfg.colors_real && cfg.complex)
+            || asgn[j].t == T_WILD
+            || asgn[j].color == g.scale;
+        if color_ok {
+            if cfg.greed_additive { b += amount; } else { b *= amount; }
+        }
+    }
+    b
+}
 
-        // Positional base value.
-        let base = if is_positional(c.t) {
-            let scan_color = if cfg.complex && cfg.colors_real { c.scale } else { c.color };
-            let raw = match c.t {
-                T_ROW => {
-                    let r = (geom.row_of[i] - geom.row_min) as usize;
-                    if cfg.colors_real {
-                        // Self counts iff its card_color matches the scan
-                        // color (under Complex, scale≠color ⇒ no self-count —
-                        // mirrors the game's entry filter).
-                        s.row_color[r * N_COLORS + scan_color as usize] as f64
+/// Snake chain labeling — one flood-fill pass over non-dead cards.
+/// colors_real: components are same-color (wild bridges any color).
+/// blanket (Max): components are filled-connectivity (mono assumption).
+fn chain_flood_fill(
+    geom: &Geom,
+    asgn: &[SlotCard],
+    cfg: &TagSimConfig,
+    chain_id: &mut [u32],
+    chain_size: &mut [u32],
+    chain_stack: &mut Vec<usize>,
+) {
+    let n = geom.n;
+    for v in chain_id.iter_mut() { *v = 0; }
+    let mut next_id = 0u32;
+    for start in 0..n {
+        if asgn[start].t == T_DEAD || chain_id[start] != 0 { continue; }
+        next_id += 1;
+        let mut size = 0u32;
+        chain_stack.clear();
+        chain_stack.push(start);
+        chain_id[start] = next_id;
+        while let Some(i) = chain_stack.pop() {
+            size += 1;
+            for d in 0..4 {
+                if let Some(j) = geom.orth[i][d] {
+                    if asgn[j].t == T_DEAD || chain_id[j] != 0 { continue; }
+                    let same = if !cfg.colors_real {
+                        true
                     } else {
-                        s.row_fill[r] as f64
+                        let a = asgn[i]; let b = asgn[j];
+                        a.t == T_WILD || b.t == T_WILD
+                            || (a.color != COLOR_NONE && a.color == b.color)
+                    };
+                    if same {
+                        chain_id[j] = next_id;
+                        chain_stack.push(j);
                     }
                 }
-                T_COL => {
-                    let cc = (geom.col_of[i] - geom.col_min) as usize;
-                    if cfg.colors_real {
-                        s.col_color[cc * N_COLORS + scan_color as usize] as f64
-                    } else {
-                        s.col_fill[cc] as f64
-                    }
+            }
+        }
+        chain_size[next_id as usize] = size;
+    }
+}
+
+/// Compute one slot's scan-derived inputs (base value, local implicit fold,
+/// core gates). Verbatim 1.x accumulate-loop math, reading grids from Counts.
+fn slot_scan(ctx: &EvalCtx<'_>, asgn: &[SlotCard], i: usize) -> SlotInputs {
+    let geom = ctx.geom;
+    let cfg = ctx.cfg;
+    let cores = ctx.cores;
+    let der = ctx.der;
+    let c = asgn[i];
+    if !is_scorable(c.t) { return SKIP_INPUTS; }
+    // Non-stat card (Resource/Temporal): 0 NDM itself. It was already
+    // counted as a filled neighbor / n_ns / implicit-feeder above.
+    if c.groups & NONSTAT_GROUPS != 0 { return SKIP_INPUTS; }
+
+    // Positional base value.
+    let base = if is_positional(c.t) {
+        let scan_color = if cfg.complex && cfg.colors_real { c.scale } else { c.color };
+        let raw = match c.t {
+            T_ROW => {
+                let r = (geom.row_of[i] - geom.row_min) as usize;
+                if cfg.colors_real {
+                    // Self counts iff its card_color matches the scan
+                    // color (under Complex, scale≠color ⇒ no self-count —
+                    // mirrors the game's entry filter).
+                    ctx.counts.row_color[r * N_COLORS + scan_color as usize] as f64
+                } else {
+                    ctx.counts.row_fill[r] as f64
                 }
-                T_DIAG => {
-                    let mut count = 0.0;
-                    for &q in &geom.diag_peers[i] {
-                        let qc = asgn[q];
-                        if qc.t == T_DEAD { continue; }
-                        let m = if !cfg.colors_real { true }
-                            else { qc.t == T_WILD || qc.color == scan_color };
-                        if m { count += 1.0; }
-                    }
-                    count
+            }
+            T_COL => {
+                let cc = (geom.col_of[i] - geom.col_min) as usize;
+                if cfg.colors_real {
+                    ctx.counts.col_color[cc * N_COLORS + scan_color as usize] as f64
+                } else {
+                    ctx.counts.col_fill[cc] as f64
                 }
-                T_SURR => {
-                    let mut count = 0.0;
-                    for &q in &geom.surr_peers[i] {
-                        let qc = asgn[q];
-                        if qc.t == T_DEAD { continue; }
-                        let m = if !cfg.colors_real { true }
-                            else { qc.t == T_WILD || qc.color == scan_color };
-                        if m { count += 1.0; }
-                    }
-                    count
+            }
+            T_DIAG => {
+                let mut count = 0.0;
+                for &q in &geom.diag_peers[i] {
+                    let qc = asgn[q];
+                    if qc.t == T_DEAD { continue; }
+                    let m = if !cfg.colors_real { true }
+                        else { qc.t == T_WILD || qc.color == scan_color };
+                    if m { count += 1.0; }
                 }
-                _ => 0.0,
-            };
-            // Frequency implicit (rook/pillager/bishop) multiplies the count;
-            // DIAG keeps its lone-card ≥1 floor after the multiplier.
-            let scaled = raw * freq_mult[c.t as usize];
-            if c.t == T_DIAG { scaled.max(1.0) } else { scaled }
-        } else if c.t == T_DELUXE {
-            cfg.mult_deluxe_flat
-        } else {
-            1.0   // TYPELESS
+                count
+            }
+            T_SURR => {
+                let mut count = 0.0;
+                for &q in &geom.surr_peers[i] {
+                    let qc = asgn[q];
+                    if qc.t == T_DEAD { continue; }
+                    let m = if !cfg.colors_real { true }
+                        else { qc.t == T_WILD || qc.color == scan_color };
+                    if m { count += 1.0; }
+                }
+                count
+            }
+            _ => 0.0,
         };
+        // Frequency implicit (rook/pillager/bishop) multiplies the count;
+        // DIAG keeps its lone-card ≥1 floor after the multiplier.
+        let scaled = raw * der.freq_mult[c.t as usize];
+        if c.t == T_DIAG { scaled.max(1.0) } else { scaled }
+    } else if c.t == T_DELUXE {
+        cfg.mult_deluxe_flat
+    } else {
+        1.0   // TYPELESS
+    };
 
-        // Core multiplier + additive implicits. Color-blind runs apply the
-        // COLOR core flat (classic behavior — the parity gate depends on it);
-        // color-real runs gate on the card's own color.
-        let color_applies = cores.has_color_core
-            && (!cfg.colors_real
-                || (color_core_color != COLOR_NONE
-                    && (c.t == T_WILD || c.color == color_core_color)));
-        let deluxe_applies = deluxe_present && c.t != T_DELUXE;
-        let void_applies = void_present;
+    // Core gates. Color-blind runs apply the COLOR core flat (classic
+    // behavior — the parity gate depends on it); color-real runs gate on
+    // the card's own color.
+    let color_applies = cores.has_color_core
+        && (!cfg.colors_real
+            || (cores.color_core_color != COLOR_NONE
+                && (c.t == T_WILD || c.color == cores.color_core_color)));
+    let deluxe_applies = der.deluxe_present && c.t != T_DELUXE;
 
-        // Additive implicit addends for THIS card.
-        let mut imp_addend = 0.0f64;
-        for imp in implicits {
-            match *imp {
-                Implicit::GlobalFlat { value, groups, colors } => {
-                    let group_ok = c.groups & groups == groups;
-                    let color_ok = colors == 0
-                        || !cfg.colors_real
-                        || (c.color != COLOR_NONE && colors & (1 << c.color) != 0);
-                    if group_ok && color_ok { imp_addend += value; }
+    // Additive implicit addends for THIS card (empty-slots excluded — see
+    // SlotInputs::imp_local).
+    let mut imp_addend = 0.0f64;
+    for imp in ctx.implicits {
+        match *imp {
+            Implicit::GlobalFlat { value, groups, colors } => {
+                let group_ok = c.groups & groups == groups;
+                let color_ok = colors == 0
+                    || !cfg.colors_real
+                    || (c.color != COLOR_NONE && colors & (1 << c.color) != 0);
+                if group_ok && color_ok { imp_addend += value; }
+            }
+            Implicit::Adjacency { value, group, surrounding } => {
+                let peers: &Vec<usize> =
+                    if surrounding { &geom.surr_peers[i] } else { &geom.col_peers[i] };
+                let mut matches = 0u32;
+                for &q in peers {
+                    let qc = asgn[q];
+                    if qc.t == T_DEAD || is_greed(qc.t) { continue; }
+                    if qc.t == T_WILD || qc.groups & group != 0 { matches += 1; }
                 }
-                Implicit::Adjacency { value, group, surrounding } => {
-                    let peers: &Vec<usize> =
-                        if surrounding { &geom.surr_peers[i] } else { &geom.col_peers[i] };
-                    let mut matches = 0u32;
-                    for &q in peers {
-                        let qc = asgn[q];
-                        if qc.t == T_DEAD || is_greed(qc.t) { continue; }
-                        if qc.t == T_WILD || qc.groups & group != 0 { matches += 1; }
-                    }
-                    imp_addend += value * matches as f64;
-                }
-                Implicit::ColorMismatch { value } => {
-                    let mut mism = 0u32;
-                    for d in 0..4 {
-                        if let Some(j) = geom.orth[i][d] {
-                            let qc = asgn[j];
-                            if qc.t == T_DEAD { continue; }
-                            if !cfg.colors_real {
-                                mism += 1;   // blanket best case (§4)
-                            } else if qc.t == T_WILD
-                                || (qc.color != COLOR_NONE && qc.color != c.color) {
-                                mism += 1;   // wild counts favorably
-                            }
+                imp_addend += value * matches as f64;
+            }
+            Implicit::ColorMismatch { value } => {
+                let mut mism = 0u32;
+                for d in 0..4 {
+                    if let Some(j) = geom.orth[i][d] {
+                        let qc = asgn[j];
+                        if qc.t == T_DEAD { continue; }
+                        if !cfg.colors_real {
+                            mism += 1;   // blanket best case (§4)
+                        } else if qc.t == T_WILD
+                            || (qc.color != COLOR_NONE && qc.color != c.color) {
+                            mism += 1;   // wild counts favorably
                         }
                     }
-                    imp_addend += value * mism as f64;
                 }
-                Implicit::RowPos { value } => {
-                    imp_addend += value * geom.rows_from_bottom[i];
-                }
-                Implicit::Chain { .. } => {
-                    let id = s.chain_id[i] as usize;
-                    if id != 0 {
-                        imp_addend += chain_value * (s.chain_size[id] - 1) as f64;
-                    }
-                }
-                Implicit::UniqueGroups { .. } => {
-                    if c.groups & G_STAT != 0 {
-                        imp_addend += unique_value * unique_groups_count;
-                    }
-                }
-                _ => {}
+                imp_addend += value * mism as f64;
             }
+            Implicit::RowPos { value } => {
+                imp_addend += value * geom.rows_from_bottom[i];
+            }
+            Implicit::Chain { .. } => {
+                let id = ctx.chain_id[i] as usize;
+                if id != 0 {
+                    imp_addend += der.chain_value * (ctx.chain_size[id] - 1) as f64;
+                }
+            }
+            Implicit::UniqueGroups { .. } => {
+                if c.groups & G_STAT != 0 {
+                    imp_addend += der.unique_value * der.unique_groups_count;
+                }
+            }
+            _ => {}
         }
-        imp_addend += empty_addend;   // shadow applies to every scoring card
-
-        let core_mult = if cfg.additive_cores {
-            1.0 + baseline_sum
-                + if color_applies { color_addend } else { 0.0 }
-                + if deluxe_applies { deluxe_addend } else { 0.0 }
-                + if void_applies { void_addend } else { 0.0 }
-                + archive_addend
-                + imp_addend
-        } else {
-            // Vanilla path — implicits never active there; keep the pure
-            // multiplicative composition identical to 1.x.
-            let mut m = baseline_prod;
-            if color_applies { m *= color_factor; }
-            if deluxe_applies { m *= deluxe_factor; }
-            if void_applies { m *= void_factor; }
-            m * archive_factor
-        };
-
-        // Runic (multiplicative mirror).
-        let mirror_factor = if have_mirror {
-            let pass = if geom.mirror_self[i] {
-                true
-            } else if let Some(mi) = geom.mirror_of[i] {
-                let mc = asgn[mi];
-                if mc.t == T_DEAD { false }
-                else if !cfg.colors_real { true }
-                else { mc.t == T_WILD || (mc.color != COLOR_NONE && mc.color == c.color) }
-            } else { false };
-            if pass { mirror_value } else { 1.0 }
-        } else { 1.0 };
-
-        let b = if cfg.greed_additive { s.boost[i].max(1.0) } else { s.boost[i] };
-        ndm += base * core_mult * b * mirror_factor;
     }
 
+    SlotInputs {
+        contributes: true, base, imp_local: imp_addend,
+        color_applies, deluxe_applies,
+    }
+}
+
+/// Combine cached/derived pieces into the slot's final NDM term — the tail
+/// arithmetic of the 1.x accumulate loop, expression-for-expression.
+fn finish_term(
+    ctx: &EvalCtx<'_>,
+    asgn: &[SlotCard],
+    i: usize,
+    si: &SlotInputs,
+    boost_i: f64,
+) -> f64 {
+    let cfg = ctx.cfg;
+    let der = ctx.der;
+    let c = asgn[i];
+
+    let imp_addend = si.imp_local + der.empty_addend;   // shadow applies to every scoring card
+
+    let core_mult = if cfg.additive_cores {
+        1.0 + der.baseline_sum
+            + if si.color_applies { der.color_addend } else { 0.0 }
+            + if si.deluxe_applies { der.deluxe_addend } else { 0.0 }
+            + if der.void_present { der.void_addend } else { 0.0 }
+            + der.archive_addend
+            + imp_addend
+    } else {
+        // Vanilla path — implicits never active there; keep the pure
+        // multiplicative composition identical to 1.x.
+        let mut m = der.baseline_prod;
+        if si.color_applies { m *= der.color_factor; }
+        if si.deluxe_applies { m *= der.deluxe_factor; }
+        if der.void_present { m *= der.void_factor; }
+        m * der.archive_factor
+    };
+
+    // Runic (multiplicative mirror).
+    let mirror_factor = if der.have_mirror {
+        let pass = if ctx.geom.mirror_self[i] {
+            true
+        } else if let Some(mi) = ctx.geom.mirror_of[i] {
+            let mc = asgn[mi];
+            if mc.t == T_DEAD { false }
+            else if !cfg.colors_real { true }
+            else { mc.t == T_WILD || (mc.color != COLOR_NONE && mc.color == c.color) }
+        } else { false };
+        if pass { der.mirror_value } else { 1.0 }
+    } else { 1.0 };
+
+    let b = if cfg.greed_additive { boost_i.max(1.0) } else { boost_i };
+    si.base * core_mult * b * mirror_factor
+}
+
+// Scratch buffers reused across simulate() calls (zero-alloc hot path).
+struct Scratch {
+    counts: Counts,
+    boost: Vec<f64>,
+    chain_id: Vec<u32>,      // snake component labels (0 = unlabeled)
+    chain_size: Vec<u32>,    // per component id (1-indexed)
+    chain_stack: Vec<usize>,
+}
+
+impl Scratch {
+    fn new(geom: &Geom) -> Self {
+        Scratch {
+            counts: Counts::new(geom),
+            boost: vec![1.0; geom.n],
+            chain_id: vec![0; geom.n],
+            chain_size: vec![0; geom.n + 1],
+            chain_stack: Vec::with_capacity(geom.n),
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// simulate() — full-assignment scoring with tags + implicits
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn simulate(
+    geom: &Geom,
+    asgn: &[SlotCard],
+    cores: &Cores,
+    implicits: &[Implicit],
+    cfg: &TagSimConfig,
+    s: &mut Scratch,
+) -> f64 {
+    let n = geom.n;
+    s.counts.rebuild(geom, asgn);
+    let der = derive_scalars(cores, implicits, cfg, &s.counts);
+    if der.have_chain {
+        chain_flood_fill(
+            geom, asgn, cfg,
+            &mut s.chain_id, &mut s.chain_size, &mut s.chain_stack,
+        );
+    }
+    boost_pass(geom, asgn, cfg, &mut s.boost);
+
+    let ctx = EvalCtx {
+        geom, cores, implicits, cfg,
+        counts: &s.counts, der: &der,
+        chain_id: &s.chain_id, chain_size: &s.chain_size,
+    };
+    let mut ndm = 0.0f64;
+    for i in 0..n {
+        let si = slot_scan(&ctx, asgn, i);
+        if !si.contributes { continue; }
+        ndm += finish_term(&ctx, asgn, i, &si, s.boost[i]);
+    }
     ndm
 }
 
@@ -974,6 +1224,437 @@ impl RuleBook {
             }
         }
         0
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delta evaluation — incremental SA re-scoring
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The SA proposes single-slot replacements, pair swaps, and group-bit
+// toggles. Re-running simulate() for each proposal costs O(n · scans);
+// DeltaEval instead maintains Counts incrementally plus per-slot caches of
+// SlotInputs / boost / final terms, recomputing only the slots whose inputs
+// can have changed, then re-summing every contributing term in slot order.
+//
+// BIT-EXACT CONTRACT: after every propose() (and after rollback()) the
+// tracked score is bit-for-bit what simulate() returns on the same
+// assignment, so seeded SA trajectories are unchanged. This holds because
+//   (a) Counts is integer state (incremental == rebuilt),
+//   (b) recomputed slots run the same slot_scan()/finish_term() code the
+//       full evaluator runs,
+//   (c) boost_fold() visits greed sources in boost_pass()'s ascending order,
+//   (d) the re-sum walks terms in slot order with the same skip structure,
+//   (e) when a count-derived global scalar drifts (pure/deluxe/void/archive/
+//       empty), every slot's tail arithmetic is recomputed from cached
+//       inputs — same expressions, no rescans — and
+//   (f) when unique_groups_count drifts (mutant), every slot is rescanned.
+// Peer lists are assumed symmetric (q ∈ peers[p] ⇔ p ∈ peers[q]) — true for
+// the game's row/col/surr/diag definitions every caller supplies.
+//
+// Decks carrying a CHAIN implicit score through component topology (globally
+// non-local): sa_one_restart() keeps the full simulate() path for those.
+// The delta_full_equiv stress test asserts the contract across the config
+// matrix at every step, including after rollbacks.
+
+#[derive(Clone, Copy)]
+struct SlotSave {
+    i: usize,
+    inputs: SlotInputs,
+    term: f64,
+    boost: f64,
+}
+
+// Journal mode of the pending proposal (what rollback must undo).
+const J_LOCAL: u8 = 0;
+const J_TAIL: u8 = 1;
+const J_FULL: u8 = 2;
+
+/// Below this slot count the per-move bookkeeping costs more than the full
+/// re-simulate it saves — sa_one_restart() keeps the plain path.
+const DELTA_MIN_SLOTS: usize = 16;
+
+/// The Derived-input contributions of a card: [dead, wild, deluxe, arcane,
+/// greed, non-foil positional]. derive_scalars() reads a counter only when a
+/// matching core/implicit is active, so a proposal skips the call whenever
+/// every SENSITIVE net delta is zero — the output would be bit-identical.
+/// (Net matters: positional→greed keeps n_ns, so a pure-core deck stays on
+/// the local path for that move.)
+#[inline(always)]
+fn derive_class(c: &SlotCard) -> [i32; 6] {
+    [
+        i32::from(c.t == T_DEAD),
+        i32::from(c.t == T_WILD),
+        i32::from(c.t == T_DELUXE),
+        i32::from(c.t == T_ARCANE),
+        i32::from(is_greed(c.t)),
+        i32::from(is_positional(c.t) && c.groups & G_FOIL == 0),
+    ]
+}
+
+struct DeltaEval {
+    counts: Counts,
+    der: Derived,
+    inputs: Vec<SlotInputs>,
+    term: Vec<f64>,
+    boost: Vec<f64>,
+    score: f64,
+    adj_col: bool,
+    adj_surr: bool,
+    colormismatch: bool,
+    have_unique: bool,
+    // Which counters derive_scalars() actually reads for this run.
+    sens_ns: bool,
+    sens_deluxe: bool,
+    sens_dead: bool,
+    sens_arcane: bool,
+    // Zero-filled stand-ins lent to EvalCtx (chain decks never use delta).
+    chain_zero_id: Vec<u32>,
+    chain_zero_size: Vec<u32>,
+    // Dirty-set scratch (stamp-deduped) + one-proposal undo journal.
+    stamp: u32,
+    stamped: Vec<u32>,
+    dirty: Vec<usize>,
+    refresh: Vec<usize>,
+    j_slots: Vec<SlotSave>,
+    j_cards: Vec<(usize, SlotCard, SlotCard)>,
+    j_der: Derived,
+    j_score: f64,
+    j_mode: u8,
+}
+
+impl DeltaEval {
+    fn new(
+        geom: &Geom,
+        asgn: &[SlotCard],
+        cores: &Cores,
+        implicits: &[Implicit],
+        cfg: &TagSimConfig,
+    ) -> Self {
+        debug_assert!(
+            !implicits.iter().any(|imp| matches!(imp, Implicit::Chain { .. })),
+            "DeltaEval does not support CHAIN implicits — guard at the call site",
+        );
+        let n = geom.n;
+        let mut counts = Counts::new(geom);
+        counts.rebuild(geom, asgn);
+        let der = derive_scalars(cores, implicits, cfg, &counts);
+        let mut boost = vec![1.0; n];
+        boost_pass(geom, asgn, cfg, &mut boost);
+        let chain_zero_id = vec![0u32; n];
+        let chain_zero_size = vec![0u32; n + 1];
+        let mut inputs = vec![SKIP_INPUTS; n];
+        let mut term = vec![0.0f64; n];
+        {
+            let ctx = EvalCtx {
+                geom, cores, implicits, cfg,
+                counts: &counts, der: &der,
+                chain_id: &chain_zero_id, chain_size: &chain_zero_size,
+            };
+            for i in 0..n {
+                let si = slot_scan(&ctx, asgn, i);
+                inputs[i] = si;
+                term[i] = if si.contributes {
+                    finish_term(&ctx, asgn, i, &si, boost[i])
+                } else { 0.0 };
+            }
+        }
+        let mut d = DeltaEval {
+            counts, der, inputs, term, boost,
+            score: 0.0,
+            adj_col: implicits.iter().any(|imp|
+                matches!(imp, Implicit::Adjacency { surrounding: false, .. })),
+            adj_surr: implicits.iter().any(|imp|
+                matches!(imp, Implicit::Adjacency { surrounding: true, .. })),
+            colormismatch: implicits.iter().any(|imp|
+                matches!(imp, Implicit::ColorMismatch { .. })),
+            have_unique: implicits.iter().any(|imp|
+                matches!(imp, Implicit::UniqueGroups { .. })),
+            sens_ns: cores.list.iter().any(|s| s.core_type == CORE_PURE),
+            sens_deluxe: cores.list.iter().any(|s| s.core_type == CORE_DELUXE),
+            sens_dead: cores.list.iter().any(|s| s.core_type == CORE_VOID)
+                || implicits.iter().any(|imp|
+                    matches!(imp, Implicit::EmptySlots { .. })),
+            sens_arcane: cores.list.iter().any(|s| s.core_type == CORE_ARCHIVE),
+            chain_zero_id, chain_zero_size,
+            stamp: 0,
+            stamped: vec![0u32; n],
+            dirty: Vec::with_capacity(n),
+            refresh: Vec::with_capacity(16),
+            j_slots: Vec::with_capacity(n),
+            j_cards: Vec::with_capacity(2),
+            j_der: der,
+            j_score: 0.0,
+            j_mode: J_LOCAL,
+        };
+        d.score = d.resum();
+        d
+    }
+
+    /// Sum cached terms in slot order with simulate()'s skip structure —
+    /// the same adds in the same order, so the same bits.
+    #[inline(always)]
+    fn resum(&self) -> f64 {
+        let mut ndm = 0.0f64;
+        for (i, si) in self.inputs.iter().enumerate() {
+            if si.contributes { ndm += self.term[i]; }
+        }
+        ndm
+    }
+
+    #[inline(always)]
+    fn mark(&mut self, i: usize) {
+        if self.stamped[i] != self.stamp {
+            self.stamped[i] = self.stamp;
+            self.dirty.push(i);
+        }
+    }
+
+    /// Score a proposal. `changed` holds (slot, PRE-move card) pairs with
+    /// `asgn` already mutated to the new cards. Call commit() on accept or
+    /// rollback() on reject before the next propose().
+    fn propose(
+        &mut self,
+        geom: &Geom,
+        cores: &Cores,
+        implicits: &[Implicit],
+        cfg: &TagSimConfig,
+        asgn: &[SlotCard],
+        changed: &[(usize, SlotCard)],
+    ) -> f64 {
+        // Journal pre-move globals, then apply the integer count deltas.
+        self.j_cards.clear();
+        self.j_slots.clear();
+        self.j_der = self.der;
+        self.j_score = self.score;
+        for &(p, old) in changed {
+            let new = asgn[p];
+            self.counts.apply(geom, p, &old, -1);
+            self.counts.apply(geom, p, &new, 1);
+            self.j_cards.push((p, old, new));
+        }
+        // Derive-input skip: when every count derive_scalars() actually
+        // reads has a zero NET delta (and, under mutant, no union mask
+        // moved), its output is bit-identical — skip it and both global
+        // passes.
+        let mut dc = [0i32; 6];
+        let mut union_moved = false;
+        for k in 0..self.j_cards.len() {
+            let (_, old, new) = self.j_cards[k];
+            let co = derive_class(&old);
+            let cn = derive_class(&new);
+            for b in 0..6 { dc[b] += cn[b] - co[b]; }
+            union_moved |= Counts::union_mask(&old) != Counts::union_mask(&new);
+        }
+        let any_derive = (self.sens_ns && dc[3] + dc[4] + dc[5] != 0)
+            || (self.sens_deluxe && dc[2] != 0)
+            || (self.sens_dead && dc[0] != 0)
+            || (self.sens_arcane && dc[3] != 0)
+            || (self.have_unique
+                && (union_moved || dc.iter().any(|&d| d != 0)));
+        let (g_full, g_tail) = if any_derive {
+            let new_der = derive_scalars(cores, implicits, cfg, &self.counts);
+            // unique_groups_count feeds the per-slot implicit FOLD → rescan.
+            let g_full = new_der.unique_groups_count.to_bits()
+                != self.j_der.unique_groups_count.to_bits();
+            // Every other count-derived scalar only feeds finish_term() →
+            // cheap tail recompute over cached inputs, no rescans.
+            let g_tail = !g_full && new_der.tail_bits_differ(&self.j_der);
+            self.der = new_der;
+            (g_full, g_tail)
+        } else { (false, false) };
+
+        let n = geom.n;
+        self.stamp += 1;
+        self.dirty.clear();
+
+        // Local dirty set — every slot whose scans read a changed card,
+        // gated by what actually changed about it. Other slots are blind to
+        // a card's positional TYPE: bases count deadness/wildness/color
+        // (deadness only when color-blind), adjacency reads dead/greed/wild
+        // class + groups, boosts read greed-ness, runic reads the mirror
+        // partner like a base scan.
+        for k in 0..self.j_cards.len() {
+            let (p, old, new) = self.j_cards[k];
+            self.mark(p);
+            let scan_ch = if cfg.colors_real {
+                (old.t == T_DEAD) != (new.t == T_DEAD)
+                    || (old.t == T_WILD) != (new.t == T_WILD)
+                    || old.color != new.color
+            } else {
+                (old.t == T_DEAD) != (new.t == T_DEAD)
+            };
+            let greed_ch = is_greed(old.t) || is_greed(new.t);
+            let adj_ch = (self.adj_col || self.adj_surr)
+                && ((old.t == T_DEAD) != (new.t == T_DEAD)
+                    || (old.t == T_WILD) != (new.t == T_WILD)
+                    || is_greed(old.t) != is_greed(new.t)
+                    || old.groups != new.groups);
+            if greed_ch || (self.colormismatch && scan_ch) {
+                for d in 0..4 {
+                    if let Some(q) = geom.orth[p][d] { self.mark(q); }
+                }
+            }
+            if scan_ch {
+                if let Some(m) = geom.mirror_of[p] { self.mark(m); }
+                for k2 in 0..geom.row_peers[p].len() {
+                    let q = geom.row_peers[p][k2];
+                    if asgn[q].t == T_ROW { self.mark(q); }
+                }
+                for k2 in 0..geom.diag_peers[p].len() {
+                    let q = geom.diag_peers[p][k2];
+                    if asgn[q].t == T_DIAG { self.mark(q); }
+                }
+            }
+            if scan_ch || (self.adj_col && adj_ch) {
+                let adj = self.adj_col && adj_ch;
+                for k2 in 0..geom.col_peers[p].len() {
+                    let q = geom.col_peers[p][k2];
+                    if adj || (scan_ch && asgn[q].t == T_COL) { self.mark(q); }
+                }
+            }
+            if scan_ch || (self.adj_surr && adj_ch) {
+                let adj = self.adj_surr && adj_ch;
+                for k2 in 0..geom.surr_peers[p].len() {
+                    let q = geom.surr_peers[p][k2];
+                    if adj || (scan_ch && asgn[q].t == T_SURR) { self.mark(q); }
+                }
+            }
+        }
+
+        // Boost refresh set: changed slots always (their own boost gate reads
+        // their card), plus orth targets when a greed was involved. Both are
+        // marked dirty above under the same conditions, so refresh ⊆ dirty
+        // and the journal below covers every refreshed slot.
+        self.refresh.clear();
+        for k in 0..self.j_cards.len() {
+            let (p, old, new) = self.j_cards[k];
+            if !self.refresh.contains(&p) { self.refresh.push(p); }
+            if is_greed(old.t) || is_greed(new.t) {
+                for d in 0..4 {
+                    if let Some(q) = geom.orth[p][d] {
+                        if !self.refresh.contains(&q) { self.refresh.push(q); }
+                    }
+                }
+            }
+        }
+
+        // Journal the dirty slots only. Slots touched solely by a global
+        // pass (tail/full) are NOT journaled — rollback() recomputes them
+        // from restored state, which is the same pure function.
+        self.j_mode = if g_full { J_FULL } else if g_tail { J_TAIL } else { J_LOCAL };
+        for k in 0..self.dirty.len() {
+            let i = self.dirty[k];
+            self.j_slots.push(SlotSave {
+                i, inputs: self.inputs[i],
+                term: self.term[i], boost: self.boost[i],
+            });
+        }
+
+        for k in 0..self.refresh.len() {
+            let j = self.refresh[k];
+            self.boost[j] = boost_fold(geom, asgn, cfg, j);
+        }
+
+        {
+            let ctx = EvalCtx {
+                geom, cores, implicits, cfg,
+                counts: &self.counts, der: &self.der,
+                chain_id: &self.chain_zero_id, chain_size: &self.chain_zero_size,
+            };
+            if g_full {
+                for i in 0..n {
+                    let si = slot_scan(&ctx, asgn, i);
+                    self.inputs[i] = si;
+                    self.term[i] = if si.contributes {
+                        finish_term(&ctx, asgn, i, &si, self.boost[i])
+                    } else { 0.0 };
+                }
+            } else {
+                for k in 0..self.dirty.len() {
+                    let i = self.dirty[k];
+                    let si = slot_scan(&ctx, asgn, i);
+                    self.inputs[i] = si;
+                    self.term[i] = if si.contributes {
+                        finish_term(&ctx, asgn, i, &si, self.boost[i])
+                    } else { 0.0 };
+                }
+                if g_tail {
+                    for i in 0..n {
+                        if self.stamped[i] != self.stamp {
+                            let si = self.inputs[i];
+                            self.term[i] = if si.contributes {
+                                finish_term(&ctx, asgn, i, &si, self.boost[i])
+                            } else { 0.0 };
+                        }
+                    }
+                }
+            }
+        }
+
+        self.score = self.resum();
+        self.score
+    }
+
+    /// Accept the pending proposal (journal discarded).
+    fn commit(&mut self) {
+        self.j_cards.clear();
+        self.j_slots.clear();
+    }
+
+    /// Revert the pending proposal exactly: integer counts reverse-applied,
+    /// journaled per-slot values and globals restored bitwise. Slots a
+    /// global (tail/full) pass touched are recomputed from the restored
+    /// state instead — the same pure function, so the same bits. The caller
+    /// must restore `asgn` BEFORE calling this (the SA reject arms do).
+    fn rollback(
+        &mut self,
+        geom: &Geom,
+        cores: &Cores,
+        implicits: &[Implicit],
+        cfg: &TagSimConfig,
+        asgn: &[SlotCard],
+    ) {
+        for k in 0..self.j_cards.len() {
+            let (p, old, new) = self.j_cards[k];
+            self.counts.apply(geom, p, &new, -1);
+            self.counts.apply(geom, p, &old, 1);
+        }
+        self.der = self.j_der;
+        for k in 0..self.j_slots.len() {
+            let sv = self.j_slots[k];
+            self.inputs[sv.i] = sv.inputs;
+            self.term[sv.i] = sv.term;
+            self.boost[sv.i] = sv.boost;
+        }
+        if self.j_mode != J_LOCAL {
+            // stamped[] still holds this proposal's marks: un-journaled
+            // (non-dirty) slots are exactly the un-stamped ones.
+            let ctx = EvalCtx {
+                geom, cores, implicits, cfg,
+                counts: &self.counts, der: &self.der,
+                chain_id: &self.chain_zero_id, chain_size: &self.chain_zero_size,
+            };
+            let full = self.j_mode == J_FULL;
+            for i in 0..geom.n {
+                if self.stamped[i] == self.stamp { continue; }
+                if full {
+                    let si = slot_scan(&ctx, asgn, i);
+                    self.inputs[i] = si;
+                    self.term[i] = if si.contributes {
+                        finish_term(&ctx, asgn, i, &si, self.boost[i])
+                    } else { 0.0 };
+                } else {
+                    let si = self.inputs[i];
+                    self.term[i] = if si.contributes {
+                        finish_term(&ctx, asgn, i, &si, self.boost[i])
+                    } else { 0.0 };
+                }
+            }
+        }
+        self.score = self.j_score;
+        self.j_cards.clear();
+        self.j_slots.clear();
     }
 }
 
@@ -1263,6 +1944,19 @@ fn sa_one_restart(
     let mut best_score = score;
     let mut best_asgn = asgn.clone();
 
+    // Incremental re-scoring (bit-exact — see the DeltaEval contract).
+    // CHAIN implicits score through global component topology, and tiny
+    // decks pay more in bookkeeping than a full pass costs; both keep the
+    // plain simulate() path.
+    let use_delta = n >= DELTA_MIN_SLOTS
+        && !run.implicits.iter()
+            .any(|imp| matches!(imp, Implicit::Chain { .. }));
+    let mut deval = if use_delta {
+        let d = DeltaEval::new(geom, &asgn, cores, &run.implicits, cfg);
+        debug_assert_eq!(d.score.to_bits(), score.to_bits());
+        Some(d)
+    } else { None };
+
     // Proposal alphabets.
     let mut regular_options: Vec<usize> = Vec::new();
     let mut arcane_options: Vec<usize> = Vec::new();
@@ -1325,15 +2019,22 @@ fn sa_one_restart(
                 continue;
             }
             asgn[p].groups ^= bit;
-            let new_score = simulate(geom, &asgn, cores, &run.implicits, cfg, &mut s);
+            let new_score = match deval.as_mut() {
+                Some(d) => d.propose(geom, cores, &run.implicits, cfg, &asgn, &[(p, c)]),
+                None => simulate(geom, &asgn, cores, &run.implicits, cfg, &mut s),
+            };
             let delta = new_score - score;
             if delta >= 0.0 || rng.gen::<f64>() < (delta / temperature).exp() {
                 rules.toggle_apply(bit, adding);
                 stat_placed = (stat_placed as i32 + stat_delta) as u32;
                 score = new_score;
                 if score > best_score { best_score = score; best_asgn = asgn.clone(); }
+                if let Some(d) = deval.as_mut() { d.commit(); }
             } else {
                 asgn[p].groups ^= bit;
+                if let Some(d) = deval.as_mut() {
+                    d.rollback(geom, cores, &run.implicits, cfg, &asgn);
+                }
             }
         } else if n < 2 || roll < 0.80 + toggle_prob * 0.25 {
             // ── Replace move ─────────────────────────────────────────────
@@ -1354,16 +2055,23 @@ fn sa_one_restart(
                 if remaining[si] != u32::MAX { remaining[si] -= 1; }
                 if old_si < remaining.len() && remaining[old_si] != u32::MAX { remaining[old_si] += 1; }
                 asgn[p] = new;
-                let new_score = simulate(geom, &asgn, cores, &run.implicits, cfg, &mut s);
+                let new_score = match deval.as_mut() {
+                    Some(d) => d.propose(geom, cores, &run.implicits, cfg, &asgn, &[(p, old)]),
+                    None => simulate(geom, &asgn, cores, &run.implicits, cfg, &mut s),
+                };
                 let delta = new_score - score;
                 if delta >= 0.0 || rng.gen::<f64>() < (delta / temperature).exp() {
                     score = new_score;
                     if score > best_score { best_score = score; best_asgn = asgn.clone(); }
+                    if let Some(d) = deval.as_mut() { d.commit(); }
                 } else {
                     rules.apply(&new, &old, &mut tmp_old);
                     if remaining[si] != u32::MAX { remaining[si] += 1; }
                     if old_si < remaining.len() && remaining[old_si] != u32::MAX { remaining[old_si] -= 1; }
                     asgn[p] = old;
+                    if let Some(d) = deval.as_mut() {
+                        d.rollback(geom, cores, &run.implicits, cfg, &asgn);
+                    }
                 }
                 continue;
             }
@@ -1414,11 +2122,15 @@ fn sa_one_restart(
             stat_placed = (stat_placed as i32 + stat_delta) as u32;
             asgn[p] = new;
 
-            let new_score = simulate(geom, &asgn, cores, &run.implicits, cfg, &mut s);
+            let new_score = match deval.as_mut() {
+                Some(d) => d.propose(geom, cores, &run.implicits, cfg, &asgn, &[(p, old)]),
+                None => simulate(geom, &asgn, cores, &run.implicits, cfg, &mut s),
+            };
             let delta = new_score - score;
             if delta >= 0.0 || rng.gen::<f64>() < (delta / temperature).exp() {
                 score = new_score;
                 if score > best_score { best_score = score; best_asgn = asgn.clone(); }
+                if let Some(d) = deval.as_mut() { d.commit(); }
             } else {
                 rules.apply(&new, &old, &mut tmp_old);
                 if si != dead_option {
@@ -1431,6 +2143,9 @@ fn sa_one_restart(
                 }
                 stat_placed = (stat_placed as i32 - stat_delta) as u32;
                 asgn[p] = old;
+                if let Some(d) = deval.as_mut() {
+                    d.rollback(geom, cores, &run.implicits, cfg, &asgn);
+                }
             }
         } else {
             // ── Pair swap ────────────────────────────────────────────────
@@ -1448,14 +2163,25 @@ fn sa_one_restart(
             };
             if !legal(a1, v1) || !legal(a2, v2) { continue; }
 
+            let o1 = asgn[p1];
+            let o2 = asgn[p2];
             asgn.swap(p1, p2);
-            let new_score = simulate(geom, &asgn, cores, &run.implicits, cfg, &mut s);
+            let new_score = match deval.as_mut() {
+                Some(d) => d.propose(
+                    geom, cores, &run.implicits, cfg, &asgn, &[(p1, o1), (p2, o2)],
+                ),
+                None => simulate(geom, &asgn, cores, &run.implicits, cfg, &mut s),
+            };
             let delta = new_score - score;
             if delta >= 0.0 || rng.gen::<f64>() < (delta / temperature).exp() {
                 score = new_score;
                 if score > best_score { best_score = score; best_asgn = asgn.clone(); }
+                if let Some(d) = deval.as_mut() { d.commit(); }
             } else {
                 asgn.swap(p1, p2);
+                if let Some(d) = deval.as_mut() {
+                    d.rollback(geom, cores, &run.implicits, cfg, &asgn);
+                }
             }
         }
     }
@@ -1536,4 +2262,277 @@ pub fn score_tagged(run: &TagRun<'_>, asgn: &[SlotCard]) -> f64 {
     let cores = Cores::build(&run.cores);
     let mut s = Scratch::new(&geom);
     simulate(&geom, asgn, &cores, &run.implicits, &run.cfg, &mut s)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — DeltaEval ≡ simulate() bit-exactness stress
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod delta_tests {
+    use super::*;
+
+    /// Row/col/surr/diag peer lists (self-exclusive) exactly as the callers
+    /// build them from the game's definitions — symmetric by construction.
+    fn build_peers(slots: &[(i32, i32)])
+        -> (Vec<Vec<usize>>, Vec<Vec<usize>>, Vec<Vec<usize>>, Vec<Vec<usize>>)
+    {
+        let n = slots.len();
+        let mut row = vec![Vec::new(); n];
+        let mut col = vec![Vec::new(); n];
+        let mut surr = vec![Vec::new(); n];
+        let mut diag = vec![Vec::new(); n];
+        for i in 0..n {
+            for j in 0..n {
+                if i == j { continue; }
+                let (r1, c1) = slots[i];
+                let (r2, c2) = slots[j];
+                if r1 == r2 { row[i].push(j); }
+                if c1 == c2 { col[i].push(j); }
+                if (r1 - r2).abs() <= 1 && (c1 - c2).abs() <= 1 { surr[i].push(j); }
+                if (r1 - r2).abs() == (c1 - c2).abs() { diag[i].push(j); }
+            }
+        }
+        (row, col, surr, diag)
+    }
+
+    const CARD_TYPES: [u8; 13] = [
+        T_ROW, T_COL, T_SURR, T_DIAG, T_DELUXE, T_TYPELESS,
+        T_G_UP, T_G_DOWN, T_G_LEFT, T_G_RIGHT, T_ARCANE, T_WILD, T_DEAD,
+    ];
+
+    fn rand_card(rng: &mut SmallRng) -> SlotCard {
+        let t = CARD_TYPES[rng.gen_range(0..CARD_TYPES.len())];
+        if t == T_DEAD { return DEAD_CARD; }
+        let color = rng.gen_range(0..N_COLORS) as u8;
+        let scale = if rng.gen_bool(0.25) {
+            rng.gen_range(0..N_COLORS) as u8
+        } else { color };
+        let mut groups = 0u16;
+        for b in 0..N_GROUP_BITS {
+            if rng.gen_bool(0.15) { groups |= 1u16 << b; }
+        }
+        SlotCard { t, color, scale, groups, stack: 0 }
+    }
+
+    fn rand_cfg(rng: &mut SmallRng) -> TagSimConfig {
+        let colors_real = rng.gen_bool(0.5);
+        TagSimConfig {
+            mult_dir_vert: 1.0 + rng.gen_range(1..=5) as f64,
+            mult_dir_horiz: 1.0 + rng.gen_range(1..=5) as f64,
+            mult_pure_base: 1.0,
+            mult_pure_scale: 0.03 * rng.gen_range(1..=3) as f64,
+            mult_equilibrium: 1.25,
+            mult_foil: 2.0,
+            mult_steadfast: 1.2,
+            mult_sparkling: 1.6,
+            mult_color: 1.5,
+            mult_deluxe_flat: 3.0,
+            mult_deluxe_core_base: 1.0,
+            mult_deluxe_core_scale: 0.1,
+            mult_void_core_base: 1.0,
+            mult_void_core_scale: 0.15,
+            mult_archive_core: 1.1,
+            greed_additive: rng.gen_bool(0.7),
+            additive_cores: rng.gen_bool(0.7),
+            is_shiny: rng.gen_bool(0.5),
+            auto_place_arcane: false,
+            colors_real,
+            complex: colors_real && rng.gen_bool(0.4),
+            wv_foil_rules: true,
+            floor_counts_deluxe: false,
+        }
+    }
+
+    fn rand_cores(rng: &mut SmallRng) -> Vec<CoreSpecIn> {
+        const TYPES: [u8; 9] = [
+            CORE_PURE, CORE_EQUILIBRIUM, CORE_STEADFAST, CORE_COLOR,
+            CORE_FOIL, CORE_DELUXE, CORE_VOID, CORE_ARCHIVE, CORE_SPARKLING,
+        ];
+        let mut out = Vec::new();
+        for &t in &TYPES {
+            if rng.gen_bool(0.35) {
+                out.push(CoreSpecIn {
+                    core_type: t,
+                    color: if t == CORE_COLOR {
+                        rng.gen_range(0..N_COLORS) as u8
+                    } else { COLOR_NONE },
+                    override_: if rng.gen_bool(0.2) {
+                        1.0 + rng.gen_range(1..=8) as f64 * 0.1
+                    } else { -1.0 },
+                });
+            }
+        }
+        out
+    }
+
+    /// Every implicit kind EXCEPT Chain (chain decks bypass DeltaEval).
+    fn rand_implicits(rng: &mut SmallRng) -> Vec<Implicit> {
+        let mut out = Vec::new();
+        if rng.gen_bool(0.4) {
+            out.push(Implicit::GlobalFlat {
+                value: 0.2,
+                groups: if rng.gen_bool(0.5) { G_STAT } else { 0 },
+                colors: if rng.gen_bool(0.4) { 1 << rng.gen_range(0..N_COLORS) } else { 0 },
+            });
+        }
+        if rng.gen_bool(0.35) {
+            out.push(Implicit::Freq { mult: 2.0, ptype: rng.gen_range(0..4) as u8 });
+        }
+        if rng.gen_bool(0.35) {
+            out.push(Implicit::Adjacency {
+                value: 0.15,
+                group: 1u16 << rng.gen_range(0..N_GROUP_BITS),
+                surrounding: rng.gen_bool(0.5),
+            });
+        }
+        if rng.gen_bool(0.3) { out.push(Implicit::ColorMismatch { value: 0.1 }); }
+        if rng.gen_bool(0.3) { out.push(Implicit::RowPos { value: 0.05 }); }
+        if rng.gen_bool(0.3) { out.push(Implicit::EmptySlots { value: 0.12 }); }
+        if rng.gen_bool(0.3) { out.push(Implicit::UniqueGroups { value: 0.08 }); }
+        if rng.gen_bool(0.35) { out.push(Implicit::Mirror { value: 1.5 }); }
+        out
+    }
+
+    /// Random decks × random move sequences across the config matrix: after
+    /// every propose(), and after every rollback(), the delta score must be
+    /// bit-for-bit identical to a fresh full simulate().
+    #[test]
+    fn delta_full_equiv() {
+        let mut rng = SmallRng::seed_from_u64(0x00DE_CAF5);
+        for case in 0..200u32 {
+            let mut slots: Vec<(i32, i32)> = Vec::new();
+            for r in 0..6i32 {
+                for c in 0..6i32 {
+                    if rng.gen_bool(0.7) { slots.push((r, c)); }
+                }
+            }
+            while slots.len() < 4 {
+                let p = (rng.gen_range(0..6), rng.gen_range(0..6));
+                if !slots.contains(&p) { slots.push(p); }
+            }
+            let n = slots.len();
+            let (row_peers, col_peers, surr_peers, diag_peers) = build_peers(&slots);
+            let arcane_slot_indices: Vec<usize> =
+                (0..n).filter(|_| rng.gen_bool(0.12)).collect();
+            let cfg_v = rand_cfg(&mut rng);
+            let implicits = rand_implicits(&mut rng);
+            let core_specs = rand_cores(&mut rng);
+
+            let run = TagRun {
+                slots: &slots,
+                row_peers, col_peers, surr_peers, diag_peers,
+                arcane_slot_indices,
+                stacks: Vec::new(),
+                tag_rules: Vec::new(),
+                blanket_groups: 0,
+                assignable_groups: 0,
+                legal_combos: Vec::new(),
+                implicits: implicits.clone(),
+                cores: core_specs.clone(),
+                min_stat_placed: 0,
+                final_pass_nonfoil_evo: false,
+                exact_groups: true,
+                n_iter: 0,
+                restarts: 1,
+                seed: None,
+                cfg: cfg_v,
+            };
+            let geom = build_geom(&run);
+            let cores = Cores::build(&core_specs);
+            let cfg = &run.cfg;
+            let mut sc = Scratch::new(&geom);
+
+            let mut asgn: Vec<SlotCard> = (0..n).map(|_| rand_card(&mut rng)).collect();
+            let mut d = DeltaEval::new(&geom, &asgn, &cores, &implicits, cfg);
+            let full0 = simulate(&geom, &asgn, &cores, &implicits, cfg, &mut sc);
+            assert_eq!(d.score.to_bits(), full0.to_bits(), "case {}: init mismatch", case);
+
+            for step in 0..250u32 {
+                let kind = rng.gen_range(0..3);
+                let mut changed: Vec<(usize, SlotCard)> = Vec::new();
+                match kind {
+                    0 => {
+                        let p = rng.gen_range(0..n);
+                        let old = asgn[p];
+                        asgn[p] = rand_card(&mut rng);
+                        changed.push((p, old));
+                    }
+                    1 if n >= 2 => {
+                        let p1 = rng.gen_range(0..n);
+                        let mut p2 = rng.gen_range(0..n);
+                        while p2 == p1 { p2 = rng.gen_range(0..n); }
+                        let o1 = asgn[p1];
+                        let o2 = asgn[p2];
+                        asgn.swap(p1, p2);
+                        changed.push((p1, o1));
+                        changed.push((p2, o2));
+                    }
+                    _ => {
+                        let p = rng.gen_range(0..n);
+                        if asgn[p].t == T_DEAD { continue; }
+                        let old = asgn[p];
+                        asgn[p].groups ^= 1u16 << rng.gen_range(0..N_GROUP_BITS);
+                        changed.push((p, old));
+                    }
+                }
+                let sc_delta = d.propose(&geom, &cores, &implicits, cfg, &asgn, &changed);
+                let sc_full = simulate(&geom, &asgn, &cores, &implicits, cfg, &mut sc);
+                assert_eq!(
+                    sc_delta.to_bits(), sc_full.to_bits(),
+                    "case {} step {}: delta {} != full {}", case, step, sc_delta, sc_full,
+                );
+                if rng.gen_bool(0.4) {
+                    for &(p, old) in changed.iter().rev() { asgn[p] = old; }
+                    d.rollback(&geom, &cores, &implicits, cfg, &asgn);
+                    let sc_back = simulate(&geom, &asgn, &cores, &implicits, cfg, &mut sc);
+                    assert_eq!(
+                        d.score.to_bits(), sc_back.to_bits(),
+                        "case {} step {}: rollback mismatch", case, step,
+                    );
+                } else {
+                    d.commit();
+                }
+            }
+        }
+    }
+
+    /// Chain decks bypass DeltaEval — the SA must still run end to end.
+    #[test]
+    fn chain_deck_smoke() {
+        let slots: Vec<(i32, i32)> = (0..5i32)
+            .flat_map(|r| (0..5i32).map(move |c| (r, c)))
+            .collect();
+        let (row_peers, col_peers, surr_peers, diag_peers) = build_peers(&slots);
+        let mut cfg = rand_cfg(&mut SmallRng::seed_from_u64(7));
+        cfg.additive_cores = true;
+        cfg.greed_additive = true;
+        let run = TagRun {
+            slots: &slots,
+            row_peers, col_peers, surr_peers, diag_peers,
+            arcane_slot_indices: Vec::new(),
+            stacks: vec![
+                CardSpec { t: T_ROW, color: RED, scale: RED, groups: 0,
+                           count: u32::MAX, min_place: 0 },
+                CardSpec { t: T_G_UP, color: RED, scale: RED, groups: 0,
+                           count: u32::MAX, min_place: 0 },
+            ],
+            tag_rules: Vec::new(),
+            blanket_groups: 0,
+            assignable_groups: 0,
+            legal_combos: Vec::new(),
+            implicits: vec![Implicit::Chain { value: 0.1 }],
+            cores: Vec::new(),
+            min_stat_placed: 0,
+            final_pass_nonfoil_evo: false,
+            exact_groups: false,
+            n_iter: 2000,
+            restarts: 1,
+            seed: Some(42),
+            cfg,
+        };
+        let (asgn, score) = run_sa_tagged(run);
+        assert!(score > 0.0);
+        assert_eq!(asgn.len(), 25);
+    }
 }

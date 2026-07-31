@@ -1097,3 +1097,37 @@ card reality. The CLI reads the same per-mode file via
   addends are far below 4, but the kernel doesn't model their
   group/class targeting either — a dedicated vanilla greed pass is
   future work.
+
+### Bit-exact delta evaluation in the SA (2026-07-31)
+
+- The tagged kernel's SA no longer re-simulates the whole deck per
+  proposal. `DeltaEval` (in the shared `tagsim.rs`, so CLI and web get it
+  identically) maintains the integer deck-composition counts plus
+  per-slot caches of scan inputs, greed boosts, and final terms, and
+  re-scores a move by recomputing only the slots whose inputs could have
+  changed, then re-summing every contributing term in slot order.
+- **This is an optimization with NO modeling content**: the contract is
+  that after every propose/rollback the tracked score is **bit-for-bit**
+  what a full `simulate()` returns on the same assignment, so seeded
+  trajectories — and therefore results — are unchanged. Enforced by
+  (a) the `delta_full_equiv` stress test (200 random configs × 250
+  random moves across the full core/implicit/flag matrix, asserted
+  bitwise at every step including after rollbacks, `cargo test` in
+  `ndm_core`), and (b) a 294-run fixed-seed A/B corpus over all decks ×
+  classes × core sets through the real CLI path — scores AND
+  assignments identical before/after to the bit.
+- Structure: `simulate()` itself was refactored onto the same shared
+  pieces (`Counts`, `derive_scalars`, `slot_scan`, `finish_term`,
+  `boost_pass`) and stays the ground truth for `score_tagged`, init and
+  the §6 final pass. Global scalar drift (pure/deluxe/void/archive/
+  empty) triggers a cheap tail-arithmetic pass over cached inputs;
+  mutant's `unique_groups_count` drift triggers a full rescan; decks
+  with a CHAIN implicit (snake — globally topological) and decks under
+  16 slots skip delta entirely and keep the plain path.
+- Measured effect: the SA loop's fixed costs (RNG, legality, proposal
+  bookkeeping) dominate at panel deck sizes, so the end-to-end win is
+  real but modest — roughly ×1.1–1.3 per SA run at 24–32 slots (larger
+  decks gain more; scoring itself is a minority of loop time). An
+  ignored `sa_bench` test in `ndm_core/src/lib.rs` (run with
+  `cargo test --release -- --ignored --nocapture bench_sa`) is the
+  controlled instrument used for the old-vs-new comparison.
