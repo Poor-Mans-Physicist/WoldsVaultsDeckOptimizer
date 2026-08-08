@@ -13,6 +13,7 @@
     builderCanvasClick, builderCanvasContextClick,
     saveBuilderDeck, reloadSavedDecks,
     captureSnapshot, saveSnapshot, restoreSnapshot, reloadSnapshots,
+    defaultGreedMult, effectiveCfg,
   } from "./lib/state.svelte";
   import { loadConfigBundle, getMode } from "./lib/config";
   import { loadDecks, implicitCatalog, legalTagCombos } from "./lib/deck";
@@ -156,6 +157,7 @@
       // Bonus Cores defaults to the mode's configured deckmod (1 in wolds,
       // 0 in vanilla). User-set value is reset whenever the mode flips.
       app.bonusCores = app.cfg.deckmod ?? 0;
+      app.greedMult  = defaultGreedMult();
       app.decks  = await loadDecks(baseUrl, app.cfg.deckmod, app.mode);
       app.deck   = app.decks[0] ?? null;
     } catch (e) {
@@ -262,6 +264,7 @@
         app.cfg  = getMode(app.bundle!, snap.mode);
         app.autoPlaceArcane = app.cfg.arcane?.auto_place ?? true;
         app.bonusCores = app.cfg.deckmod ?? 0;
+        app.greedMult  = defaultGreedMult();
         app.decks = await loadDecks(baseUrl, app.cfg.deckmod, snap.mode);
         await reloadCardCatalog();
       }
@@ -312,6 +315,8 @@
     // Intentionally drops any user override on mode flip — defaults are
     // mode-meaningful and "sticky" Bonus Cores across modes is confusing.
     app.bonusCores = app.cfg.deckmod ?? 0;
+    // Same for the greed knob: each mode's config carries its own addend.
+    app.greedMult  = defaultGreedMult();
     app.decks = await loadDecks(baseUrl, app.cfg.deckmod, next);
     app.deck  = (prevName && app.decks.find((d) => d.name === prevName)) || app.decks[0] || null;
     await reloadCardCatalog();
@@ -395,7 +400,9 @@
         cores:           selectedCores(),
         nIter:           depth.nIter,
         restarts:        depth.restarts,
-        cfg:             $state.snapshot(app.cfg),
+        // effectiveCfg() = app.cfg with the greed-multiplier knob applied
+        // (already a plain snapshot — worker structured-clone safe).
+        cfg:             effectiveCfg()!,
       });
       app.result = r;
       app.whatIf = new Map();

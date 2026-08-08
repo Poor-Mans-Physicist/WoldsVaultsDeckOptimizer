@@ -92,6 +92,13 @@ interface AppState {
   // value is unbounded — typing a large negative number just clamps the
   // effective core count to 0.
   bonusCores: number;
+  // "Greed card multiplier" knob (cores panel). Holds the in-game FACE
+  // multiplier — a best-roll tier-3 greed reads ×5, so the default is
+  // cfg dir_vert addend + 1 (= 5). The solver applies (value − 1) as the
+  // additive bonus per greed: 5 ⇒ +400%, 3.5 ⇒ +250%. Non-integers fine.
+  // null = empty input box ⇒ fall back to the default. Re-seeded on mode
+  // flip; every scoring surface reads it through effectiveCfg().
+  greedMult: number | null;
 
   // Run
   running: boolean;
@@ -149,6 +156,7 @@ export const app = $state<AppState>({
   autoPlaceArcane: true,   // default; overridden from cfg.arcane.auto_place on boot
   coreState: initialCoreState(),
   bonusCores: 0,           // seeded from cfg.deckmod on boot + mode change
+  greedMult: 5,            // seeded from cfg greed addend + 1 on boot + mode change
 
   running: false,
   result: null,
@@ -185,6 +193,42 @@ export function selectedCores(): CoreSpec[] {
 /** Toggle every core checkbox at once (Enable-all / Disable-all). */
 export function setAllCores(enabled: boolean): void {
   for (const s of app.coreState) s.enabled = enabled;
+}
+
+/** Default face value for the greed knob: the mode config's dir_vert additive
+ *  bonus + 1 (wolds addend 4 ⇒ ×5, the pack's best tier-3 roll). */
+export function defaultGreedMult(): number {
+  return (app.cfg?.greed.dir_vert ?? 4) + 1;
+}
+
+/** Greed-knob setter. Clears the run result: a stale result was optimized
+ *  under the old multiplier, so every re-score against it (badge, what-if
+ *  popup) would silently disagree. */
+export function setGreedMult(v: number | null): void {
+  if (app.greedMult === v) return;
+  app.greedMult = v;
+  clearRunResult();
+}
+
+/** The knob's effective face value — empty / non-finite input falls back to
+ *  the mode default rather than poisoning scores with NaN. */
+export function currentGreedMult(): number {
+  const v = app.greedMult;
+  return typeof v === "number" && Number.isFinite(v) ? v : defaultGreedMult();
+}
+
+/** The mode config with the greed knob applied: dir_vert/dir_horiz become
+ *  (face value − 1), the additive bonus every cardinal greed contributes
+ *  (5 ⇒ +400%). EVERY scoring surface — the SA payload, the TS mirror the
+ *  badge compares against, the what-if re-score, and snapshot restores —
+ *  must read the config through this so they can't drift apart. Returns a
+ *  plain snapshot (structured-clone-safe for the worker boundary). */
+export function effectiveCfg(): ResolvedConfig | null {
+  if (!app.cfg) return null;
+  const cfg = $state.snapshot(app.cfg) as ResolvedConfig;
+  const addend = currentGreedMult() - 1;
+  cfg.greed = { ...cfg.greed, dir_vert: addend, dir_horiz: addend };
+  return cfg;
 }
 
 /** Deck-implicit toggle. Clears the run result: a stale result would have
@@ -271,7 +315,7 @@ export function whatIfBreakdown() {
   return simulateTaggedBreakdown(
     app.result.deck, cards, app.cardClass, app.result.coresUsed, currentImplicits(),
     { colorsReal, complex: app.complexCards, wvFoilRules: app.mode !== "vanilla" },
-    app.cfg,
+    effectiveCfg()!,
   );
 }
 
@@ -718,7 +762,7 @@ export function restoreSnapshot(snap: Snapshot): void {
       complex: isV2 ? (snap.complexCards ?? false) : false,
       wvFoilRules: snap.mode !== "vanilla",
     },
-    app.cfg,
+    effectiveCfg()!,
   );
   app.result = {
     deck,

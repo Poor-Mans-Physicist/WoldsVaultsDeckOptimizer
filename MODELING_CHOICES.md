@@ -1098,6 +1098,22 @@ card reality. The CLI reads the same per-mode file via
   group/class targeting either — a dedicated vanilla greed pass is
   future work.
 
+### Greed card multiplier knob — WEB ONLY (2026-07-31)
+
+- The cores panel's bottom row exposes **"Greed card multiplier"**: one
+  number box (default **5**, non-integers fine) covering every greed card.
+  The entered value is the in-game FACE multiplier; the solver applies
+  **(value − 1)** as each greed's additive bonus — 5 ⇒ +400% (the pack's
+  best tier-3 roll, i.e. unchanged default behavior), 3.5 ⇒ +250%.
+- Plumbing: `state.svelte.ts::effectiveCfg()` clones the mode config with
+  `greed.dir_vert/dir_horiz = value − 1`; the SA payload, the TS mirror
+  behind the verify badge, the what-if re-score, and snapshot restores all
+  read the config through it, so the badge stays meaningful at any value.
+  Default re-seeds from the mode config (`dir_vert + 1`) on boot and mode
+  flip; an empty box falls back to the default; editing the knob clears a
+  live result (it was optimized under the old value). The CLI is
+  unaffected — `config.yaml` still holds the addend directly.
+
 ### Bit-exact delta evaluation in the SA (2026-07-31)
 
 - The tagged kernel's SA no longer re-simulates the whole deck per

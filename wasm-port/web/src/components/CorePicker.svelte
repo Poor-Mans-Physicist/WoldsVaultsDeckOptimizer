@@ -1,6 +1,6 @@
 <script lang="ts">
   import {
-    app, setAllCores,
+    app, setAllCores, setGreedMult, defaultGreedMult,
     toggleConstructionCore, toggleArcaneCore, toggleGreaterStructural,
   } from "../lib/state.svelte";
   import {
@@ -46,6 +46,15 @@
   // the Greater toggle was switched off while the user was over the base cap.
   const placementsLeft  = $derived(Math.max(0, maxConstruction(app.structural)   - app.structural.addedSlots.length));
   const conversionsLeft = $derived(Math.max(0, maxArcaneConvert(app.structural) - app.structural.convertedSlots.length));
+
+  // Greed knob input: empty box → null (solver falls back to the mode
+  // default); anything non-numeric mid-edit is treated the same way.
+  function onGreedInput(raw: string): void {
+    const t = raw.trim();
+    if (t === "") { setGreedMult(null); return; }
+    const v = Number(t);
+    setGreedMult(Number.isFinite(v) ? v : null);
+  }
 </script>
 
 <div class="card">
@@ -203,6 +212,42 @@
       {/if}
     </div>
   {/if}
+
+  <!-- ── Greed card multiplier ─────────────────────────────────────────────
+       One knob for every greed card, entered as the in-game FACE multiplier
+       (a best-roll tier-3 card reads ×5). Greeds stack additively, so the
+       solver applies (value − 1) as each greed's bonus: 5 ⇒ +400% (the
+       default), 3.5 ⇒ +250%. Editing it clears any live result (which was
+       optimized under the old value). -->
+  <div class="bonus-row">
+    <div class="bonus-label">
+      <label for="greed-mult-input">Greed card multiplier</label>
+      <details class="info">
+        <summary aria-label="What is Greed card multiplier?">?</summary>
+        <div class="info-body">
+          <p>
+            The face multiplier on your greed cards — a best-roll tier-3
+            card reads <code>×5</code>, so the default is <code>5</code>.
+            Non-integers are fine.
+          </p>
+          <p>
+            Greeds stack additively in-game, so the solver counts each greed
+            as <code>+(value − 1) × 100%</code> on its target:
+            <code>5</code> ⇒ +400%, <code>3.5</code> ⇒ +250%.
+          </p>
+        </div>
+      </details>
+    </div>
+    <input
+      id="greed-mult-input"
+      type="number"
+      class="override"
+      step="any"
+      placeholder={String(defaultGreedMult())}
+      value={app.greedMult ?? ""}
+      oninput={(e) => onGreedInput((e.currentTarget as HTMLInputElement).value)}
+    />
+  </div>
 </div>
 
 <style>
