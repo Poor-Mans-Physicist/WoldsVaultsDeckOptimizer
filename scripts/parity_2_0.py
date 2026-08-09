@@ -80,16 +80,18 @@ def _score_tagged(deck, asgn, card_class, cores):
         color = "" if t == CardType.DEAD else mono
         groups = []
         # Run-level foil rule, mirrored from the kernel's materialize():
-        # shiny (Wold's) or evo+FOIL-core ⇒ scorable/arcane cards are foil.
+        # shiny (Wold's) or evo+FOIL-core ⇒ SCORABLE cards are foil. Arcane
+        # never takes the Foil bit (materialize strips it — playtest ruling),
+        # which matters now that PURE counts by the per-card Foil group.
         foil_core = any(c.value == "foil" for c in cores)
         shiny = card_class == CardClass.SHINY
         wv = MODE != "vanilla"
         foil = (wv if shiny else foil_core)
-        scorable_or_arcane = t in (
+        scorable = t in (
             CardType.ROW, CardType.COL, CardType.SURR, CardType.DIAG,
-            CardType.DELUXE, CardType.TYPELESS, CardType.ARCANE,
+            CardType.DELUXE, CardType.TYPELESS,
         )
-        if foil and scorable_or_arcane:
+        if foil and scorable:
             groups.append("Foil")
         assignment.append((t.value, color, "", groups))
 

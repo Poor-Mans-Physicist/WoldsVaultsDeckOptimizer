@@ -479,9 +479,14 @@ struct Counts {
     n_arcane: u32,
     n_greed: u32,
     n_dead: u32,
-    n_ns_positional: u32,    // NON-FOIL positionals (per-card §5)
+    /// Every placed card WITHOUT the Foil group (any type — the game's
+    /// NonFoilEfficiencyDeckModifier counts all of them; audited 2026-08-01).
+    n_nonfoil: u32,
     n_wild: u32,
     group_refs: [u32; N_GROUP_BITS],   // per-bit placed-card counts → union
+    /// Placed cards per color (wild counts as every color, mirroring the
+    /// game's Card::getColors) → EQUILIBRIUM's unique-color count.
+    color_cards: [u32; N_COLORS],
 }
 
 impl Counts {
@@ -492,8 +497,9 @@ impl Counts {
             row_fill: vec![0; geom.row_span],
             col_fill: vec![0; geom.col_span],
             n_deluxe: 0, n_arcane: 0, n_greed: 0, n_dead: 0,
-            n_ns_positional: 0, n_wild: 0,
+            n_nonfoil: 0, n_wild: 0,
             group_refs: [0; N_GROUP_BITS],
+            color_cards: [0; N_COLORS],
         }
     }
 
@@ -515,24 +521,26 @@ impl Counts {
         bump(&mut self.row_fill[r], s);
         bump(&mut self.col_fill[cc], s);
         if c.t == T_WILD {
-            // Wild counts as every color for neighbors' same-color scans.
+            // Wild counts as every color for neighbors' same-color scans —
+            // and toward EQUILIBRIUM's unique-color set.
             for k in 0..N_COLORS {
                 bump(&mut self.row_color[r * N_COLORS + k], s);
                 bump(&mut self.col_color[cc * N_COLORS + k], s);
+                bump(&mut self.color_cards[k], s);
             }
             bump(&mut self.n_wild, s);
         } else if c.color != COLOR_NONE {
             bump(&mut self.row_color[r * N_COLORS + c.color as usize], s);
             bump(&mut self.col_color[cc * N_COLORS + c.color as usize], s);
+            bump(&mut self.color_cards[c.color as usize], s);
         }
         let mut mask = Self::union_mask(c);
         while mask != 0 {
             bump(&mut self.group_refs[mask.trailing_zeros() as usize], s);
             mask &= mask - 1;
         }
-        if is_positional(c.t) {
-            if c.groups & G_FOIL == 0 { bump(&mut self.n_ns_positional, s); }
-        } else if c.t == T_DELUXE { bump(&mut self.n_deluxe, s); }
+        if c.groups & G_FOIL == 0 { bump(&mut self.n_nonfoil, s); }
+        if c.t == T_DELUXE { bump(&mut self.n_deluxe, s); }
         else if c.t == T_ARCANE { bump(&mut self.n_arcane, s); }
         else if is_greed(c.t) { bump(&mut self.n_greed, s); }
     }
@@ -543,8 +551,9 @@ impl Counts {
         for v in self.row_fill.iter_mut() { *v = 0; }
         for v in self.col_fill.iter_mut() { *v = 0; }
         self.n_deluxe = 0; self.n_arcane = 0; self.n_greed = 0;
-        self.n_dead = 0; self.n_ns_positional = 0; self.n_wild = 0;
+        self.n_dead = 0; self.n_nonfoil = 0; self.n_wild = 0;
         self.group_refs = [0; N_GROUP_BITS];
+        self.color_cards = [0; N_COLORS];
         for (i, c) in asgn.iter().enumerate() {
             self.apply(geom, i, c, 1);
         }
@@ -559,11 +568,21 @@ impl Counts {
         u
     }
 
-    /// n_ns (Pure): greed + arcane always; positionals only while non-foil.
-    /// Typeless / deluxe never (classic-kernel design, preserved).
+    /// n_ns (Pure): EVERY placed card without the Foil group. The game's
+    /// NonFoilEfficiencyDeckModifier streams all deck cards and filters on
+    /// !hasGroup("Foil") — typeless, deluxe and wild count too (audited
+    /// 2026-08-01; the old greed+arcane+non-foil-positional definition was
+    /// a 1.x simplification).
     #[inline(always)]
     fn n_ns(&self) -> usize {
-        (self.n_greed + self.n_arcane + self.n_ns_positional) as usize
+        self.n_nonfoil as usize
+    }
+
+    /// EQUILIBRIUM's unique-color count: distinct colors over all placed
+    /// cards (StatEfficiencyDeckModifier.getUniqueColorCount).
+    #[inline(always)]
+    fn n_distinct_colors(&self) -> usize {
+        (0..N_COLORS).filter(|&k| self.color_cards[k] > 0).count()
     }
 }
 
@@ -625,6 +644,7 @@ fn derive_scalars(
     let n_arcane = counts.n_arcane as usize;
     let n_greed = counts.n_greed as usize;
     let n_dead = counts.n_dead as usize;
+    let n_colors = counts.n_distinct_colors();
     let any_wild = counts.n_wild > 0;
 
     // ── Cores → baseline + gated addends (identical math to 1.x) ─────────
@@ -651,7 +671,12 @@ fn derive_scalars(
                 baseline_prod *= v;
             }
             CORE_EQUILIBRIUM if cfg.is_shiny => {
-                let v = if ov { spec.override_ } else { cfg.mult_equilibrium };
+                // StatEfficiencyDeckModifier (audited 2026-08-01): value =
+                // 1 + roll × unique deck colors, Stat cards only (≡ shiny
+                // runs in this model). `mult_equilibrium` is the PER-COLOR
+                // roll (best 0.5 wolds / 0.7 vanilla).
+                let scale = if ov { spec.override_ } else { cfg.mult_equilibrium };
+                let v = 1.0 + scale * n_colors as f64;
                 baseline_sum += v - 1.0; baseline_prod *= v;
             }
             CORE_STEADFAST if cfg.is_shiny => {
@@ -1275,11 +1300,11 @@ const J_FULL: u8 = 2;
 const DELTA_MIN_SLOTS: usize = 16;
 
 /// The Derived-input contributions of a card: [dead, wild, deluxe, arcane,
-/// greed, non-foil positional]. derive_scalars() reads a counter only when a
-/// matching core/implicit is active, so a proposal skips the call whenever
-/// every SENSITIVE net delta is zero — the output would be bit-identical.
-/// (Net matters: positional→greed keeps n_ns, so a pure-core deck stays on
-/// the local path for that move.)
+/// greed, non-foil]. derive_scalars() reads a counter only when a matching
+/// core/implicit is active, so a proposal skips the call whenever every
+/// SENSITIVE net delta is zero — the output would be bit-identical. (Net
+/// matters: a non-foil card swapped for another non-foil card keeps n_ns,
+/// so a pure-core deck stays on the local path for that move.)
 #[inline(always)]
 fn derive_class(c: &SlotCard) -> [i32; 6] {
     [
@@ -1288,7 +1313,7 @@ fn derive_class(c: &SlotCard) -> [i32; 6] {
         i32::from(c.t == T_DELUXE),
         i32::from(c.t == T_ARCANE),
         i32::from(is_greed(c.t)),
-        i32::from(is_positional(c.t) && c.groups & G_FOIL == 0),
+        i32::from(c.t != T_DEAD && c.groups & G_FOIL == 0),
     ]
 }
 
@@ -1308,6 +1333,7 @@ struct DeltaEval {
     sens_deluxe: bool,
     sens_dead: bool,
     sens_arcane: bool,
+    sens_colors: bool,
     // Zero-filled stand-ins lent to EvalCtx (chain decks never use delta).
     chain_zero_id: Vec<u32>,
     chain_zero_size: Vec<u32>,
@@ -1376,6 +1402,8 @@ impl DeltaEval {
                 || implicits.iter().any(|imp|
                     matches!(imp, Implicit::EmptySlots { .. })),
             sens_arcane: cores.list.iter().any(|s| s.core_type == CORE_ARCHIVE),
+            sens_colors: cfg.is_shiny
+                && cores.list.iter().any(|s| s.core_type == CORE_EQUILIBRIUM),
             chain_zero_id, chain_zero_size,
             stamp: 0,
             stamped: vec![0u32; n],
@@ -1439,17 +1467,22 @@ impl DeltaEval {
         // passes.
         let mut dc = [0i32; 6];
         let mut union_moved = false;
+        let mut color_moved = false;
         for k in 0..self.j_cards.len() {
             let (_, old, new) = self.j_cards[k];
             let co = derive_class(&old);
             let cn = derive_class(&new);
             for b in 0..6 { dc[b] += cn[b] - co[b]; }
             union_moved |= Counts::union_mask(&old) != Counts::union_mask(&new);
+            color_moved |= old.color != new.color
+                || (old.t == T_WILD) != (new.t == T_WILD)
+                || (old.t == T_DEAD) != (new.t == T_DEAD);
         }
-        let any_derive = (self.sens_ns && dc[3] + dc[4] + dc[5] != 0)
+        let any_derive = (self.sens_ns && dc[5] != 0)
             || (self.sens_deluxe && dc[2] != 0)
             || (self.sens_dead && dc[0] != 0)
             || (self.sens_arcane && dc[3] != 0)
+            || (self.sens_colors && color_moved)
             || (self.have_unique
                 && (union_moved || dc.iter().any(|&d| d != 0)));
         let (g_full, g_tail) = if any_derive {

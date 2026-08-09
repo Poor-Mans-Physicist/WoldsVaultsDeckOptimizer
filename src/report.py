@@ -21,6 +21,7 @@ from .config import (
     GREED_ADDITIVE,
     HEATMAP_DISPLAY,
     HNS_Q,
+    MODE,
     MULT_ARCHIVE_CORE,
     MULT_COLOR,
     MULT_DELUXE_CORE_BASE,
@@ -98,13 +99,17 @@ def compute_heatmap(
                 | frozenset(typeless) | frozenset(arcane))
     scorable = {**regular, **deluxe, **typeless}
 
-    # n_ns mirrors simulate.py: arcane always counts; EVO-no-FOIL also counts
-    # regulars; TYPELESS/DELUXE are not part of n_ns in the classic kernel.
+    # n_ns mirrors simulate.py: every placed non-foil card counts (game's
+    # NonFoilEfficiency — typeless/deluxe included). Scorable cards are foil
+    # on Wold's-shiny or when the FOIL core is active.
     foil_active = CoreType.FOIL in cores
-    if card_class == CardClass.EVO and not foil_active:
-        n_ns = len(regular) + len(arcane) + len(greed)
-    else:
+    scorable_foiled = (
+        (MODE != "vanilla") if card_class == CardClass.SHINY else foil_active
+    )
+    if scorable_foiled:
         n_ns = len(greed) + len(arcane)
+    else:
+        n_ns = len(greed) + len(arcane) + len(scorable)
     n_deluxe = len(deluxe)
 
     core_contributions        = []
@@ -115,7 +120,9 @@ def compute_heatmap(
             # fudge is gone).
             core_contributions.append(MULT_PURE_BASE + MULT_PURE_SCALE * n_ns)
         elif core == CoreType.EQUILIBRIUM and card_class == CardClass.SHINY:
-            core_contributions.append(MULT_EQUILIBRIUM)
+            # 1 + per-color roll × unique colors. Optimized equilibrium
+            # decks carry all 4 (the SA runs colors-real and places them).
+            core_contributions.append(1.0 + MULT_EQUILIBRIUM * 4)
         elif core == CoreType.STEADFAST   and card_class == CardClass.SHINY:
             core_contributions.append(MULT_STEADFAST)
         elif core == CoreType.COLOR:
@@ -274,8 +281,8 @@ def _report(card_class: CardClass, best: dict, deck: Deck) -> None:
         print(f"  dir_greed_vert  : {MULT_DIR_GREED_VERT}x")
         print(f"  dir_greed_horiz : {MULT_DIR_GREED_HORIZ}x")
         print(f"  evo_greed       : {MULT_EVO_GREED}x")
-        print(f"  pure_core       : {MULT_PURE_BASE} + {MULT_PURE_SCALE} × n_ns")
-        print(f"  equilibrium     : {MULT_EQUILIBRIUM}x  (shiny only)")
+        print(f"  pure_core       : {MULT_PURE_BASE} + {MULT_PURE_SCALE} × n_ns (all non-foil cards)")
+        print(f"  equilibrium     : 1 + {MULT_EQUILIBRIUM} × unique colors  (shiny only)")
         print(f"  steadfast       : {MULT_STEADFAST}x  (shiny only)")
         print(f"  color           : {MULT_COLOR}x")
 
@@ -341,8 +348,8 @@ def _write_balance_block(ws, start_row: int) -> int:
         ("dir_greed_diag_up",   f"{MULT_DIR_GREED_DIAG_UP}x   (NE / NW)"),
         ("dir_greed_diag_down", f"{MULT_DIR_GREED_DIAG_DOWN}x   (SE / SW)"),
         ("evo_greed",        f"{MULT_EVO_GREED}x"),
-        ("pure_core",        f"{MULT_PURE_BASE} + {MULT_PURE_SCALE} × n_ns"),
-        ("equilibrium",      f"{MULT_EQUILIBRIUM}x  (shiny only)"),
+        ("pure_core",        f"{MULT_PURE_BASE} + {MULT_PURE_SCALE} × n_ns (all non-foil)"),
+        ("equilibrium",      f"1 + {MULT_EQUILIBRIUM} × unique colors  (shiny only)"),
         ("steadfast",        f"{MULT_STEADFAST}x  (shiny only)"),
         ("color",            f"{MULT_COLOR}x"),
     ]

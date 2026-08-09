@@ -372,7 +372,11 @@ fn simulate(
                 baseline_prod *= v;
             }
             CORE_EQUILIBRIUM if cfg.is_shiny => {
-                let v = if s.has_override() { s.override_ } else { cfg.mult_equilibrium };
+                // 1 + per-color roll × unique deck colors (StatEfficiency,
+                // audited 2026-08-01). Color-blind blanket baseline assumes
+                // the best case: all 4 colors.
+                let scale = if s.has_override() { s.override_ } else { cfg.mult_equilibrium };
+                let v = 1.0 + scale * 4.0;
                 baseline_sum  += v - 1.0;
                 baseline_prod *= v;
             }

@@ -62,6 +62,9 @@ export function coreValueKind(coreType: CoreType): CoreValueKind {
     case CoreType.PURE:
     case CoreType.DELUXE_CORE:
     case CoreType.VOID_CORE:
+    // Equilibrium stores the PER-COLOR roll (value = 1 + roll × unique
+    // colors) — the item prints "+50% per unique deck color" → enter 50.
+    case CoreType.EQUILIBRIUM:
       return "increment";
     default:
       return "flat";

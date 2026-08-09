@@ -11,7 +11,7 @@ import type { Deck } from "./deck";
 import { implicitCatalog } from "./deck";
 import type { ResolvedConfig, ConfigBundle } from "./config";
 import type { TaggedOptimizeResult } from "./taggedClient";
-import { defaultTargetedRules } from "./tagged";
+import { defaultTargetedRules, comboForcesColors } from "./tagged";
 import { toPayload, isScoringImplicit, type ImplicitPayload } from "./implicits";
 import {
   simulateTaggedBreakdown,
@@ -292,8 +292,10 @@ export function whatIfCards(): TaggedPlaced[] | null {
 /** Re-score the current result with what-if edits applied (score-only sim
  *  pass, not a re-anneal — §9.6). Returns null when no result is live. */
 /** colors_real flag for the CURRENT app state — must mirror
- *  tagged.ts::colorsRealFor exactly or the what-if re-score drifts. */
+ *  tagged.ts::colorsRealFor exactly or the what-if re-score drifts. The
+ *  live result's core combo counts: EQUILIBRIUM forces real colors. */
 export function currentColorsReal(): boolean {
+  if (app.result && comboForcesColors(app.result.coresUsed, app.cardClass)) return true;
   if (app.optMode === OptimizerMode.EXACT) return true;
   if (app.complexCards) return true;
   // Mirrors the puzzle rule in colorsRealFor: a color_mismatch implicit
@@ -758,7 +760,9 @@ export function restoreSnapshot(snap: Snapshot): void {
     deck, cards, snap.cardClass, snap.cores,
     isV2 ? currentImplicits() : [],
     {
-      colorsReal: isV2 ? currentColorsReal() : true,
+      colorsReal: isV2
+        ? (currentColorsReal() || comboForcesColors(snap.cores, snap.cardClass))
+        : true,
       complex: isV2 ? (snap.complexCards ?? false) : false,
       wvFoilRules: snap.mode !== "vanilla",
     },

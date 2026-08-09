@@ -117,7 +117,7 @@ export async function optimizeTaggedAsync(
     input.deck, cards, input.cardClass, best.combo,
     activeImplicits(input),
     {
-      colorsReal: colorsRealFor(input),
+      colorsReal: colorsRealFor(input, best.combo),
       complex: input.complexCards,
       wvFoilRules: input.appMode !== "vanilla",
     },

@@ -276,19 +276,15 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
         }
     }
 
-    // ── n_ns: non-shiny count for Pure Core ──────────────────────────────────
-    // ARCANE placements always count (preserves the pre-arcane `+ n_arcane`
-    // fudge as real cards). On top of that:
-    //   EVO without FOIL: regular + greed (+ arcane)
-    //   EVO with FOIL:    greed (+ arcane)
-    //   SHINY:            greed (+ arcane)
-    // TYPELESS / DELUXE are intentionally excluded here (classic-kernel
-    // design; only the inventory optimizer counts them).
-    let _ = n_typeless;  // currently unused in n_ns; tracked for symmetry
+    // ── n_ns: non-foil count for Pure Core ───────────────────────────────────
+    // Game truth (NonFoilEfficiencyDeckModifier, audited 2026-08-01): every
+    // placed card WITHOUT the Foil group counts — typeless and deluxe too.
+    // Under this kernel's run-level foil rule, foil runs leave only greeds +
+    // arcane non-foil; otherwise every placed card counts.
     let n_ns: usize = if cfg.is_shiny || cfg.foil_active {
         n_greed + n_arcane_placed
     } else {
-        n_regular + n_arcane_placed + n_greed
+        n_regular + n_typeless + n_deluxe + n_arcane_placed + n_greed
     };
 
     // ── Core multipliers ──────────────────────────────────────────────────────
@@ -308,7 +304,12 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
                 // n_ns already includes placed arcane cards; no fudge addend.
                 baseline_c.push(cfg.mult_pure_base + cfg.mult_pure_scale * n_ns as f64);
             }
-            CORE_EQUILIBRIUM if cfg.is_shiny => { baseline_c.push(cfg.mult_equilibrium); }
+            CORE_EQUILIBRIUM if cfg.is_shiny => {
+                // 1 + per-color roll × unique colors. This kernel is the
+                // color-blind blanket baseline, so it assumes the best case
+                // (all 4) — the tagged engine realizes it with real colors.
+                baseline_c.push(1.0 + cfg.mult_equilibrium * 4.0);
+            }
             CORE_STEADFAST   if cfg.is_shiny => { baseline_c.push(cfg.mult_steadfast); }
             CORE_SPARKLING   if cfg.is_shiny => { baseline_c.push(cfg.mult_sparkling); }
             CORE_COLOR  => { baseline_c.push(cfg.mult_color); }

@@ -264,21 +264,21 @@ Two-stage gating:
    candidate-enumeration gate that depends on deck *geometry* (the mode
    gate is the standard cfg-flag pattern).
 
-### Pure core's `n_ns` formula
+### Pure core's `n_ns` formula (game-exact since 2026-08-01)
 
-`n_ns` is the count of "non-shiny" placements in the deck — what `PURE`
-scales against. ARCANE always counts. Beyond that, the class+FOIL state
-decides:
+`n_ns` = **every placed card without the Foil group** — the game's
+`NonFoilEfficiencyDeckModifier` streams all deck cards and filters on
+`!hasGroup("Foil")`, so typeless, deluxe and wild count too (decompile
+audit 2026-08-01; the old greed+arcane+non-foil-positional definition was
+a 1.x simplification and undercounted on EVO runs without the Shiny core).
 
-| `card_class` | FOIL in cores? | `n_ns`                      |
-| -------------- | -------------- | ----------------------------- |
-| `EVO`        | No             | `regulars + greed + arcane` |
-| `EVO`        | Yes            | `greed + arcane`            |
-| `SHINY`      | (any)          | `greed + arcane`            |
+In the 2.0 kernel this is per-card (`groups & G_FOIL == 0`, DEAD excluded).
+Under the run-level foil rule that materialize() applies, it reduces to:
 
-`TYPELESS` is **never** in `n_ns` — typeless cards are "always shiny" by
-design. `DELUXE` is **never** in `n_ns` — deluxe rides its own scoring
-track via DELUXE_CORE; double-counting would be wrong.
+| Run                            | `n_ns`                          |
+| ------------------------------ | ------------------------------- |
+| Wold's SHINY, or FOIL core on  | `greed + arcane` (rest is foil) |
+| everything else                | every placed card               |
 
 Pure mult is then `1.0 + 0.07 × n_ns`. For e.g. a SHINY+Pure run on the
 Starter deck with 7 greed + 1 arcane placed: `n_ns = 8`, Pure mult = `1.56×`.
@@ -1113,6 +1113,37 @@ card reality. The CLI reads the same per-mode file via
   flip; an empty box falls back to the default; editing the knob clears a
   live result (it was optimized under the old value). The CLI is
   unaffected — `config.yaml` still holds the addend directly.
+
+### Equilibrium = per-color scaling; combos carrying it run colors-real (2026-08-01)
+
+- **Game formula** (decompiled base `StatEfficiencyDeckModifier`, the pack's
+  `deck_modifiers.json` `"type": "stat_efficiency"`): value =
+  `1 + roll × unique deck colors`, applied to Stat-group cards only
+  (≡ shiny runs in this model). Unique colors = distinct colors over ALL
+  placed cards — greed/arcane colors count, wild counts as every color.
+  Greater tier rolls 0.3–0.5 ⇒ config stores the PER-COLOR roll: **0.5
+  wolds (×3.0 at 4 colors), 0.7 vanilla (×3.8)**. The old flat 1.5 was a
+  misread of the per-color tooltip (and the pre-2026-07-14 value 3.0 had
+  been the correct all-colors total) — flat +50% never won a core slot,
+  which is how the bug was caught.
+- **Any candidate core combo containing EQUILIBRIUM (shiny) runs
+  colors-real** — same trigger family as puzzle's color-mismatch. The SA
+  places real colors, the kernel counts them live (incremental distinct-
+  color counter; the delta evaluator's scalar-drift path absorbs it), and
+  the optimizer prices the true in-game tradeoff: painting cards off-color
+  costs their same-color positional counts but buys +roll on every stat
+  card. Combos without it keep the cheap mono search. The web override box
+  takes the per-color % (item prints "+50% per unique color" → enter 50).
+- Enumeration ranks it at the achievable best (`1 + roll × 4`); the classic
+  1.x kernels and the legacy TS mirror (color-blind baselines) use the same
+  blanket-best 4 — the python reference stays assignment-true (mono ⇒ 1)
+  because parity Part A pairs it with the tagged kernel on real
+  assignments.
+- Panel effect: 35/38 decks up (shiny rows +12–18% — equilibrium re-enters
+  nearly every shiny build). Arcane Deck −4.3% and Snake −1.7% are honest
+  corrections: their old optima combined flat equilibrium with blanket
+  color assumptions (mono positional counts + implicit color credit), a
+  double-count no real deck can have.
 
 ### Bit-exact delta evaluation in the SA (2026-07-31)
 

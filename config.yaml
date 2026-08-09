@@ -65,7 +65,11 @@ greed:
 cores:
   pure_base:   1.0
   pure_scale:  0.07   # greater pure 0.05–0.07 /non-foil card
-  equilibrium: 1.5    # greater equilibrium 0.3–0.5 (was 3.0 — stale pre-nerf value)
+  # Equilibrium stores the PER-COLOR roll (StatEfficiencyDeckModifier,
+  # audited 2026-08-01): value = 1 + roll × unique deck colors, shiny only.
+  # Greater tier rolls 0.3–0.5 ⇒ best 0.5/color = ×3.0 at all 4 colors.
+  # Combos carrying it run colors-real so the SA actually places the colors.
+  equilibrium: 0.5
   foil:        2.5    # the SHINY core (greater shiny 1.0–1.5 on Foil cards)
   steadfast:   2.1    # greater steadfast 0.7–1.1 (was 2.2 — pack retuned it)
   # Sparkling core — flat SHINY-only multiplier; behaves like steadfast with a
@@ -189,7 +193,7 @@ modes:
       # pure literally reads 0.3–0.5 = 10× base — the bug Wold's fixed
       # downstream). Where that block is the "best" number we don't trust it:
       # pure uses the base-tier max (0.05) instead of the absurd 0.5.
-      equilibrium: 1.7    # greater 0.5–0.7
+      equilibrium: 0.7    # PER-COLOR roll (greater 0.5–0.7); ×3.8 at 4 colors
       steadfast:   2.2    # base 0.6–1.2 (greater is the broken 0.3–0.5)
       color:       1.5    # greater 0.3–0.5 edges out base 0.1–0.4
       pure_scale:  0.05   # base 0.02–0.05; greater 0.3–0.5 treated as a bug

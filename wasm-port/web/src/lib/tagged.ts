@@ -3,7 +3,7 @@
 // (spec §1): Max / Targeted / Exact differ only in what this module builds.
 
 import {
-  CardClass, CardType, Color, ALL_COLORS, OptimizerMode, REAL_GREEDS,
+  CardClass, CardType, Color, CoreType, ALL_COLORS, OptimizerMode, REAL_GREEDS,
   type CoreSpec, type ExactStack, type TagRuleRow, type TaggedPlaced,
   type GroupTag,
 } from "./types";
@@ -50,7 +50,26 @@ export interface KernelStack {
 
 // ── Mode-derived flags ────────────────────────────────────────────────────────
 
-export function colorsRealFor(input: TaggedRunInput): boolean {
+/** Does this candidate core combo force real colors? EQUILIBRIUM scales
+ *  with the deck's unique colors (shiny runs only — it's inert on EVO), so
+ *  the SA must actually place the colors for the kernel to count them. */
+export function comboForcesColors(
+  combo: readonly CoreSpec[] | undefined,
+  cardClass: CardClass,
+): boolean {
+  return cardClass === CardClass.SHINY
+    && (combo ?? []).some((s) => s.core_type === CoreType.EQUILIBRIUM);
+}
+
+/** Whether a run scores real per-card colors. Combo-dependent since the
+ *  EQUILIBRIUM fix: pass the candidate core combo when known (payload
+ *  build, post-run mirror); omit it for input-level checks (preflight,
+ *  candidate ordering). */
+export function colorsRealFor(
+  input: TaggedRunInput,
+  combo?: readonly CoreSpec[],
+): boolean {
+  if (comboForcesColors(combo, input.cardClass)) return true;
   if (input.mode === OptimizerMode.EXACT) return true;
   if (input.complexCards) return true;
   // color_mismatch (puzzle) scores MISMATCHED neighbor colors. Under blanket
@@ -194,7 +213,7 @@ export function buildTaggedPayload(
   restarts: number,
 ): Record<string, unknown> {
   const { deck, cfg } = input;
-  const colorsReal = colorsRealFor(input);
+  const colorsReal = colorsRealFor(input, combo);
   const implicits = activeImplicits(input);
   const exact = input.mode === OptimizerMode.EXACT;
 

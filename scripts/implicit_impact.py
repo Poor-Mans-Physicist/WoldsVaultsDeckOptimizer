@@ -98,9 +98,13 @@ def _settings_snapshot(config) -> dict:
         commit = "?"
 
     cores = {
-        "Pure":        {"value": f"base {config.MULT_PURE_BASE} + {config.MULT_PURE_SCALE}/non-shiny card",
-                        "note": "scales with n_ns (greed + arcane + non-foil positionals)"},
-        "Equilibrium": {"value": f"{config.MULT_EQUILIBRIUM}", "note": "Shiny-only flat"},
+        "Pure":        {"value": f"base {config.MULT_PURE_BASE} + {config.MULT_PURE_SCALE}/non-foil card",
+                        "note": "scales with n_ns = EVERY placed non-foil card "
+                                "(typeless/deluxe incl. — game NonFoilEfficiency, audited 2026-08-01)"},
+        "Equilibrium": {"value": f"1 + {config.MULT_EQUILIBRIUM}/unique color",
+                        "note": "Shiny-only; scales with distinct deck colors (max 4 = "
+                                f"×{1 + config.MULT_EQUILIBRIUM * 4:g}); combos carrying it "
+                                "run colors-real so the SA places the colors"},
         "Steadfast":   {"value": f"{config.MULT_STEADFAST}", "note": "Shiny-only flat"},
         "Sparkling":   {"value": f"{config.MULT_SPARKLING}",
                         "note": "Shiny-only flat" + ("" if config.ALLOW_SPARKLING else " (DISABLED)")},

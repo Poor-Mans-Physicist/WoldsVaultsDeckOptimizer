@@ -99,20 +99,20 @@ export function simulateInventoryBreakdown(
 
   // ── n_ns / n_deluxe ──────────────────────────────────────────────────────
   // Mirrors the classic CLI kernel (`src/simulate.py::simulate` /
-  // `ndm_core/src/lib.rs::run_sa_optimize`). ARCANE always counts; on top:
-  //   EVO-no-FOIL  → positional + greed (+ arcane)
-  //   EVO+FOIL     → greed (+ arcane)
-  //   SHINY        → greed (+ arcane)
-  // TYPELESS / DELUXE are intentionally excluded — typeless is "always
-  // shiny" by classic-kernel design and deluxe scores via DELUXE_CORE.
+  // `ndm_core/src/lib.rs::run_sa_optimize`): every placed non-foil card
+  // counts (game NonFoilEfficiency — typeless/deluxe included, audited
+  // 2026-08-01). Under the classic run-level foil rule, foil runs leave
+  // only greeds + arcane non-foil.
   const foilActive = cores.some((s) => s.core_type === CoreType.FOIL);
   const n_ns = (card_class === CardClass.EVO && !foilActive)
-    ? positional.size + arcane.size + greed.size
+    ? positional.size + typeless.size + deluxe.size + arcane.size + greed.size
     : greed.size + arcane.size;
   const n_deluxe = deluxe.size;
 
+  // Classic mirror is color-blind — EQUILIBRIUM at its blanket-best 4
+  // colors, matching the classic kernels' convention.
   const { baseline, colorComp, deluxeComp, voidComp, archiveComp, classExcluded } =
-    classifyCores(cores, card_class, n_ns, n_deluxe, n_dead, arcane.size, cfg);
+    classifyCores(cores, card_class, n_ns, n_deluxe, n_dead, arcane.size, 4, cfg);
   // Archive (live semantics, wv aa5e7b39): additive stack term inside the
   // per-card core_mult like every other core. Value = base ^ n_arcane_placed.
   const archiveMult = archiveComp !== null ? archiveComp.value : 1.0;

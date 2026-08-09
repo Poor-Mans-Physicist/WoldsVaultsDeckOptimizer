@@ -104,8 +104,9 @@ export function simulateTaggedBreakdown(
   const colColor = new Map<string, number>();
   const rowFill = new Map<number, number>();
   const colFill = new Map<number, number>();
-  let nDeluxe = 0, nArcane = 0, nGreed = 0, nDead = 0, nNsPositional = 0;
+  let nDeluxe = 0, nArcane = 0, nGreed = 0, nDead = 0, nNonFoil = 0;
   let groupsUnion = new Set<GroupTag>();
+  const colorsPresent = new Set<string>();
   let anyWild = false;
 
   for (let i = 0; i < n; i++) {
@@ -118,6 +119,7 @@ export function simulateTaggedBreakdown(
       for (const col of ["red", "green", "blue", "yellow"]) {
         rowColor.set(`${r}|${col}`, (rowColor.get(`${r}|${col}`) ?? 0) + 1);
         colColor.set(`${cc}|${col}`, (colColor.get(`${cc}|${col}`) ?? 0) + 1);
+        colorsPresent.add(col);
       }
       anyWild = true;
       for (const g of ["Offensive","Defensive","Physical","Magical","Utility","Resource","Knack","Temporal","Essence","Stat"] as GroupTag[]) {
@@ -126,21 +128,24 @@ export function simulateTaggedBreakdown(
     } else if (c.color !== null) {
       rowColor.set(`${r}|${c.color}`, (rowColor.get(`${r}|${c.color}`) ?? 0) + 1);
       colColor.set(`${cc}|${c.color}`, (colColor.get(`${cc}|${c.color}`) ?? 0) + 1);
+      colorsPresent.add(c.color);
     }
     for (const g of c.groups) groupsUnion.add(g);
-    if (POSITIONAL.has(c.t)) {
-      if (!c.groups.includes("Foil")) nNsPositional++;
-    } else if (c.t === CardType.DELUXE) nDeluxe++;
+    if (!c.groups.includes("Foil")) nNonFoil++;
+    if (c.t === CardType.DELUXE) nDeluxe++;
     else if (c.t === CardType.ARCANE) nArcane++;
     else if (GREEDS.has(c.t)) nGreed++;
   }
 
-  // n_ns (per-card foil, §5): greed + arcane + non-foil positionals.
-  const nNs = nGreed + nArcane + nNsPositional;
+  // n_ns (game NonFoilEfficiency, audited 2026-08-01): EVERY placed card
+  // without the Foil group — typeless/deluxe/wild included.
+  const nNs = nNonFoil;
+  // EQUILIBRIUM's unique-color count (wild counts as every color).
+  const nColors = colorsPresent.size;
 
   // ── Cores (identical math to classifyCores / kernel) ──────────────────
   const { baseline, colorComp, deluxeComp, voidComp, archiveComp, classExcluded } =
-    classifyCores(cores, cardClass, nNs, nDeluxe, nDead, nArcane, cfg);
+    classifyCores(cores, cardClass, nNs, nDeluxe, nDead, nArcane, nColors, cfg);
   const archiveMult = archiveComp !== null ? archiveComp.value : 1.0;
   const archiveSpec = cores.find((s) => s.core_type === CoreType.ARCHIVE_CORE) ?? null;
   const archiveBase = archiveSpec === null

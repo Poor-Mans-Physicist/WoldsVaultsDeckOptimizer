@@ -9,9 +9,16 @@ import type { ResolvedConfig } from "./config";
 // ── Per-core multiplier lookups (override-aware) ─────────────────────────────
 
 export function staticMult(spec: CoreSpec, cfg: ResolvedConfig): number {
+  if (spec.core_type === CoreType.EQUILIBRIUM) {
+    // Enumeration/ranking value: per-color roll × all 4 colors — the SA
+    // runs colors-real with EQUILIBRIUM in the combo and realizes this by
+    // actually placing the colors. The scoring mirror uses the deck's real
+    // count via equilibriumMult(). `override` replaces the per-color roll.
+    const scale = spec.override !== null ? spec.override : cfg.cores.equilibrium;
+    return 1.0 + scale * 4;
+  }
   if (spec.override !== null) return spec.override;
   switch (spec.core_type) {
-    case CoreType.EQUILIBRIUM: return cfg.cores.equilibrium;
     case CoreType.STEADFAST:   return cfg.cores.steadfast;
     case CoreType.SPARKLING:   return cfg.cores.sparkling;
     case CoreType.COLOR:       return cfg.cores.color;
@@ -19,6 +26,14 @@ export function staticMult(spec: CoreSpec, cfg: ResolvedConfig): number {
     default:
       throw new Error(`staticMult called with non-static core ${spec.core_type}`);
   }
+}
+
+/** EQUILIBRIUM value at the deck's ACTUAL unique-color count
+ *  (StatEfficiencyDeckModifier, audited 2026-08-01): 1 + per-color roll ×
+ *  distinct colors over all placed cards. */
+export function equilibriumMult(spec: CoreSpec, n_colors: number, cfg: ResolvedConfig): number {
+  const scale = spec.override !== null ? spec.override : cfg.cores.equilibrium;
+  return 1.0 + scale * n_colors;
 }
 
 export function pureMult(spec: CoreSpec, n_ns: number, cfg: ResolvedConfig): number {
@@ -78,6 +93,7 @@ export function classifyCores(
   n_deluxe:   number,
   n_dead:     number,
   n_arcane_placed: number,
+  n_colors:   number,
   cfg:        ResolvedConfig,
 ): {
   baseline:   CoreComponent[];
@@ -105,7 +121,7 @@ export function classifyCores(
       }
       case CoreType.EQUILIBRIUM:
         if (card_class === CardClass.SHINY) {
-          baseline.push({ core_type: CoreType.EQUILIBRIUM, color: null, value: staticMult(spec, cfg), override: isOverride });
+          baseline.push({ core_type: CoreType.EQUILIBRIUM, color: null, value: equilibriumMult(spec, n_colors, cfg), override: isOverride });
         } else {
           classExcluded.push({ core_type: CoreType.EQUILIBRIUM, color: null,
             reason: "equilibrium only applies to SHINY decks (this run is EVO)" });

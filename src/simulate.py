@@ -104,18 +104,21 @@ def simulate(
                 | frozenset(typeless) | frozenset(arcane))
     scorable = {**regular, **deluxe, **typeless}
 
-    # n_ns for PURE. ARCANE placements always count (preserving the pre-arcane
-    # `+ deck.n_arcane` fudge as real placements). On top of that:
-    #   EVO-no-FOIL → regular + greed (+arcane)   ─ regulars contribute too
-    #   EVO+FOIL    → greed (+arcane)
-    #   SHINY       → greed (+arcane)
-    # TYPELESS / DELUXE are intentionally excluded here (this is the classic
-    # kernel's design — only the inventory optimizer counts them).
+    # n_ns for PURE: every placed card WITHOUT the Foil group — the game's
+    # NonFoilEfficiencyDeckModifier streams all deck cards and filters on
+    # !hasGroup("Foil"), so typeless/deluxe count too (audited 2026-08-01;
+    # the old greed+arcane+regular definition was a 1.x simplification).
+    # Under this reference's run-level foil rule (mirrors materialize()):
+    # scorable cards are foil on Wold's-shiny or when the FOIL core is
+    # active; greeds and arcane never carry it.
     foil_active = CoreType.FOIL in cores
-    if card_class == CardClass.EVO and not foil_active:
-        n_ns = len(regular) + len(arcane) + len(greed)
-    else:
+    scorable_foiled = (
+        (MODE != "vanilla") if card_class == CardClass.SHINY else foil_active
+    )
+    if scorable_foiled:
         n_ns = len(greed) + len(arcane)
+    else:
+        n_ns = len(greed) + len(arcane) + len(scorable)
     n_deluxe = len(deluxe)
 
     # All cores fold into a single core_mult. Two cores are *per-card gated*:
@@ -132,7 +135,12 @@ def simulate(
             # n_ns now includes placed arcane cards directly.
             baseline_contribs.append(MULT_PURE_BASE + MULT_PURE_SCALE * n_ns)
         elif core == CoreType.EQUILIBRIUM and card_class == CardClass.SHINY:
-            baseline_contribs.append(MULT_EQUILIBRIUM)
+            # StatEfficiencyDeckModifier: 1 + roll × unique deck colors.
+            # This reference is colorless-mono, so the count is 1 whenever
+            # anything is placed (MULT_EQUILIBRIUM is the PER-COLOR roll).
+            baseline_contribs.append(
+                1.0 + MULT_EQUILIBRIUM * (1 if filled else 0)
+            )
         elif core == CoreType.STEADFAST   and card_class == CardClass.SHINY:
             baseline_contribs.append(MULT_STEADFAST)
         elif core == CoreType.SPARKLING   and card_class == CardClass.SHINY:
@@ -268,7 +276,11 @@ def candidate_cores(card_class: CardClass, deck: Deck) -> List[FrozenSet[CoreTyp
         def shiny_static(combo) -> float:
             m = 1.0
             for core in combo:
-                if   core == CoreType.EQUILIBRIUM: m *= MULT_EQUILIBRIUM
+                if core == CoreType.EQUILIBRIUM:
+                    # Ranked at its achievable best: per-color roll × all 4
+                    # colors (the SA runs colors-real with EQUILIBRIUM in
+                    # the combo and realizes this by placing the colors).
+                    m *= 1.0 + MULT_EQUILIBRIUM * 4
                 elif core == CoreType.STEADFAST:   m *= MULT_STEADFAST
                 elif core == CoreType.SPARKLING:   m *= MULT_SPARKLING
                 elif core == CoreType.COLOR:       m *= MULT_COLOR
@@ -603,7 +615,13 @@ def sa_optimize_tagged(
     # color_mismatch (puzzle) scores MISMATCHED neighbor colors — under the
     # blanket mono model the kernel would assume max mismatch on an all-one-
     # color layout. Optimize real colors instead (mirrors the web app).
-    colors_real = any(t[0] == "color_mismatch" for t in imps)
+    # EQUILIBRIUM scales with the deck's unique colors (shiny only), so a
+    # combo carrying it also runs colors-real: the SA places the colors and
+    # the kernel counts them, exactly like the game.
+    colors_real = (
+        any(t[0] == "color_mismatch" for t in imps)
+        or (card_class == CardClass.SHINY and CoreType.EQUILIBRIUM in cores)
+    )
 
     tag_rules, min_stat = _tagged_rules(deck)
 
