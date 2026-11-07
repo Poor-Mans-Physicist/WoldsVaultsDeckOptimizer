@@ -16,6 +16,16 @@
   }
   let { onRun, onSaveSnapshot, structStatus, structNote = null, onStructRun }: Props = $props();
 
+  /** Readable label for a core-search phase name (see lib/coreSearch.ts). */
+  function phaseLabel(phase: string): string {
+    const screen = /^screen (\d+)\/(\d+)$/.exec(phase);
+    if (screen) return `Screening ${screen[1]}-core sets (of ${screen[2]} slots)`;
+    if (phase === "halving")   return "Narrowing core sets";
+    if (phase === "full runs") return "Full search";
+    if (phase === "refining")  return "Refining best layouts";
+    return phase;
+  }
+
   const MODES: { value: OptimizerMode; label: string; hint: string }[] = [
     { value: OptimizerMode.MAX,      label: "Max",
       hint: "Theoretical ceiling: unlimited ideal cards, favorable tags assigned free. What the deck CAN do." },
@@ -91,6 +101,13 @@
         title="Save this run as a snapshot">📷</button>
     {/if}
   </div>
+  {#if app.running && app.runProgress}
+    {@const p = app.runProgress}
+    <div class="progress" aria-live="polite">
+      <div class="bar"><div style:width="{p.total ? (100 * p.done) / p.total : 0}%"></div></div>
+      <div class="ptext">{phaseLabel(p.phase)} · {p.done}/{p.total}</div>
+    </div>
+  {/if}
   {#if app.runError}
     <div class="err small">{app.runError}</div>
   {/if}
@@ -189,6 +206,11 @@
     cursor: pointer;
   }
   .run:disabled { opacity: .6; cursor: not-allowed; }
+  .progress { margin-top: 6px; }
+  .bar { height: 6px; background: var(--bg-input); border-radius: 3px; overflow: hidden; }
+  .bar div { height: 100%; background: var(--accent); transition: width .2s; }
+  .ptext { font-size: 12px; color: var(--text-secondary); margin-top: 4px; overflow: hidden;
+           text-overflow: ellipsis; white-space: nowrap; }
   .snap {
     background: transparent;
     border: 1px solid var(--border);

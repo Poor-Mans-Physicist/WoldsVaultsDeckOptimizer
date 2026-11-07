@@ -384,7 +384,11 @@
       const deckSnap = $state.snapshot(fxDeck);
       deckSnap.core_slots = effectiveCoreSlots;
 
-      const r = await optimizeTaggedAsync(runInputFor(deckSnap));
+      app.runProgress = null;
+      const r = await optimizeTaggedAsync({
+        ...runInputFor(deckSnap),
+        onProgress: (phase, done, total) => { app.runProgress = { phase, done, total }; },
+      });
       app.result = r;
       app.whatIf = new Map();
       clearStructReport();
@@ -401,6 +405,7 @@
     } finally {
       app.elapsedMs = performance.now() - t0;
       app.running   = false;
+      app.runProgress = null;
     }
     // A finished structural pass for this scoring setup is cached: report
     // the new hand-placed layout's rarity right away (cheap refinement only).

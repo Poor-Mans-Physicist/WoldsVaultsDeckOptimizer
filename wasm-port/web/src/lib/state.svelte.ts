@@ -105,6 +105,8 @@ interface AppState {
 
   // Run
   running: boolean;
+  /** Live search progress for the progress bar: current phase and jobs done / queued in it. */
+  runProgress: { phase: string; done: number; total: number } | null;
   result: TaggedOptimizeResult | null;
   elapsedMs: number | null;
   runError: string | null;
@@ -176,6 +178,7 @@ export const app = $state<AppState>({
   greedMult: 5,            // seeded from cfg greed addend + 1 on boot + mode change
 
   running: false,
+  runProgress: null,
   result: null,
   elapsedMs: null,
   runError: null,
