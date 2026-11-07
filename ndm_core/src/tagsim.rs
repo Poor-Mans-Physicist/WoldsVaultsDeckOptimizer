@@ -1188,6 +1188,17 @@ fn greed_target(geom: &Geom, i: usize, t: u8, cfg: &TagSimConfig) -> (Option<usi
     }
 }
 
+/// Additive greed stacking as the live game does it (the_vault 3.21.6
+/// `CardDeck.getGreedMultiplier`: `bonus += roll` for every roll above 1, then
+/// `max(1, bonus)`), i.e. a target multiplier of `N + Σ(roll − 1)` for N greeds.
+/// Config amounts are addends (roll − 1) and `b` starts at 1.0, so the first
+/// greed on a slot adds its addend and every further greed adds its full roll.
+/// (3.21.5 used `1 + Σ(roll − 1)`; the greed rework restores that, 0.34.x does not.)
+#[inline(always)]
+pub fn greed_add(b: f64, amount: f64) -> f64 {
+    if amount <= 0.0 { b } else if b > 1.0 { b + (amount + 1.0) } else { b + amount }
+}
+
 /// Full greed boost pass (§2.3): iterate greed SOURCES in ascending slot
 /// order, accumulating into each target. boost_fold() must visit sources in
 /// this same ascending order to stay bit-identical.
@@ -1206,7 +1217,7 @@ fn boost_pass(geom: &Geom, asgn: &[SlotCard], cfg: &TagSimConfig, boost: &mut [f
                     || asgn[j].t == T_WILD
                     || asgn[j].color == g.scale;
                 if color_ok {
-                    if cfg.greed_additive { boost[j] += amount; }
+                    if cfg.greed_additive { boost[j] = greed_add(boost[j], amount); }
                     else { boost[j] *= amount; }
                 }
             }
@@ -1229,7 +1240,7 @@ fn boost_fold(geom: &Geom, asgn: &[SlotCard], cfg: &TagSimConfig, j: usize) -> f
             || asgn[j].t == T_WILD
             || asgn[j].color == g.scale;
         if color_ok {
-            if cfg.greed_additive { b += amount; } else { b *= amount; }
+            if cfg.greed_additive { b = greed_add(b, amount); } else { b *= amount; }
         }
     }
     b
@@ -1339,10 +1350,10 @@ fn slot_scan(ctx: &EvalCtx<'_>, asgn: &[SlotCard], i: usize) -> SlotInputs {
             }
             _ => 0.0,
         };
-        // Frequency implicit (rook/pillager/bishop) multiplies the count;
-        // DIAG keeps its lone-card ≥1 floor after the multiplier.
-        let scaled = raw * der.freq_mult[c.t as usize];
-        if c.t == T_DIAG { scaled.max(1.0) } else { scaled }
+        // Frequency implicit (rook/pillager/bishop) multiplies the count. A
+        // DIAG card with no matching diagonal peer scores 0 (CardScaler
+        // frequency 0 = zero copies, CardEntry.getSnapshotAttributes).
+        raw * der.freq_mult[c.t as usize]
     } else if c.t == T_DELUXE {
         cfg.mult_deluxe_flat
     } else {

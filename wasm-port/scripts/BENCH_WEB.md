@@ -58,3 +58,8 @@ One run, 37 decks x evo/shiny x 3 reps, 12 lanes:
 On the old core list the new search is 3.4x faster at a third of the gap. With every core it stays under the old
 site's run time, but the larger space (Pluto / Nitwit basins in particular) leaves a 1.4% mean gap at default
 and 0.9% at deep.
+
+## Scoring change 2026-11-07
+
+Greed stacking moved to the live 3.21.6 raw sum and the DIAG lone-card floor was removed. Both change
+scores, so `bench_web_best.json` was reset; the tables above were measured under the old scoring.

@@ -50,13 +50,18 @@ export interface BreakdownResult {
 const posKey = (p: Position) => `${p[0]},${p[1]}`;
 
 /** Helper — apply greed (additive or multiplicative) into a Map<key,number>. */
+/** Additive greed stacking as the live game does it (the_vault 3.21.6 sums every raw
+ *  roll above 1): N + Σ(roll − 1). Amounts are addends and boosts start at 1, so the
+ *  first greed adds its addend and each further greed its full roll (= tagsim::greed_add). */
+export function greedAdd(b: number, amount: number): number {
+  if (amount <= 0) return b;
+  return b > 1 ? b + (amount + 1) : b + amount;
+}
+
 function applyGreed(boost: Map<string, number>, key: string, amount: number, additive: boolean) {
-  // Additive: boost is a raw sum of greed multipliers pointing at this slot
-  // (use-site clamps to ≥ 1 via Math.max). Multiplicative: each greed scales
-  // the running boost.
   if (!boost.has(key)) return;
   const v = boost.get(key)!;
-  boost.set(key, additive ? v + amount : v * amount);
+  boost.set(key, additive ? greedAdd(v, amount) : v * amount);
 }
 
 export function simulateInventoryBreakdown(
@@ -282,11 +287,10 @@ export function simulateInventoryBreakdown(
       explain = `col ${cc}, color ${c ?? "—"} → col_count = ${posVal}`;
     } else if (t === CardType.DIAG) {
       const idx = slotIndex.get(k)!;
-      // Same-color peers on either diagonal (NOT counting self), clamped to a
-      // minimum of 1 so a lone DIAG card still contributes its base value.
+      // Same-color peers on either diagonal (NOT counting self); none = 0.
       const peers = deck.diagPeers[idx].filter((j) => colored.get(slotKey(j)) === c).length;
-      posVal = Math.max(1, peers);
-      explain = `diag same-color peers (color ${c ?? "—"}) = ${peers}${peers === 0 ? "  (clamped to 1)" : ""}`;
+      posVal = peers;
+      explain = `diag same-color peers (color ${c ?? "—"}) = ${peers}`;
     } else {  // SURR
       const idx = slotIndex.get(k)!;
       posVal = deck.surrPeers[idx].filter((j) => colored.get(slotKey(j)) === c).length;

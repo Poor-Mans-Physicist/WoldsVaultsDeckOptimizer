@@ -44,9 +44,10 @@ implicits:
   enabled: true
 
 # Greed values are ADDITIVE BONUSES (+x), not standalone multipliers. The
-# game (base the_vault CardDeck.getGreedMultiplier, audited 2026-07-31)
-# computes target ×(1 + Σ(roll − 1)) — each greed contributes its roll
-# minus one. Wold's greed cards roll [t1 ×3, t2 ×4, t3 ×5] (pack
+# live game (the_vault 3.21.6 CardDeck.getGreedMultiplier, re-audited
+# 2026-11-07) sums every raw roll: target ×(N + Σ(roll − 1)) for N greeds, so
+# the scorers add roll − 1 for the first greed and the full roll for each
+# further one (3.21.5 was 1 + Σ(roll − 1)). Wold's greed cards roll [t1 ×3, t2 ×4, t3 ×5] (pack
 # config/the_vault/card/modifiers.json), so a best-roll tier-3 card
 # contributes +4 = +400%. Enter the ADDEND here: 4, not 5.
 greed:

@@ -8,6 +8,7 @@ import {
   type CoreSpec, type GroupTag, type TaggedPlaced,
 } from "./types";
 import type { Deck } from "./deck";
+import { greedAdd } from "./breakdown";
 import type { ResolvedConfig } from "./config";
 import type { ImplicitPayload } from "./implicits";
 import {
@@ -277,7 +278,7 @@ export function simulateTaggedBreakdown(
       || cards[target].t === CardType.WILD
       || cards[target].color === g.scaleColor;
     if (!colorOk) continue;
-    if (cfg.stacking.greed_additive) boost[target] += amount;
+    if (cfg.stacking.greed_additive) boost[target] = greedAdd(boost[target], amount);
     else boost[target] *= amount;
     boostSources[target].push({
       fromPosition: deck.slots[i] as [number, number],
@@ -352,13 +353,8 @@ export function simulateTaggedBreakdown(
         baseExplain = `${c.t === CardType.SURR ? "surrounding" : "diagonal"} peers = ${raw}`;
       }
       const fm = freqMult[c.t] ?? 1;
-      let scaled = raw * fm;
+      const scaled = raw * fm;
       if (fm !== 1) baseExplain += ` × ${fm} (deck implicit)`;
-      if (c.t === CardType.DIAG) {
-        const floored = Math.max(1, scaled);
-        if (floored !== scaled) baseExplain += " (clamped to 1)";
-        scaled = floored;
-      }
       base = scaled;
     } else if (c.t === CardType.DELUXE) {
       base = cfg.deluxe.flat;

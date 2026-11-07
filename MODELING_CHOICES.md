@@ -99,7 +99,7 @@ count for positional peer scans.
 | `ROW`                    | `pos_count × core_mult × boost`                    | Same-row peer count (incl. self via `row_count`)   | EVO + SHINY-with-positional | EVO-no-FOIL only                         |
 | `COL`                    | `pos_count × core_mult × boost`                    | Same-column peer count                               | EVO + SHINY-with-positional | EVO-no-FOIL only                         |
 | `SURR`                   | `pos_count × core_mult × boost`                    | Count of filled 8-neighbors (excludes self)          | EVO + SHINY-with-positional | EVO-no-FOIL only                         |
-| `DIAG`                   | `pos_count × core_mult × boost`                    | NW-SE plus NE-SW diagonal peer count (does NOT count self), clamped to a minimum of 1 so a lone DIAG card still contributes its base value | EVO + SHINY-with-positional | EVO-no-FOIL only                         |
+| `DIAG`                   | `pos_count × core_mult × boost`                    | NW-SE plus NE-SW diagonal peer count (does NOT count self); no matching diagonal peer = 0 (the game's scaler frequency 0 gives zero copies) | EVO + SHINY-with-positional | EVO-no-FOIL only                         |
 | `DELUXE`                 | `MULT_DELUXE_FLAT × deluxe_card_core_mult × boost` | Flat base (config `deluxe.flat`, default 2)        | EVO + SHINY                 | **No** (rides DELUXE_CORE instead) |
 | `TYPELESS` (T)           | `1.0 × typeless_core_mult × boost`                 | Always 1.0 base                                      | EVO + SHINY                 | **No** ("always shiny" by design)  |
 | `ARCANE`                 | 0 (always)                                             | n/a — no direct NDM, no cores apply, no greed boost | EVO + SHINY                 | **Always** counts                  |
@@ -156,21 +156,27 @@ greed cards are skipped.
 
 Controlled by `stacking.greed_additive` (default **true** in both modes).
 
-- **Additive** (`true`): the boost starts at **1.0** and each greed
-  pointing at the slot adds its raw multiplier value. Final boost =
-  `1.0 + Σ amount_i` over all greeds hitting the slot — so a no-greed
-  slot stays at a neutral 1× and every greed adds on top of that base
-  rather than replacing it.
-  Worked examples (default `dir_vert: 4` = +400%; matches the in-game
-  `1 + Σ(roll − 1)` with tier-3 ×5 cards):
+- **Additive** (`true`): the live game's rule. the_vault 3.21.6
+  `CardDeck.getGreedMultiplier` sums the RAW roll of every greed above ×1
+  hitting the slot (`bonus += roll; return max(1, bonus)`), so N greeds give
+  `N + Σ(roll − 1)` = `Σ roll`. Config amounts are addends (roll − 1) and the
+  boost starts at 1.0, so the first greed adds its addend and every further
+  greed adds its full roll (`greed_add` in `tagsim.rs`, mirrored everywhere
+  below). A no-greed slot stays at 1×. Worked examples (default
+  `dir_vert: 4` = a tier-3 ×5 card):
 
   | Greeds pointing at slot | Final boost |
   | --- | --- |
   | 0                            | 1   |
   | 1× dir_vert                  | 5   |
-  | 2× dir_vert                  | 9   |
-  | 3× dir_vert                  | 13  |
-  | 1× dir_vert + 1× surr_greed at 3 | 8 |
+  | 2× dir_vert                  | 10  |
+  | 3× dir_vert                  | 15  |
+  | 1× dir_vert + 1× surr_greed at 3 | 9 |
+
+  3.21.5 computed `1 + Σ(roll − 1)` (×9 for two ×5 cards); 3.21.6 dropped the
+  `− 1`. Wold's 0.34.x ships 3.21.6 without a fix, so DeckFAST models the raw
+  sum (2026-11-07). The greed rework (addon `d8d69080`, greed/dev only)
+  restores the 3.21.5 rule; that belongs to the rework site, not this one.
 
 - **Multiplicative** (`false`): each greed multiplies the running boost
   starting from 1.0. Final boost = `Π amount_i`. **Not clamped** — if any
@@ -180,7 +186,9 @@ Controlled by `stacking.greed_additive` (default **true** in both modes).
 Implementation: `_apply_greed()` in `src/simulate.py`, the `apply_greed!`
 macro in `ndm_core/src/lib.rs`, the inline `apply` closure in
 `ndm_core/src/inventory.rs` + `wasm-port/ndm_core/src/inventory.rs`, and
-`applyGreed()` in `wasm-port/web/src/lib/breakdown.ts`. The boost map
+`applyGreed()` in `wasm-port/web/src/lib/breakdown.ts`; the tagged kernel's
+`boost_pass` / `boost_fold` and the TS mirror (`taggedBreakdown.ts`) call
+`greed_add` / `greedAdd`. The boost map
 is initialized to `1.0` at the start of every scoring call in both
 stacking modes — additive accumulates additional greeds on top of that
 base, multiplicative scales it.
@@ -981,7 +989,7 @@ except **runic**, which **multiplies** the whole per-card value. Kinds:
 | kind | decks | per-card effect (additive unless noted) |
 |---|---|---|
 | `global` | treasure, idona/velara/tenos/wendarr, cactus (Off∧Def — ALL groups required), champion, anvil, belt, fairy, gilded/ornate/living (Foil+color) | `+value` when the card carries ALL required groups and a required color. Color-blind runs treat color conditions as satisfied (favorable blanket). |
-| `freq` | wall (col ×2), pillager (surr ×2), bishop (diag ×3) | multiplies the matching positional type's **count** by `round(value)`; DIAG keeps its ≥1 floor after scaling |
+| `freq` | wall (col ×2), pillager (surr ×2), bishop (diag ×3) | multiplies the matching positional type's **count** by `round(value)`; no floor (a DIAG card with no diagonal peer stays at 0) |
 | `adjacency` | merchant (column/Resource ×0.5), skull (surr/Knack ×0.5) | `+value ×` matching-group cards in range (greeds/dead never match; arcane can; wild always) |
 | `color_mismatch` | puzzle | `+value ×` orth neighbors of a different color (blanket: every filled orth neighbor) |
 | `row_pos` | cake | `+value × rows-from-bottom`, bottom row = 1 |
@@ -1162,6 +1170,20 @@ card reality. The CLI reads the same per-mode file via
   only (values unchanged, matches `decks/wolds_implicits.json`), and the
   `MixinCardDeck` socket-count change is tooltip-display only. No value
   changes required.
+
+### Greed stacking re-audited against 3.21.6 (2026-11-07)
+
+- The 2026-07-31 audit below read the 3.21.5 jar. The pack has since moved to
+  `the_vault-1.18.2-3.21.6.6884`, whose `getGreedMultiplier` sums raw rolls
+  (`CardDeck.java:168-182` in the 3.21.6 decompile); the live addon only
+  overwrites `getModifierValue`. Every slot hit by N ≥ 2 greeds was scored
+  (N − 1) too low. Fixed in every scorer (see "Greed stacking" above). The
+  config value is still the addend (roll − 1).
+- Same pass: DIAG lost its lone-card ≥1 floor. `CardScaler.getFrequency`
+  counts matching entries on the DIAGONAL neighbours (which exclude the card
+  itself), and `CardEntry.getSnapshotAttributes` adds the stat that many
+  times, so a DIAG card with no matching diagonal peer gives nothing. The
+  pack's DIAGONAL scalers are a single neighbour filter, nothing that adds one.
 
 ### Cardinal greed semantics settled by decompile audit: config = +% ADDEND (2026-07-31)
 

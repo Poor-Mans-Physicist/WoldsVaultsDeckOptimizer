@@ -68,12 +68,16 @@ def _get_placeable(card_class: CardClass) -> List[CardType]:
 import ndm_core as _ndm_core
 
 def _apply_greed(boost: Dict[Position, float], pos: Position, amount: float) -> None:
-    # New additive rule: boost is a raw sum of the greed multipliers pointing
-    # at this slot. The use-site `max(boost, 1.0)` clamp handles the no-greed
-    # case (boost stays 0 → b = 1). Multiplicative is unchanged.
+    # Additive = the live game's rule (the_vault 3.21.6 getGreedMultiplier sums
+    # every raw roll above 1): N + Σ(roll − 1). Amounts are addends and boost
+    # starts at 1.0, so the first greed adds its addend and each further greed
+    # its full roll. Mirrors tagsim::greed_add exactly. Multiplicative unchanged.
     if pos in boost:
-        if GREED_ADDITIVE: boost[pos] += amount
-        else:              boost[pos] *= amount
+        if GREED_ADDITIVE:
+            if amount > 0.0:
+                boost[pos] = boost[pos] + (amount + 1.0) if boost[pos] > 1.0 else boost[pos] + amount
+        else:
+            boost[pos] *= amount
 
 
 def simulate(
@@ -246,9 +250,8 @@ def simulate(
         r, c = p
         if   t == CardType.ROW:  pos = row_count.get(r, 0)
         elif t == CardType.COL:  pos = col_count.get(c, 0)
-        # DIAG: same-color peers along either diagonal (NOT counting self),
-        # clamped to a minimum of 1 so a lone diag card doesn't drop to 0×.
-        elif t == CardType.DIAG: pos = max(1, sum(1 for q in deck._diag_peers[p] if q in filled))
+        # DIAG: peers along either diagonal (NOT counting self); none = 0.
+        elif t == CardType.DIAG: pos = sum(1 for q in deck._diag_peers[p] if q in filled)
         else:                    pos = sum(1 for q in deck._surr_peers[p] if q in filled)
         b    = max(boost[p], 1.0) if GREED_ADDITIVE else boost[p]
         ndm += _contrib(pos * regular_core_mult * b)

@@ -386,7 +386,7 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
     macro_rules! apply_greed {
         ($target:expr, $amount:expr) => {
             if cfg.greed_additive {
-                boost[$target] += $amount;
+                boost[$target] = tagsim::greed_add(boost[$target], $amount);
             } else {
                 boost[$target] *= $amount;
             }
@@ -469,10 +469,8 @@ fn simulate(deck: &DeckData, asgn: &[u8], cores: &[u8], cfg: &SimConfig) -> f64 
             let pos: usize = match asgn[i] {
                 ROW  => *row_count.get(&deck.row_of[i]).unwrap_or(&0),
                 COL  => *col_count.get(&deck.col_of[i]).unwrap_or(&0),
-                // Filled peers on either diagonal, NOT counting self.
-                // Clamped to a minimum of 1 so a lone DIAG card still
-                // contributes its base value instead of 0.
-                DIAG => deck.diag_peers[i].iter().filter(|&&j| is_filled[j]).count().max(1),
+                // Filled peers on either diagonal, NOT counting self; none = 0.
+                DIAG => deck.diag_peers[i].iter().filter(|&&j| is_filled[j]).count(),
                 SURR => deck.surr_peers[i].iter().filter(|&&j| is_filled[j]).count(),
                 _    => 0,
             };

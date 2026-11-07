@@ -473,7 +473,7 @@ fn simulate(
     };
 
     let apply = |boost: &mut [f64], pos: usize, amount: f64| {
-        if cfg.greed_additive { boost[pos] += amount; }
+        if cfg.greed_additive { boost[pos] = crate::tagsim::greed_add(boost[pos], amount); }
         else                  { boost[pos] *= amount; }
     };
 
@@ -531,14 +531,13 @@ fn simulate(
                     }
                     DIAG => {
                         // Same-color peers on either diagonal, NOT counting
-                        // self. Clamped to a minimum of 1.0 so a lone DIAG
-                        // card still contributes its base value instead of 0×.
+                        // self; none = 0 (the game's scaler gives zero copies).
                         let mut count: f64 = 0.0;
                         for &q in &geom.diag_peers[i] {
                             let (qt, qc) = asgn[q];
                             if qt != DEAD && qc == c { count += 1.0; }
                         }
-                        count.max(1.0)
+                        count
                     }
                     SURR => {
                         let mut count = 0.0; // SURR excludes self
