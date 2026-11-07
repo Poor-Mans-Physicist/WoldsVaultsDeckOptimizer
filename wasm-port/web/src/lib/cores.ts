@@ -97,6 +97,10 @@ export function classifyCores(
   cfg:        ResolvedConfig,
 ): {
   baseline:   CoreComponent[];
+  /** Equilibrium + Steadfast: cards carrying Stat only (either class). */
+  statComps:  CoreComponent[];
+  /** Sparkling: cards carrying Shiny only (shiny positionals). */
+  sparkComp:  CoreComponent | null;
   colorComp:  CoreComponent | null;
   deluxeComp: CoreComponent | null;
   voidComp:   CoreComponent | null;
@@ -104,6 +108,8 @@ export function classifyCores(
   classExcluded: ExcludedCore[];
 } {
   const baseline: CoreComponent[] = [];
+  const statComps: CoreComponent[] = [];
+  let sparkComp:  CoreComponent | null = null;
   let colorComp:  CoreComponent | null = null;
   let deluxeComp: CoreComponent | null = null;
   let voidComp:   CoreComponent | null = null;
@@ -120,24 +126,14 @@ export function classifyCores(
         break;
       }
       case CoreType.EQUILIBRIUM:
-        if (card_class === CardClass.SHINY) {
-          baseline.push({ core_type: CoreType.EQUILIBRIUM, color: null, value: equilibriumMult(spec, n_colors, cfg), override: isOverride });
-        } else {
-          classExcluded.push({ core_type: CoreType.EQUILIBRIUM, color: null,
-            reason: "equilibrium only applies to SHINY decks (this run is EVO)" });
-        }
+        statComps.push({ core_type: CoreType.EQUILIBRIUM, color: null, value: equilibriumMult(spec, n_colors, cfg), override: isOverride });
         break;
       case CoreType.STEADFAST:
-        if (card_class === CardClass.SHINY) {
-          baseline.push({ core_type: CoreType.STEADFAST, color: null, value: staticMult(spec, cfg), override: isOverride });
-        } else {
-          classExcluded.push({ core_type: CoreType.STEADFAST, color: null,
-            reason: "steadfast only applies to SHINY decks (this run is EVO)" });
-        }
+        statComps.push({ core_type: CoreType.STEADFAST, color: null, value: staticMult(spec, cfg), override: isOverride });
         break;
       case CoreType.SPARKLING:
         if (card_class === CardClass.SHINY) {
-          baseline.push({ core_type: CoreType.SPARKLING, color: null, value: staticMult(spec, cfg), override: isOverride });
+          sparkComp = { core_type: CoreType.SPARKLING, color: null, value: staticMult(spec, cfg), override: isOverride };
         } else {
           classExcluded.push({ core_type: CoreType.SPARKLING, color: null,
             reason: "sparkling only applies to SHINY decks (this run is EVO)" });
@@ -166,7 +162,7 @@ export function classifyCores(
       }
     }
   }
-  return { baseline, colorComp, deluxeComp, voidComp, archiveComp, classExcluded };
+  return { baseline, statComps, sparkComp, colorComp, deluxeComp, voidComp, archiveComp, classExcluded };
 }
 
 // ── Set-like dedup for CoreSpec collections ──────────────────────────────────

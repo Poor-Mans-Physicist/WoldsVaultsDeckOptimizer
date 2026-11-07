@@ -2,11 +2,14 @@
   import {
     app, setAllCores, setGreedMult, defaultGreedMult,
     toggleConstructionCore, toggleArcaneCore, toggleGreaterStructural,
+    toggleReservedCore,
   } from "../lib/state.svelte";
   import {
     CORE_OPTIONS, coreLabel, coreDefaultPlaceholder,
     coreValueKind, storedToPct, pctToStored,
+    NONSTAT_CORE_OPTIONS, NONSTAT_CORE_INFO,
   } from "../lib/coreOptions";
+  import { CoreType } from "../lib/types";
   import { hiddenCoreTypes } from "../lib/visibility";
   import { maxConstruction, maxArcaneConvert } from "../lib/structural";
 
@@ -27,6 +30,13 @@
     if (stored === null) return "";
     return storedToPct(stored, coreValueKind(CORE_OPTIONS[i].coreType));
   }
+
+  // Subheads over the (long) core list, keyed by the first row of each group in CORE_OPTIONS.
+  const GROUP_HEAD: Record<number, string> = {
+    0: "Base cores",
+    [CORE_OPTIONS.findIndex((o) => o.coreType === CoreType.ARSENAL)]: "Tag cores",
+    [CORE_OPTIONS.findIndex((o) => o.coreType === CoreType.BAZAAR)]: "Synergy cores",
+  };
 
   // Mode-driven row visibility. Vanilla hides deluxe / void rows;
   // we recompute on every read since state.mode + state.cfg can change.
@@ -66,76 +76,6 @@
     </div>
   </header>
 
-  {#each CORE_OPTIONS as opt, i}
-    {#if !hidden.has(opt.coreType)}
-      <div class="row">
-        <label class="check">
-          <input type="checkbox" bind:checked={app.coreState[i].enabled} />
-          <span>{coreLabel(opt)}</span>
-        </label>
-        <span class="override-wrap">
-          <input
-            type="number"
-            class="override"
-            step="any"
-            placeholder={app.cfg ? coreDefaultPlaceholder(opt, app.cfg) : "override"}
-            value={overridePct(i)}
-            oninput={(e) => setOverride(i, (e.currentTarget as HTMLInputElement).value)}
-          />
-          <span class="pct" aria-hidden="true">%</span>
-        </span>
-      </div>
-    {/if}
-  {/each}
-
-  <!-- ── Bonus Cores ────────────────────────────────────────────────────
-       User-adjustable delta on top of the deck's raw core-slot count. The
-       optimizer uses `max(0, base + bonusCores)` so the value is unbounded
-       in both directions (clamping happens silently if the user types a
-       big negative). Defaults to the active mode's `deckmod` and is
-       re-seeded on mode flip.
-  -->
-  <div class="bonus-row">
-    <!-- Plain div (not <label>) — the `<details>` info popover would break
-         the label/input association anyway, so we associate the input via
-         id + for=. -->
-    <div class="bonus-label">
-      <label for="bonus-cores-input">Bonus Cores</label>
-      <details class="info">
-        <summary aria-label="What is Bonus Cores?">?</summary>
-        <div class="info-body">
-          <p>
-            Adjusts how many core slots the optimizer has to fill, beyond
-            what the deck normally provides.
-          </p>
-          <p>
-            <strong>Positive</strong> — add slots. In Wold's, the Core
-            Expertise ability lets you craft a deck with one extra slot and
-            strip the temp core in a Deck Altar afterwards (this is why the
-            default in Wold's is <code>1</code>).
-          </p>
-          <p>
-            <strong>Negative</strong> — reserve slots for cores the
-            optimizer doesn't consider. E.g. you plan to slot a Bounty Core
-            for resource cards — set Bonus Cores to <code>-1</code> so the
-            optimizer only fills the remaining slots.
-          </p>
-          <p>
-            Vanilla has no equivalent free-slot mechanic, so the default
-            there is <code>0</code>.
-          </p>
-        </div>
-      </details>
-    </div>
-    <input
-      id="bonus-cores-input"
-      type="number"
-      class="override"
-      step="1"
-      bind:value={app.bonusCores}
-    />
-  </div>
-
   <!-- ── Structural cores (Construction + Arcane Core) ────────────────────
        Web-only cores that mutate the deck layout in the UI before SA runs.
        Each costs one of the deck's core-slot budget — the meta line in the
@@ -143,7 +83,7 @@
        on or off wipes any placed cards (handled in state.toggle* helpers).
   -->
   {#if showStructural}
-    <div class="struct-section">
+    <div class="struct-section struct-top">
       <div class="struct-head">Structural</div>
 
       <!-- "Greater" structural variant — bumps both caps from 3 to 5. Sits
@@ -212,6 +152,96 @@
       {/if}
     </div>
   {/if}
+
+  {#each CORE_OPTIONS as opt, i}
+    {#if !hidden.has(opt.coreType)}
+      {#if GROUP_HEAD[i]}
+        <div class="group-head">{GROUP_HEAD[i]}</div>
+      {/if}
+      <div class="row">
+        <label class="check">
+          <input type="checkbox" bind:checked={app.coreState[i].enabled} />
+          <span>{coreLabel(opt)}</span>
+        </label>
+        <span class="override-wrap">
+          <input
+            type="number"
+            class="override"
+            step="any"
+            placeholder={app.cfg ? coreDefaultPlaceholder(opt, app.cfg) : "override"}
+            value={overridePct(i)}
+            oninput={(e) => setOverride(i, (e.currentTarget as HTMLInputElement).value)}
+          />
+          <span class="pct" aria-hidden="true">%</span>
+        </span>
+      </div>
+    {/if}
+  {/each}
+
+  {#if !hidden.has(CoreType.HARVEST)}
+    <div class="group-head">Reserve a slot (no stat effect)</div>
+    {#each NONSTAT_CORE_OPTIONS as t}
+      <div class="row">
+        <label class="check" title={NONSTAT_CORE_INFO[t]}>
+          <input
+            type="checkbox"
+            checked={app.reservedCores.includes(t)}
+            onchange={(e) => toggleReservedCore(t, (e.currentTarget as HTMLInputElement).checked)}
+          />
+          <span>{coreLabel({ coreType: t, color: null })}</span>
+        </label>
+        <span class="reserve-note">{NONSTAT_CORE_INFO[t]}</span>
+      </div>
+    {/each}
+  {/if}
+
+  <!-- ── Bonus Cores ────────────────────────────────────────────────────
+       User-adjustable delta on top of the deck's raw core-slot count. The
+       optimizer uses `max(0, base + bonusCores)` so the value is unbounded
+       in both directions (clamping happens silently if the user types a
+       big negative). Defaults to the active mode's `deckmod` and is
+       re-seeded on mode flip.
+  -->
+  <div class="bonus-row">
+    <!-- Plain div (not <label>) — the `<details>` info popover would break
+         the label/input association anyway, so we associate the input via
+         id + for=. -->
+    <div class="bonus-label">
+      <label for="bonus-cores-input">Bonus Cores</label>
+      <details class="info">
+        <summary aria-label="What is Bonus Cores?">?</summary>
+        <div class="info-body">
+          <p>
+            Adjusts how many core slots the optimizer has to fill, beyond
+            what the deck normally provides.
+          </p>
+          <p>
+            <strong>Positive</strong> — add slots. In Wold's, the Core
+            Expertise ability lets you craft a deck with one extra slot and
+            strip the temp core in a Deck Altar afterwards (this is why the
+            default in Wold's is <code>1</code>).
+          </p>
+          <p>
+            <strong>Negative</strong> — reserve slots for cores the
+            optimizer doesn't consider. E.g. you plan to slot a Bounty Core
+            for resource cards — set Bonus Cores to <code>-1</code> so the
+            optimizer only fills the remaining slots.
+          </p>
+          <p>
+            Vanilla has no equivalent free-slot mechanic, so the default
+            there is <code>0</code>.
+          </p>
+        </div>
+      </details>
+    </div>
+    <input
+      id="bonus-cores-input"
+      type="number"
+      class="override"
+      step="1"
+      bind:value={app.bonusCores}
+    />
+  </div>
 
   <!-- ── Greed card multiplier ─────────────────────────────────────────────
        One knob for every greed card, entered as the in-game FACE multiplier
@@ -388,11 +418,34 @@
     font-size: 11px;
   }
 
-  /* Structural cores subsection — visually separated from the rest. */
+  /* Structural cores subsection — first in the card, divided from the core list below it. */
   .struct-section {
     padding-top: 10px;
     margin-top: 8px;
     border-top: 1px solid var(--border);
+  }
+  .struct-top {
+    padding-top: 0;
+    margin-top: 0;
+    border-top: 0;
+    padding-bottom: 8px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .group-head {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    margin: 8px 0 2px;
+  }
+  .reserve-note {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: right;
+    max-width: 140px;
+    line-height: 1.3;
   }
   .struct-head {
     font-size: 11px;

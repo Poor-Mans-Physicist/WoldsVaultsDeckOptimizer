@@ -274,11 +274,43 @@ def main() -> None:
             combo_set.add(tuple(sorted(g for g in groups if g in categories)))
         return sorted(list(c) for c in combo_set)
 
+    nonstat = {"Resource", "Temporal", "Knack"}
+
+    def _class_of(groups: List[str]) -> int:
+        """Kernel legal_class: 0 evolution, 1 shiny, 2 plain stat, 3 deluxe stat, 4 non-stat; -1 = none."""
+        g = set(groups)
+        if g & nonstat:
+            return 4
+        if "Evolution" in g:
+            return 0
+        if "Shiny" in g:
+            return 1
+        if "Stat" in g:
+            return 3 if "Deluxe" in g else 2
+        return -1
+
+    def _class_combos_from(path: Path) -> List[List[List[str]]]:
+        """Category combos per card class (the kernel's legal_by_class): a placed card's tags must match a real
+        card OF ITS CLASS, so an evolution card cannot carry a combo only shiny or arcane cards have."""
+        sets: List[set] = [set() for _ in range(5)]
+        with path.open("r", encoding="utf-8") as fh:
+            mods = json.load(fh) or {}
+        for entry in (mods.get("values") or {}).values():
+            if not isinstance(entry, dict) or entry.get("type") not in ("gear", "task_loot"):
+                continue
+            groups = entry.get("groups") or []
+            k = _class_of(groups)
+            if k >= 0:
+                sets[k].add(tuple(sorted(g for g in groups if g in categories)))
+        return [sorted(list(c) for c in s) for s in sets]
+
     tag_combos_by_mode: Dict[str, List[List[str]]] = {}
+    class_combos_by_mode: Dict[str, List[List[List[str]]]] = {}
     for mode_name, mode_cfg in modes.items():
         path = _modifiers_path_for_mode(mode_cfg)
         if path.is_file():
             tag_combos_by_mode[mode_name] = _combos_from(path)
+            class_combos_by_mode[mode_name] = _class_combos_from(path)
         else:
             print(f"[build_data] WARN: {path} not found — mode '{mode_name}' "
                   f"ships no tag-combo catalog (legality unconstrained).",
@@ -290,6 +322,7 @@ def main() -> None:
     decks_blob: Dict[str, Any] = dict(decks_by_mode)
     decks_blob["_implicits"] = implicit_catalog
     decks_blob["_tagCombos"] = tag_combos_by_mode
+    decks_blob["_tagCombosByClass"] = class_combos_by_mode
     (out_dir / "decks.json").write_text(
         json.dumps(decks_blob, indent=2) + "\n",
         encoding="utf-8",

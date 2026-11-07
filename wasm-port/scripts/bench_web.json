@@ -1,0 +1,140 @@
+{
+ "reps": 2,
+ "decks": "all",
+ "panel": {
+  "configs": [
+   {
+    "name": "old_old9",
+    "strategy": "old",
+    "owned": "old9",
+    "depth": "default"
+   },
+   {
+    "name": "new_old9",
+    "strategy": "new",
+    "owned": "old9",
+    "depth": "default"
+   },
+   {
+    "name": "new_all_fast",
+    "strategy": "new",
+    "owned": "all",
+    "depth": "fast"
+   },
+   {
+    "name": "new_all",
+    "strategy": "new",
+    "owned": "all",
+    "depth": "default"
+   },
+   {
+    "name": "new_all_deep",
+    "strategy": "new",
+    "owned": "all",
+    "depth": "deep"
+   }
+  ]
+ },
+ "schedule": {
+  "owned": "all",
+  "variants": [
+   {
+    "name": "1x240k",
+    "nIter": 240000,
+    "restarts": 1,
+    "schedule": {
+     "kind": "target",
+     "params": [
+      0.5,
+      0.001,
+      0.02,
+      0.01
+     ]
+    }
+   },
+   {
+    "name": "4x60k",
+    "nIter": 60000,
+    "restarts": 4,
+    "schedule": {
+     "kind": "target",
+     "params": [
+      0.5,
+      0.001,
+      0.02,
+      0.01
+     ]
+    }
+   },
+   {
+    "name": "8x30k",
+    "nIter": 30000,
+    "restarts": 8,
+    "schedule": {
+     "kind": "target",
+     "params": [
+      0.5,
+      0.001,
+      0.02,
+      0.01
+     ]
+    }
+   },
+   {
+    "name": "16x15k",
+    "nIter": 15000,
+    "restarts": 16,
+    "schedule": {
+     "kind": "target",
+     "params": [
+      0.5,
+      0.001,
+      0.02,
+      0.01
+     ]
+    }
+   },
+   {
+    "name": "8x30k_hot",
+    "nIter": 30000,
+    "restarts": 8,
+    "schedule": {
+     "kind": "target",
+     "params": [
+      0.7,
+      0.001,
+      0.05,
+      0.01
+     ]
+    }
+   },
+   {
+    "name": "4x30k+p2",
+    "nIter": 30000,
+    "restarts": 4,
+    "schedule": {
+     "kind": "target",
+     "params": [
+      0.5,
+      0.001,
+      0.02,
+      0.01
+     ]
+    },
+    "phase2": {
+     "topK": 2,
+     "nIter": 60000,
+     "schedule": {
+      "kind": "target",
+      "params": [
+       0.1,
+       0.001,
+       0.005,
+       0.01
+      ]
+     }
+    }
+   }
+  ]
+ }
+}

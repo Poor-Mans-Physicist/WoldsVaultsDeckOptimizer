@@ -105,6 +105,20 @@ cores:
   # both off; Wold's allows both.
   construction_allow: true
   arcane_core_allow:  true
+  # 0.34.1 addon cores (woldsvaults ModDeckCoresProvider at release 0f0a9254), web optimizer only. Greater-tier
+  # max rolls; flat cores store game value + 1, Talent stores its per-Knack-neighbour increment.
+  addon_allow: true
+  arsenal:  2.25   # +75–125% on Offensive cards
+  aegis:    2.25   # +75–125% on Defensive cards
+  tool:     2.25   # +75–125% on Utility cards
+  natural:  2.25   # +75–125% on Physical cards
+  fae:      2.25   # +75–125% on Magical cards
+  bazaar:   1.5    # +35–50% if any of the 8 neighbours is a Resource card
+  talent:   0.5    # +30–50% per Knack card among the 8 neighbours
+  temporal: 3.0    # +100–200% if any star-cross cell (12 cells) is a Temporal card
+  jupiter:  1.75   # +50–75% on cards carrying the deck's most common group (Stat excluded)
+  pluto:    3.0    # +100–200% on cards carrying the deck's least common group (Stat excluded)
+  nitwit:   3.5    # +125–250% on cards in arcane slots; arcane cards are disabled
 
 deluxe:
   allow:      true
@@ -219,6 +233,7 @@ modes:
       construction_allow: false
       arcane_core_allow:  false
       sparkling_allow:    false
+      addon_allow:        false
       # Best rolls from vanilla VH's own deck_modifiers.json (read from the
       # local "Vault Hunters Third Edition" instance, the_vault 3.21.1).
       # NOTE: vanilla's greater tier is a copy-pasted 0.3–0.5 block on several

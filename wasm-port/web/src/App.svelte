@@ -18,7 +18,7 @@
   import { runStructural, hasStructCache, tierFor } from "./lib/structuralOpt";
   import type { TaggedRunInput } from "./lib/tagged";
   import { loadConfigBundle, getMode } from "./lib/config";
-  import { loadDecks, implicitCatalog, legalTagCombos } from "./lib/deck";
+  import { loadDecks, implicitCatalog, legalTagCombos, legalTagCombosByClass } from "./lib/deck";
   import { coreKeyDisplay } from "./lib/coreOptions";
   import {
     CardClass, OptimizerMode, DEPTH_PARAMS,
@@ -143,7 +143,7 @@
   // the structural cores push the budget below zero, run() flags an error.
   const structuralCost = $derived(structuralCoreCost(app.structural));
   const rawCoreBudget = $derived(
-    baseDeckForTab ? baseDeckForTab.base_core_slots + app.bonusCores - structuralCost : 0,
+    baseDeckForTab ? baseDeckForTab.base_core_slots + app.bonusCores - structuralCost - app.reservedCores.length : 0,
   );
   const effectiveCoreSlots = $derived(Math.max(0, rawCoreBudget));
 
@@ -427,12 +427,15 @@
       implicitsEnabled: app.implicitsEnabled,
       implicitCatalog: implicitCatalog(),
       legalCombos:     legalTagCombos(app.mode),
+      legalByClass:    legalTagCombosByClass(app.mode),
       complexCards:    app.complexCards,
       minStatPlaced:   app.minRegularPlaced,
       autoPlaceArcane: app.autoPlaceArcane,
       cores:           selectedCores(),
       nIter:           depth.nIter,
       restarts:        depth.restarts,
+      depth:           app.depth,
+      seed:            Math.floor(Math.random() * 2 ** 40),
       // effectiveCfg() = app.cfg with the greed-multiplier knob applied
       // (already a plain snapshot — worker structured-clone safe).
       cfg:             effectiveCfg()!,
@@ -656,7 +659,7 @@
         </div>
         <div class="meta">
           {(fxDeck ?? app.deck).slots.length} slots ·
-          {effectiveCoreSlots} cores{structuralCost > 0 ? ` (−${structuralCost} structural)` : ""} ·
+          {effectiveCoreSlots} cores{structuralCost > 0 ? ` (−${structuralCost} structural)` : ""}{app.reservedCores.length > 0 ? ` (−${app.reservedCores.length} reserved)` : ""} ·
           {(fxDeck ?? app.deck).arcaneSlots.length} arcane
         </div>
         {#if app.tab !== "build"}

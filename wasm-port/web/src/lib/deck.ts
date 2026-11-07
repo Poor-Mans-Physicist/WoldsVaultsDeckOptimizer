@@ -118,6 +118,7 @@ export function buildDeck(raw: RawDeck, deckmod: number): Deck {
 let _decksCache: Record<string, RawDeck[]> | null = null;
 let _implicitCatalog: Record<string, ImplicitDef> = {};
 let _tagCombosByMode: Record<string, string[][]> = {};
+let _tagCombosByClass: Record<string, string[][][]> = {};
 
 /** Full implicit catalog (for the Mystery pair-picker). Populated by the
  *  first loadDecks() call — decks.json ships it under "_implicits". */
@@ -131,6 +132,11 @@ export function implicitCatalog(): Record<string, ImplicitDef> {
  *  Exact builder, and the what-if popup. Empty ⇒ unconstrained. */
 export function legalTagCombos(mode: string): string[][] {
   return _tagCombosByMode[mode] ?? [];
+}
+
+/** Per card class [evolution, shiny, plain stat, deluxe stat, non-stat] (kernel legal_by_class). */
+export function legalTagCombosByClass(mode: string): string[][][] {
+  return _tagCombosByClass[mode] ?? [];
 }
 
 export async function loadDecks(
@@ -155,6 +161,7 @@ export async function loadDecks(
     } else {
       _tagCombosByMode = rawCombos as Record<string, string[][]>;
     }
+    _tagCombosByClass = (blob["_tagCombosByClass"] ?? {}) as Record<string, string[][][]>;
     delete blob["_implicits"];
     delete blob["_tagCombos"];
     _decksCache = blob;

@@ -3,16 +3,18 @@
 // (spec §1): Max / Targeted / Exact differ only in what this module builds.
 
 import {
-  CardClass, CardType, Color, CoreType, ALL_COLORS, OptimizerMode, REAL_GREEDS,
+  CardClass, CardType, Color, CoreType, ALL_COLORS, OptimizerMode, REAL_GREEDS, type Depth,
   type CoreSpec, type ExactStack, type TagRuleRow, type TaggedPlaced,
   type GroupTag,
 } from "./types";
 import type { Deck } from "./deck";
 import type { ResolvedConfig } from "./config";
 import {
-  preferredMonoColor, resolveImplicits, splitBlanketAssignable,
+  coreRelevantGroups, preferredMonoColor, relevantGroups, resolveImplicits,
   type ImplicitDef, type ImplicitPayload,
 } from "./implicits";
+import { kernelCoreValue } from "./coreOptions";
+import { searchSchedule, type SearchBudget } from "./searchConfig";
 
 export interface TaggedRunInput {
   deck:        Deck;
@@ -28,12 +30,19 @@ export interface TaggedRunInput {
   implicitCatalog: Record<string, ImplicitDef>;
   /** Category combos that exist on real cards (deck.ts::legalTagCombos). */
   legalCombos: string[][];
+  /** The same per card class [evolution, shiny, plain stat, deluxe stat, non-stat] (deck.ts::legalTagCombosByClass). */
+  legalByClass: string[][][];
   complexCards: boolean;
   minStatPlaced: number;
   autoPlaceArcane: boolean;
   cores:       CoreSpec[];         // the user's core inventory (pre-enumeration)
   nIter:       number;
   restarts:    number;
+  /** Core-set search budgets (searchConfig.ts SEARCH_DEPTHS). */
+  depth:       Depth;
+  /** Base seed for every kernel call of the run (logged so a run can be reproduced). */
+  seed:        number;
+  onProgress?: (phase: string, done: number, total: number) => void;
   cfg:         ResolvedConfig;
 }
 
@@ -55,10 +64,10 @@ export interface KernelStack {
  *  the SA must actually place the colors for the kernel to count them. */
 export function comboForcesColors(
   combo: readonly CoreSpec[] | undefined,
-  cardClass: CardClass,
+  _cardClass: CardClass,
 ): boolean {
-  return cardClass === CardClass.SHINY
-    && (combo ?? []).some((s) => s.core_type === CoreType.EQUILIBRIUM);
+  // Equilibrium boosts Stat cards in either class (deluxe and plain stat cards in evolution decks).
+  return (combo ?? []).some((s) => s.core_type === CoreType.EQUILIBRIUM);
 }
 
 /** Whether a run scores real per-card colors. Combo-dependent since the
@@ -184,22 +193,21 @@ function kernelRules(input: TaggedRunInput): { axis: string; key: string; min: n
   return out;
 }
 
-/** Per-slot SA tag variables: non-stat implicit-relevant tags always
- *  (carrying one zeroes the card — the SA weighs each battery), plus, in
- *  Targeted, capped/min'd implicit-relevant tags (spec §1). Exact never
- *  toggles (real cards keep their real tags). */
-function assignableGroups(input: TaggedRunInput, implicits: ImplicitPayload[]): GroupTag[] {
+/** Per-slot SA tag variables (Max and Targeted): every tag the deck implicits or the core set read. Cards
+ *  carry real tags only — each card's category set must be a combo some real card of its class has (the
+ *  kernel checks `legal_by_class`), so no layout invents a card. Targeted also adds every group a rule
+ *  bounds. Exact never toggles (real cards keep their real tags). */
+function assignableGroups(input: TaggedRunInput, implicits: ImplicitPayload[], combo: readonly CoreSpec[]): GroupTag[] {
   if (input.mode === OptimizerMode.EXACT) return [];
-  const { blanket, assignable } = splitBlanketAssignable(implicits, input.legalCombos);
-  const out: GroupTag[] = [...assignable];
+  const out: GroupTag[] = [];
+  const add = (g: GroupTag) => { if (!out.includes(g)) out.push(g); };
+  for (const g of relevantGroups(implicits)) add(g);
+  for (const g of coreRelevantGroups(combo)) add(g);
   if (input.mode === OptimizerMode.TARGETED) {
-    const relevant = new Set(blanket);
     for (const r of input.targetedRules) {
-      if (r.axis !== "group") continue;
+      if (r.axis !== "group" || r.key === "Foil") continue;
       if (r.min === null && r.max === null) continue;
-      if (relevant.has(r.key as GroupTag) && !out.includes(r.key as GroupTag)) {
-        out.push(r.key as GroupTag);
-      }
+      add(r.key as GroupTag);
     }
   }
   return out;
@@ -211,6 +219,7 @@ export function buildTaggedPayload(
   input: TaggedRunInput,
   combo: CoreSpec[],
   restarts: number,
+  budget?: SearchBudget,
 ): Record<string, unknown> {
   const { deck, cfg } = input;
   const colorsReal = colorsRealFor(input, combo);
@@ -218,9 +227,7 @@ export function buildTaggedPayload(
   const exact = input.mode === OptimizerMode.EXACT;
 
   const stacks = exact ? exactStacksToKernel(input) : unlimitedStacks(input, colorsReal, implicits);
-  const blanket = exact
-    ? [] : splitBlanketAssignable(implicits, input.legalCombos).blanket;
-  const assignable = assignableGroups(input, implicits);
+  const assignable = assignableGroups(input, implicits, combo);
 
   return {
     slots:      deck.slots.map(([r, c]) => [r, c] as [number, number]),
@@ -231,18 +238,20 @@ export function buildTaggedPayload(
     arcane_slot_indices: deck.arcaneSlotIndices,
     stacks,
     tag_rules: kernelRules(input),
-    blanket_groups: blanket,
+    blanket_groups: [],
     assignable_groups: assignable,
     legal_combos: input.legalCombos,
+    legal_by_class: input.legalByClass,
     implicits,
-    cores: combo.map((s) => [s.core_type, s.color ?? "", s.override ?? -1.0]),
+    cores: combo.map((s) => [s.core_type, s.color ?? "", kernelCoreValue(s, cfg)]),
     min_stat_placed: Math.max(0, input.minStatPlaced | 0),
     // §6 wasted-greed → non-foil-evo cleanup: Wold's-only model improvement;
     // the kernel itself gates on evo + FOIL-core.
     final_pass_nonfoil_evo: input.appMode !== "vanilla",
     exact_groups: exact,
-    n_iter: input.nIter,
+    n_iter: budget?.nIter ?? input.nIter,
     restarts,
+    ...searchSchedule(budget),
     mult_dir_vert:          cfg.greed.dir_vert,
     mult_dir_horiz:         cfg.greed.dir_horiz,
     mult_pure_base:         cfg.cores.pure_base,

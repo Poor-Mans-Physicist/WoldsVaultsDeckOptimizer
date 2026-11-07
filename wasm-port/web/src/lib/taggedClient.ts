@@ -1,18 +1,16 @@
-// Main-thread orchestrator for Optimizer 2.0 runs. Fan-out unit is
-// (candidate core combo × restart chunk) — "one core per restart" — so the
-// whole worker pool stays busy even when a run has a single candidate.
+// Main-thread orchestrator for Optimizer 2.0 runs: the core-set search (coreSearch.ts) on the worker pool, then
+// the TS-mirror breakdown of the winning layout.
 
 import {
   CardClass, OptimizerMode,
   type CoreSpec, type Placed, type TaggedPlaced,
 } from "./types";
-import { candidateCoresInventory } from "./cores";
 import { dispatchTagged, workerPoolSize } from "./workerPool";
 import {
-  activeImplicits, buildTaggedPayload, buildTasks, colorsRealFor,
-  parseKernelAssignment, type TaggedRunInput,
+  activeImplicits, colorsRealFor, parseKernelAssignment, type TaggedRunInput,
 } from "./tagged";
-import { preferredMonoColor } from "./implicits";
+import { searchCores, type KernelOut, type RankedSet } from "./coreSearch";
+import { SEARCH_DEPTHS } from "./searchConfig";
 import {
   simulateTaggedBreakdown, type TaggedBreakdownResult,
 } from "./taggedBreakdown";
@@ -30,6 +28,8 @@ export interface TaggedOptimizeResult {
   tsScore:    number;
   coresUsed:  CoreSpec[];
   breakdown:  TaggedBreakdownResult;
+  /** The best full-size core sets the search compared (full-run score when it got one). */
+  ranked?:    RankedSet[];
 }
 
 /** Pre-flight validation. Throws a user-readable error when the run can't
@@ -73,46 +73,25 @@ export async function optimizeTaggedAsync(
   const t0 = performance.now();
   preflight(input);
 
-  let candidates = candidateCoresInventory(
-    input.cores, input.cardClass, input.deck.core_slots,
-    input.deck.slots.length, input.deck.arcaneSlots.length, input.cfg,
-  );
-  if (candidates.length === 0) candidates = [[]];
-
-  // Color-blind runs score every COLOR-core color identically; stable-sort
-  // combos matching a color-keyed implicit first so score ties resolve
-  // toward the color the player should actually build (velara → green).
-  if (!colorsRealFor(input)) {
-    const pref = preferredMonoColor(activeImplicits(input));
-    if (pref) {
-      const matches = (combo: CoreSpec[]) =>
-        combo.some((s) => s.core_type === "color" && s.color === pref) ? 0 : 1;
-      candidates = [...candidates].sort((a, b) => matches(a) - matches(b));
-    }
-  }
-
   const poolSize = workerPoolSize();
-  const tasks = buildTasks(candidates, input.restarts, poolSize);
-
-  const results = await Promise.all(tasks.map((task, i) =>
-    dispatchTagged<{ assignment: RawTaggedPlaced[]; score: number }>(
-      i, buildTaggedPayload(input, task.combo, task.restarts),
-    ).then((r) => ({ ...r, combo: task.combo })),
-  ));
-
-  let best = results[0];
-  for (let i = 1; i < results.length; i++) {
-    if (results[i].score > best.score) best = results[i];
-  }
+  let lane = 0;
+  const runner = (payload: Record<string, unknown>) =>
+    dispatchTagged<KernelOut>(lane++ % poolSize, payload);
+  const best = await searchCores(input, input.cores, input.deck.core_slots, {
+    runner, lanes: poolSize, depth: SEARCH_DEPTHS[input.depth], seed: input.seed,
+    onProgress: input.onProgress,
+  });
   const tWorkers = performance.now();
 
   const out = finalizeTaggedResult(input, best.combo, best.assignment, best.score);
+  out.ranked = best.ranked;
   const breakdown = out.breakdown;
 
   console.log(
     `[optimize 2.0] total=${(performance.now() - t0).toFixed(0)}ms  ` +
-    `mode=${input.mode}  candidates=${candidates.length}  tasks=${tasks.length} ` +
-    `(pool ${poolSize})  workers=${(tWorkers - t0).toFixed(0)}ms  ` +
+    `mode=${input.mode}  depth=${input.depth}  seed=${input.seed}  pool=[${best.stats.pool.join(" ")}]  ` +
+    `screened=${best.stats.screened}  halved=${best.stats.halved}  full=${best.stats.full}  ` +
+    `jobs=${best.stats.jobs} (lanes ${poolSize})  workers=${(tWorkers - t0).toFixed(0)}ms  ` +
     `wasm=${best.score.toFixed(3)} ts=${breakdown.total.toFixed(3)}`,
   );
   if (Math.abs(best.score - breakdown.total) > 1e-6) {

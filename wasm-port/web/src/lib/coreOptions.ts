@@ -1,7 +1,7 @@
 // Static list of core options in the picker (port of _CORE_OPTIONS in gui.py).
 // The COLOR core gets one row per color (game allows one in inventory per color).
 
-import { Color, CoreType } from "./types";
+import { Color, CoreType, type CoreSpec, type GroupTag } from "./types";
 import type { ResolvedConfig } from "./config";
 
 export interface CoreOption {
@@ -22,7 +22,46 @@ export const CORE_OPTIONS: readonly CoreOption[] = [
   { coreType: CoreType.COLOR,       color: Color.GREEN },
   { coreType: CoreType.COLOR,       color: Color.BLUE },
   { coreType: CoreType.COLOR,       color: Color.YELLOW },
+  { coreType: CoreType.ARSENAL,     color: null },
+  { coreType: CoreType.AEGIS,       color: null },
+  { coreType: CoreType.TOOL,        color: null },
+  { coreType: CoreType.NATURAL,     color: null },
+  { coreType: CoreType.FAE,         color: null },
+  { coreType: CoreType.BAZAAR,      color: null },
+  { coreType: CoreType.TALENT,      color: null },
+  { coreType: CoreType.TEMPORAL,    color: null },
+  { coreType: CoreType.JUPITER,     color: null },
+  { coreType: CoreType.PLUTO,       color: null },
+  { coreType: CoreType.NITWIT,      color: null },
 ];
+
+/** 0.34.1 addon cores scored through the kernel's implicit machinery (value always sent explicitly). */
+export const ADDON_CORES: ReadonlySet<CoreType> = new Set([
+  CoreType.ARSENAL, CoreType.AEGIS, CoreType.TOOL, CoreType.NATURAL, CoreType.FAE,
+  CoreType.BAZAAR, CoreType.TALENT, CoreType.TEMPORAL,
+  CoreType.JUPITER, CoreType.PLUTO, CoreType.NITWIT,
+]);
+
+/** Tag cores and the category group each one boosts. */
+export const TAG_CORE_GROUP: Partial<Record<CoreType, GroupTag>> = {
+  [CoreType.ARSENAL]: "Offensive",
+  [CoreType.AEGIS]:   "Defensive",
+  [CoreType.TOOL]:    "Utility",
+  [CoreType.NATURAL]: "Physical",
+  [CoreType.FAE]:     "Magical",
+};
+
+/** Cores with no stat effect: the player may reserve a slot for them; the optimizer never picks them. */
+export const NONSTAT_CORE_OPTIONS: readonly CoreType[] = [
+  CoreType.HARVEST, CoreType.FORTUNE, CoreType.BOUNTY, CoreType.ADEPT,
+];
+
+export const NONSTAT_CORE_INFO: Record<string, string> = {
+  [CoreType.HARVEST]: "lowers resource card requirements",
+  [CoreType.FORTUNE]: "chance for resource cards to double",
+  [CoreType.BOUNTY]:  "raises crate tier with enough resource cards",
+  [CoreType.ADEPT]:   "adds levels to one arcane slot",
+};
 
 export function coreLabel(opt: CoreOption): string {
   if (opt.coreType === CoreType.COLOR && opt.color !== null) {
@@ -65,6 +104,7 @@ export function coreValueKind(coreType: CoreType): CoreValueKind {
     // Equilibrium stores the PER-COLOR roll (value = 1 + roll × unique
     // colors) — the item prints "+50% per unique deck color" → enter 50.
     case CoreType.EQUILIBRIUM:
+    case CoreType.TALENT:
       return "increment";
     default:
       return "flat";
@@ -110,7 +150,31 @@ export function coreDefaultValue(opt: CoreOption, cfg: ResolvedConfig): number {
     // keep the switch exhaustive — call sites never hit these branches.
     case CoreType.CONSTRUCTION_CORE: return 0;
     case CoreType.ARCANE_CORE:       return 0;
+    case CoreType.ARSENAL:  return cfg.cores.arsenal;
+    case CoreType.AEGIS:    return cfg.cores.aegis;
+    case CoreType.TOOL:     return cfg.cores.tool;
+    case CoreType.NATURAL:  return cfg.cores.natural;
+    case CoreType.FAE:      return cfg.cores.fae;
+    case CoreType.BAZAAR:   return cfg.cores.bazaar;
+    case CoreType.TALENT:   return cfg.cores.talent;
+    case CoreType.TEMPORAL: return cfg.cores.temporal;
+    case CoreType.JUPITER:  return cfg.cores.jupiter;
+    case CoreType.PLUTO:    return cfg.cores.pluto;
+    case CoreType.NITWIT:   return cfg.cores.nitwit;
+    case CoreType.HARVEST:
+    case CoreType.FORTUNE:
+    case CoreType.BOUNTY:
+    case CoreType.ADEPT:
+      return 0;
   }
+}
+
+/** The value the kernel receives for a core: the override, or for addon cores (which have no kernel
+ *  default) the config value; -1 = the kernel's own config default. */
+export function kernelCoreValue(spec: CoreSpec, cfg: ResolvedConfig): number {
+  if (spec.override !== null) return spec.override;
+  if (ADDON_CORES.has(spec.core_type)) return coreDefaultValue({ coreType: spec.core_type, color: null }, cfg);
+  return -1.0;
 }
 
 /** Default rendered as placeholder text in the override input — in %, the

@@ -121,30 +121,33 @@ def simulate(
         n_ns = len(greed) + len(arcane) + len(scorable)
     n_deluxe = len(deluxe)
 
-    # All cores fold into a single core_mult. Two cores are *per-card gated*:
-    #   DELUXE_CORE — applies to regular/typeless cards, NOT to deluxe cards.
+    # All cores fold into a single core_mult. Per-card gates (0.34.1 groups):
+    #   EQUILIBRIUM / STEADFAST — Stat cards: shiny positionals, deluxe and typeless (either class).
+    #   SPARKLING   — Shiny cards: positionals of shiny runs only.
+    #   DELUXE_CORE — every card, deluxe included (Premium's empty boostGroups; the "non-Deluxe" tooltip is
+    #                 not enforced by GroupSynergyDeckModifier).
     #   VOID_CORE   — applies to regular/typeless/deluxe, NOT to dead cards
     #                 (dead cards have 0 base, so this only matters for symmetry).
-    # We compute a baseline (everything else), plus separate addends/factors for
-    # deluxe / void, then build per-class core_mult variants below.
     baseline_contribs = []
+    stat_contribs = []
+    spark_contribs = []
     deluxe_core_value = None  # raw multiplier value for DELUXE_CORE if present
     void_core_value   = None  # raw multiplier value for VOID_CORE if present
     for core in cores:
         if   core == CoreType.PURE:
             # n_ns now includes placed arcane cards directly.
             baseline_contribs.append(MULT_PURE_BASE + MULT_PURE_SCALE * n_ns)
-        elif core == CoreType.EQUILIBRIUM and card_class == CardClass.SHINY:
+        elif core == CoreType.EQUILIBRIUM:
             # StatEfficiencyDeckModifier: 1 + roll × unique deck colors.
             # This reference is colorless-mono, so the count is 1 whenever
             # anything is placed (MULT_EQUILIBRIUM is the PER-COLOR roll).
-            baseline_contribs.append(
+            stat_contribs.append(
                 1.0 + MULT_EQUILIBRIUM * (1 if filled else 0)
             )
-        elif core == CoreType.STEADFAST   and card_class == CardClass.SHINY:
-            baseline_contribs.append(MULT_STEADFAST)
+        elif core == CoreType.STEADFAST:
+            stat_contribs.append(MULT_STEADFAST)
         elif core == CoreType.SPARKLING   and card_class == CardClass.SHINY:
-            baseline_contribs.append(MULT_SPARKLING)
+            spark_contribs.append(MULT_SPARKLING)
         elif core == CoreType.COLOR:
             baseline_contribs.append(MULT_COLOR)
         elif core == CoreType.FOIL:
@@ -165,20 +168,27 @@ def simulate(
         archive_factor = MULT_ARCHIVE_CORE ** len(arcane)
         archive_addend = archive_factor - 1.0
 
+    shiny = card_class == CardClass.SHINY
     if ADDITIVE_CORES:
         baseline_sum  = sum(v - 1.0 for v in baseline_contribs)
+        stat_addend   = sum(v - 1.0 for v in stat_contribs)
+        spark_addend  = sum(v - 1.0 for v in spark_contribs)
         deluxe_addend = (deluxe_core_value - 1.0) if deluxe_core_value is not None else 0.0
         void_addend   = (void_core_value   - 1.0) if void_core_value   is not None else 0.0
-        regular_core_mult     = 1.0 + baseline_sum + deluxe_addend + void_addend + archive_addend
-        deluxe_card_core_mult = 1.0 + baseline_sum + void_addend + archive_addend
-        typeless_core_mult    = 1.0 + baseline_sum + deluxe_addend + void_addend + archive_addend
+        regular_core_mult     = (1.0 + baseline_sum + (stat_addend if shiny else 0.0) + spark_addend
+                                 + deluxe_addend + void_addend + archive_addend)
+        deluxe_card_core_mult = 1.0 + baseline_sum + stat_addend + deluxe_addend + void_addend + archive_addend
+        typeless_core_mult    = 1.0 + baseline_sum + stat_addend + deluxe_addend + void_addend + archive_addend
     else:
         baseline_prod = math.prod(baseline_contribs) if baseline_contribs else 1.0
+        stat_factor   = math.prod(stat_contribs) if stat_contribs else 1.0
+        spark_factor  = math.prod(spark_contribs) if spark_contribs else 1.0
         deluxe_factor = deluxe_core_value if deluxe_core_value is not None else 1.0
         void_factor   = void_core_value   if void_core_value   is not None else 1.0
-        regular_core_mult     = baseline_prod * deluxe_factor * void_factor * archive_factor
-        deluxe_card_core_mult = baseline_prod * void_factor * archive_factor
-        typeless_core_mult    = baseline_prod * deluxe_factor * void_factor * archive_factor
+        regular_core_mult     = (baseline_prod * (stat_factor if shiny else 1.0) * spark_factor
+                                 * deluxe_factor * void_factor * archive_factor)
+        deluxe_card_core_mult = baseline_prod * stat_factor * deluxe_factor * void_factor * archive_factor
+        typeless_core_mult    = baseline_prod * stat_factor * deluxe_factor * void_factor * archive_factor
 
     row_count: Dict[int, int] = {}
     col_count: Dict[int, int] = {}

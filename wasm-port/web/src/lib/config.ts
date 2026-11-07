@@ -46,6 +46,19 @@ export interface ResolvedConfig {
     //   arcane_core:  lets the user convert ≤3 existing regular slots to arcane.
     construction_allow: boolean;
     arcane_core_allow:  boolean;
+    // 0.34.1 addon cores. Flat values store game value + 1; talent stores its per-neighbour increment.
+    addon_allow: boolean;
+    arsenal:  number;
+    aegis:    number;
+    tool:     number;
+    natural:  number;
+    fae:      number;
+    bazaar:   number;
+    talent:   number;
+    temporal: number;
+    jupiter:  number;
+    pluto:    number;
+    nitwit:   number;
   };
 
   deluxe: {

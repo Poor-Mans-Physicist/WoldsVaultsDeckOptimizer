@@ -145,9 +145,14 @@ fn layout_input(tpl: &TagRunInput, base: &Base, set: u64, n_iter: usize, restart
     inp
 }
 
+/// Names in the template are validated once (check_template); each layout only changes the geometry.
+fn check_template(tpl: &TagRunInput) -> Result<(), JsValue> {
+    build_run(tpl).map(|_| ()).map_err(|e| JsValue::from_str(&format!("tagsim: {e}")))
+}
+
 fn score_layout(tpl: &TagRunInput, base: &Base, set: u64, n_iter: usize, restarts: usize, seed: u64) -> f64 {
     let inp = layout_input(tpl, base, set, n_iter, restarts, seed);
-    run_core(build_run(&inp)).1
+    run_core(build_run(&inp).expect("template validated by check_template")).1
 }
 
 #[derive(Deserialize)]
@@ -164,6 +169,7 @@ struct EvalIn {
 #[wasm_bindgen(js_name = constructionEval)]
 pub fn construction_eval(input: JsValue) -> Result<JsValue, JsValue> {
     let inp: EvalIn = serde_wasm_bindgen::from_value(input).map_err(err("eval input"))?;
+    check_template(&inp.template)?;
     let base = parse_base(&inp.base.base)?;
     let scores: Vec<f64> = inp.sets.iter().enumerate().map(|(i, s)| {
         let seed = inp.seed ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
@@ -197,6 +203,7 @@ struct Visited { set: Vec<u32>, score: f64 }
 #[wasm_bindgen(js_name = constructionChain)]
 pub fn construction_chain(input: JsValue) -> Result<JsValue, JsValue> {
     let inp: ChainIn = serde_wasm_bindgen::from_value(input).map_err(err("chain input"))?;
+    check_template(&inp.template)?;
     let base = parse_base(&inp.base.base)?;
     let start = inp.start.as_ref().map(|s| set_from(s));
     let visited = outer_chain(base.mask, inp.k, inp.steps, inp.seed, start, |set, salt| {

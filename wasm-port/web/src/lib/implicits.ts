@@ -70,9 +70,33 @@ export function resolveImplicits(
 }
 
 /** Non-stat categories: cards carrying these give no player stats → 0 NDM
- *  (kernel NONSTAT_GROUPS). Never blanket-assigned; always a per-slot SA
- *  decision ("battery" cards). */
-export const NONSTAT_TAGS: readonly GroupTag[] = ["Resource", "Temporal"];
+ *  (kernel NONSTAT_GROUPS; Knack since 0.34.1 — no Knack card carries Stat).
+ *  Always a per-slot SA decision ("battery" cards). */
+export const NONSTAT_TAGS: readonly GroupTag[] = ["Resource", "Temporal", "Knack"];
+
+/** Category tags a core set reads: tag cores their group, Bazaar/Talent/Temporal their battery group,
+ *  Jupiter/Pluto every category (they count all groups). */
+export function coreRelevantGroups(cores: readonly { core_type: string }[]): GroupTag[] {
+  const out: GroupTag[] = [];
+  const add = (g: GroupTag) => { if (!out.includes(g)) out.push(g); };
+  for (const c of cores) {
+    switch (c.core_type) {
+      case "arsenal": add("Offensive"); break;
+      case "aegis": add("Defensive"); break;
+      case "tool": add("Utility"); break;
+      case "natural": add("Physical"); break;
+      case "fae": add("Magical"); break;
+      case "bazaar": add("Resource"); break;
+      case "talent": add("Knack"); break;
+      case "temporal": add("Temporal"); break;
+      case "jupiter":
+      case "pluto":
+        for (const g of CATEGORY_GROUPS) add(g);
+        break;
+    }
+  }
+  return out;
+}
 
 /**
  * Which category tags the active implicits actually read. `unique_groups`

@@ -147,7 +147,7 @@ fn build_run<'a>(
     TagRun {
         slots, row_peers, col_peers, surr_peers, diag_peers,
         arcane_slot_indices, stacks, tag_rules, blanket_groups,
-        assignable_groups, legal_combos, implicits, cores, min_stat_placed,
+        assignable_groups, legal_combos, legal_by_class: Vec::new(), implicits, cores, min_stat_placed,
         final_pass_nonfoil_evo, exact_groups, n_iter, restarts, seed, sched, opts, value_model, cfg,
     }
 }

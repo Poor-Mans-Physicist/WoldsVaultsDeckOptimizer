@@ -45,6 +45,13 @@ export function hiddenCoreTypes(_mode: string, cfg: ResolvedConfig): Set<CoreTyp
   if (!cfg.cores.void_allow)     hidden.add(CoreType.VOID_CORE);
   if (!cfg.cores.archive_allow)  hidden.add(CoreType.ARCHIVE_CORE);
   if (!cfg.cores.sparkling_allow) hidden.add(CoreType.SPARKLING);
+  if (!cfg.cores.addon_allow) {
+    for (const t of [CoreType.ARSENAL, CoreType.AEGIS, CoreType.TOOL, CoreType.NATURAL, CoreType.FAE,
+                     CoreType.BAZAAR, CoreType.TALENT, CoreType.TEMPORAL, CoreType.JUPITER, CoreType.PLUTO,
+                     CoreType.NITWIT, CoreType.HARVEST, CoreType.FORTUNE, CoreType.BOUNTY, CoreType.ADEPT]) {
+      hidden.add(t);
+    }
+  }
   return hidden;
 }
 

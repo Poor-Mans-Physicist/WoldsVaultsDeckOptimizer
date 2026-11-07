@@ -56,7 +56,8 @@ deck slots, then computes one NDM value.
    class+FOIL rule below.
 3. **Build the per-card-type core multipliers.** Three variants exist —
    `regular_core_mult`, `deluxe_card_core_mult`, `typeless_core_mult` —
-   because DELUXE_CORE skips deluxe cards.
+   because EQUILIBRIUM / STEADFAST boost Stat cards only and SPARKLING
+   Shiny cards only (see **Cores**).
 4. **Compute the Archive stack term** — `archive_core_base ^ n_arcane_placed`
    when ARCHIVE_CORE is picked, folded into the per-card core multipliers
    like every other core (additive mode adds `factor − 1`, multiplicative
@@ -191,18 +192,66 @@ base, multiplicative scales it.
 | Core            | Default value (Wold's)                  | What it boosts                                                          | What it does NOT boost                   | Scaling formula                                          | Class gating                                                                   |
 | --------------- | --------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `PURE`        | base**1.0**, scale **0.07** | regulars, deluxe cards (additive baseline), typeless                    | greed                                    | `pure_base + pure_scale × n_ns` (variable per layout) | Universal                                                                      |
-| `EQUILIBRIUM` | **1.5**                           | regulars, typeless                                                      | deluxe cards (additive), greed           | Flat                                                     | **SHINY-only**                                                           |
-| `STEADFAST`   | **2.1**                           | regulars, typeless                                                      | deluxe cards, greed                      | Flat                                                     | **SHINY-only**                                                           |
-| `SPARKLING`   | **2.5**                           | regulars, typeless                                                      | deluxe cards, greed                      | Flat                                                     | **SHINY-only**; gated by `cores.sparkling_allow` (off in vanilla)        |
+| `EQUILIBRIUM` | per-color roll **0.5**            | Stat cards: shiny regulars, deluxe cards, typeless                      | evolution regulars, greed                | `1 + roll × unique colors`                               | Either class (in EVO only deluxe + typeless carry Stat)                  |
+| `STEADFAST`   | **2.1**                           | Stat cards: shiny regulars, deluxe cards, typeless                      | evolution regulars, greed                | Flat                                                     | Either class (in EVO only deluxe + typeless carry Stat)                  |
+| `SPARKLING`   | **2.5**                           | Shiny cards: shiny regulars only                                        | deluxe cards, typeless, greed            | Flat                                                     | **SHINY-only**; gated by `cores.sparkling_allow` (off in vanilla)        |
 | `COLOR`       | **1.75**                          | every scorable card (WASM model: only matching-color cards)             | greed                                    | Flat                                                     | Universal                                                                      |
 | `FOIL`        | **2.5**                           | regulars, deluxe cards (baseline), typeless                             | greed                                    | Flat                                                     | Universal;**also flips EVO's `n_ns` to the SHINY formula** (see below). Displayed as **"Shiny"** in the UI — the in-game name (`foil` stays the internal key everywhere) |
-| `DELUXE_CORE` | base**1.0**, scale **0.2**  | regulars, typeless                                                      | **deluxe cards themselves**, greed | `deluxe_core_base + deluxe_core_scale × n_deluxe`     | Universal; gated by `deluxe.allow` (off in vanilla)                          |
+| `DELUXE_CORE` | base**1.0**, scale **0.2**  | regulars, deluxe cards, typeless (see note)                             | greed                                    | `deluxe_core_base + deluxe_core_scale × n_deluxe`     | Universal; gated by `deluxe.allow` (off in vanilla)                          |
 | `VOID_CORE`   | base**1.0**, scale **0.3**  | regulars, deluxe cards, typeless                                        | dead cards themselves, greed             | `void_base + void_scale × n_dead`                     | Universal; gated by `cores.void_allow` (off in vanilla)                      |
 | `ARCHIVE_CORE` | rolled base **1.2**           | regulars, deluxe cards, typeless                                        | greed (arcane/dead score 0 anyway)       | `archive_core ^ n_arcane_placed` — an **additive term inside** the per-card `core_mult` like every other core (see callout below) | Gated by `cores.archive_allow` (off in vanilla); when on, additionally **enumerated only when the deck has ≥ 1 arcane slot** |
 
 Cores **never** apply to greed cards. They never apply to ARCANE cards
 (arcane = 0 NDM, fixed). DEAD cards score 0 regardless and so are not
 affected.
+
+**Premium (`DELUXE_CORE`) boosts Deluxe cards too.** The in-game tooltip says
+"non-Deluxe", but in 0.34.1 Premium's `boostGroups` list is empty, so
+`GroupSynergyDeckModifier` applies it to every card (woldsvaults `0f0a9254`,
+`GroupSynergyDeckModifier.java:53`). The optimizer models the code, not the
+tooltip, and does not say so in the UI (user ruling 2026-11-07).
+
+**Stat / Shiny gates (0.34.1 groups).** Equilibrium and Steadfast require the
+`Stat` group, Sparkling the `Shiny` group. In the card dump shiny cards carry
+`Shiny` + `Stat`, deluxe stat cards `Deluxe` + `Stat`, plain stat (typeless)
+cards `Stat`, evolution cards `Evolution` and no `Stat`.
+
+### 0.34.1 addon cores — WEB ONLY (2026-11-07)
+
+From woldsvaults `ModDeckCoresProvider` at release `0f0a9254`; defaults are the
+greater-tier max roll (`config.yaml cores.*`, flat = game value + 1). All are
+additive. The kernel scores them through its implicit machinery (`core_implicits`
+in `tagsim.rs`; the value always arrives as the core spec's override). The
+spreadsheet CLI does not enumerate them.
+
+| Core | Default | Mechanic |
+|---|---|---|
+| `arsenal` / `aegis` / `tool` / `natural` / `fae` | **2.25** each | +1.25 on cards carrying Offensive / Defensive / Utility / Physical / Magical |
+| `bazaar` | **1.5** | +0.5 if any of the 8 neighbours is a Resource card (AdjacencyBonus SURROUNDING, forEach off) |
+| `talent` | **0.5** per neighbour | +0.5 per Knack card among the 8 neighbours (forEach on) |
+| `temporal` | **3.0** | +2.0 if any of the 12 star-cross cells (orthogonal ±1/±2 and the diagonals) is a Temporal card |
+| `jupiter` | **1.75** | +0.75 on cards carrying the deck's most common group |
+| `pluto` | **3.0** | +2.0 on cards carrying the deck's least common group (count > 0) |
+| `nitwit` | **3.5** | arcane slots become regular slots and the card in each gets +2.5; arcane cards are disabled (Archive goes inert, so the search never pairs them) |
+
+- **Dominance (Jupiter, Pluto).** Groups are counted over every placed card
+  (`DominanceDeckModifier`), Stat excluded, ties to the alphabetically first
+  group. A card's game groups: its tags, plus `Evolution` (evo regulars) or
+  `Shiny` + `Stat` (shiny regulars), `Deluxe` (+ `Stat`), `Stat` (typeless),
+  `Greed`, `Arcane`; Wild carries the dummy card's list. Arcane cards carry no
+  category in this model (see **Card model**), so an arcane card counts only as
+  `Arcane`.
+- **Adjacency cores** need non-stat battery cards (Resource / Knack / Temporal),
+  which score 0 themselves; the SA weighs each battery.
+- **No stat effect:** Harvest, Fortune, Bounty (resource cards) and Adept
+  (arcane levels). The core picker lets the player reserve a slot for each; the
+  optimizer never picks them.
+- **Empyreal** is not modeled (shelved; it picks random non-arcane slots in game
+  and may become a structural core).
+- **Core-set search** (`coreSearch.ts`): a beam over owned cores with cheap
+  screen anneals, halving on the best full sets, then full two-phase runs; one
+  color core when colors are interchangeable; tag / battery cores dropped when
+  no card of the run can carry their group; Nitwit and Archive never together.
 
 ### Archive core — self-compounding value, additive stacking
 
@@ -283,15 +332,12 @@ Under the run-level foil rule that materialize() applies, it reduces to:
 Pure mult is then `1.0 + 0.07 × n_ns`. For e.g. a SHINY+Pure run on the
 Starter deck with 7 greed + 1 arcane placed: `n_ns = 8`, Pure mult = `1.56×`.
 
-### Pluto core (REMOVED)
+### Pluto core
 
-The Pluto core was removed from the optimizer entirely in the modpack
-update that nerfed it to never be optimal. No code path, config key, or
-UI surface for it remains. Historical reference only: it used to be an
-EVO-only flat 3× core that targeted the smaller of {EVO regulars, deluxe
-cards}, with ties boosting both groups. If a future pack version
-reintroduces a similar mechanic, restore from the previous commit
-history rather than re-deriving the design here.
+The old optimizer's Pluto (an EVO-only flat 3× core on the smaller of {EVO
+regulars, deluxe cards}) was removed when the pack retuned it. The game never
+dropped the core: in 0.34.1 Pluto is a minority-group Dominance core, modeled
+again since 2026-11-07 (see **0.34.1 addon cores**).
 
 ---
 
@@ -320,7 +366,7 @@ conversions. The count is rolled ONCE when the core item is generated
 toggle raises both placement caps to 5.
 
 > ⚠️ **Arcane Core ≠ Archive Core.** The Archive Core (scoring
-> multiplier, `base ^ (2.1·√n_arcane_placed)`) is unchanged by structural
+> stack term, `base ^ n_arcane_placed`) is unchanged by structural
 > cores themselves. The Arcane Core is a **structural** core that creates
 > new arcane slots. They synergize: each Arcane Core conversion bumps
 > `n_arcane_placed` (assuming the SA fills the new arcane slot), which
@@ -629,12 +675,11 @@ computed values).
 **Additive** (`true`, Wold's): `core_mult = 1.0 + Σ(c − 1)` over all
 baseline contribs, plus per-category addends:
 
-- `regular_core_mult` adds `(deluxe_core_value − 1)` if DELUXE_CORE on,
-  and `(void_core_value − 1)` if VOID_CORE on.
-- `deluxe_card_core_mult` adds `(void_core_value − 1)` but **does not**
-  add the deluxe-core addend (deluxe cards don't boost themselves).
-- `typeless_core_mult` adds `(deluxe_core_value − 1)` and
-  `(void_core_value − 1)`.
+- every category adds `(deluxe_core_value − 1)` if DELUXE_CORE on (deluxe
+  cards included, see the Premium note) and `(void_core_value − 1)` if
+  VOID_CORE on;
+- the Equilibrium / Steadfast addends go to Stat cards (shiny regulars,
+  deluxe, typeless) and the Sparkling addend to shiny regulars only.
 
 **Multiplicative** (`false`, Vanilla): `baseline_prod = Π baseline_contribs`,
 then per category multiplied by the relevant DELUXE/VOID factors. Same
@@ -655,9 +700,9 @@ core_mult = 1 + (2.5 − 1) + (1.75 − 1) + (deluxe_value − 1)
 
 The class gates several scoring paths:
 
-- **EQUILIBRIUM, STEADFAST** apply only when `card_class == SHINY`. In
-  EVO runs they're silently dropped from the baseline (the candidate-core
-  enumerator never includes them on the EVO side).
+- **EQUILIBRIUM, STEADFAST** boost Stat cards in either class; in EVO runs
+  that is deluxe and typeless cards only. **SPARKLING** boosts shiny
+  regulars only (SHINY runs).
 - **EVO_GREED** applies only when `card_class == EVO`. In SHINY runs an
   evo-greed card is a no-op (counts as a greed for `n_ns` but boosts
   nothing).
@@ -844,7 +889,7 @@ wasm crate via `#[path]`) backs three run modes. The design spec is
 
 | Mode | Supply | Colors | Tags | Extra |
 |---|---|---|---|---|
-| **Max** | unlimited, mono-color | color-blind (`colors_real=false`) | blanket favorable (implicit-rewarded groups free on every non-greed card) | = spreadsheet engine; reproduces classic 1.x numbers (see parity gate) |
+| **Max** | unlimited, mono-color | color-blind (`colors_real=false`) | web: real per-card tags — every group an implicit or core reads is a per-slot SA toggle, limited to combos real cards of that class have (`legal_by_class`, since 2026-11-07); CLI: blanket favorable | spreadsheet engine reproduces classic 1.x numbers (see parity gate) |
 | **Targeted** | unlimited | real per-card colors **iff** any color rule or Complex Cards is active, else Max-style | per-tag Min/Max rules; capped implicit-relevant groups become per-slot SA toggle moves | multi-tag counting: a card counts toward every rule it matches |
 | **Exact** | finite per-stack multiset (+ per-stack must-place minimum) | always real | real per-card groups from the builder | no blanket assumptions anywhere |
 
@@ -870,7 +915,8 @@ NDM-relevant exceptions are **Foil** and **Wild**.
   every stat-giving card carries it, evo ⇒ never (playtest ruling). The
   kernel adds it automatically (incl. Exact builds) for treasure/mutant;
   it is not a builder chip, not a notch, not in the tag-edit popup.
-- **Non-stat categories (`Resource`, `Temporal`)** — a card carrying one
+- **Non-stat categories (`Resource`, `Temporal`, `Knack`)** — Knack since
+  2026-11-07 (no Knack card in the 0.34.1 dump carries Stat). A card carrying one
   gives no player stats, so it scores **0 NDM itself** (playtest ruling;
   kernel `NONSTAT_GROUPS`). It still fills its slot: row/col/peer counts,
   `n_ns`, chain connectivity, and implicits that read it (merchant's
@@ -893,7 +939,10 @@ NDM-relevant exceptions are **Foil** and **Wild**.
   (extracted from `modifiers.json` gear + task_loot entries — 28 combos,
   emitted into the web bundle as `_tagCombos` and loaded by the CLI from
   the same file) bound every tag surface. A card's category set must be a
-  **subset** of some real card's set (Wild exempt). Enforced in: the SA's
+  **subset** of some real card's set (Wild exempt). Since 2026-11-07 the web
+  kernel also gets the combos per card class (`_tagCombosByClass`,
+  `legal_by_class`: evolution, shiny, plain stat, deluxe stat, non-stat), so an
+  evolution card cannot carry a combo only shiny or arcane cards have. Enforced in: the SA's
   tag-toggle moves (kernel `legal_combos`), the Exact builder's chips,
   and the what-if popup. A blanket UNION that isn't buildable as one real
   card (Mystery pairs like champion+fairy, mutant's all-category
@@ -1255,8 +1304,8 @@ unchanged and bit-identical when no value model is passed.
   looks catastrophic, but a re-anneal moves that stat onto gear (one shared deck serves every build). The objective
   assumes gear covers the requirements; `value_terms(penalties=True)` keeps them for diagnostics.
 - **Tag cores** (Arsenal/Aegis/Tool/Natural/Fae, `cores.tag_core` = 1.25, greater max) are additive per-group
-  bonuses passed as global implicits; they exist only in archetype mode (Max mode's blanket tags would apply them to
-  every card).
+  bonuses passed as global implicits. The web optimizer models them too since 2026-11-07, with real per-card tags
+  (see **0.34.1 addon cores**).
 - **Search.** In value mode half of the replacements keep the slot's card type and redraw only its stat.
 - **Known limitation.** The model is separable per attribute; it ranks decks well (picks each build's true best of
   42 decks for 39–41/42 builds) but its absolute errors are large once several requirement stats move at once. The

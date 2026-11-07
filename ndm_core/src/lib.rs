@@ -1011,6 +1011,7 @@ mod sa_bench {
             blanket_groups: 0,
             assignable_groups: 0,
             legal_combos: Vec::new(),
+            legal_by_class: Vec::new(),
             implicits,
             cores,
             min_stat_placed: 0,

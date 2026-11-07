@@ -93,6 +93,8 @@ interface AppState {
   // value is unbounded — typing a large negative number just clamps the
   // effective core count to 0.
   bonusCores: number;
+  // No-stat cores the player keeps slotted (Harvest/Fortune/Bounty/Adept); each costs one core slot.
+  reservedCores: string[];
   // "Greed card multiplier" knob (cores panel). Holds the in-game FACE
   // multiplier — a best-roll tier-3 greed reads ×5, so the default is
   // cfg dir_vert addend + 1 (= 5). The solver applies (value − 1) as the
@@ -170,6 +172,7 @@ export const app = $state<AppState>({
   autoPlaceArcane: true,   // default; overridden from cfg.arcane.auto_place on boot
   coreState: initialCoreState(),
   bonusCores: 0,           // seeded from cfg.deckmod on boot + mode change
+  reservedCores: [],
   greedMult: 5,            // seeded from cfg greed addend + 1 on boot + mode change
 
   running: false,
@@ -218,6 +221,11 @@ export function selectedCores(): CoreSpec[] {
 }
 
 /** Toggle every core checkbox at once (Enable-all / Disable-all). */
+export function toggleReservedCore(t: string, on: boolean): void {
+  const rest = app.reservedCores.filter((x) => x !== t);
+  app.reservedCores = on ? [...rest, t] : rest;
+}
+
 export function setAllCores(enabled: boolean): void {
   for (const s of app.coreState) s.enabled = enabled;
 }

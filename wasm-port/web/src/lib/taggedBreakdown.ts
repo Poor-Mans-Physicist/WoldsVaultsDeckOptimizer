@@ -13,6 +13,7 @@ import type { ImplicitPayload } from "./implicits";
 import {
   classifyCores, type CoreComponent, type ExcludedCore,
 } from "./cores";
+import { ADDON_CORES, TAG_CORE_GROUP, coreLabel, kernelCoreValue } from "./coreOptions";
 
 export interface ImplicitPart {
   label:  string;
@@ -67,6 +68,44 @@ const SCORABLE = new Set<CardType>([
 
 const key = (r: number, c: number) => `${r},${c}`;
 
+const NONSTAT = ["Resource", "Temporal", "Knack"];
+/** The Wild ("dummy") card's groups in the 0.34.1 card dump. */
+const WILD_GROUPS = ["Wild", "Arcane", "Evolution", "Stat", "Defensive", "Knack", "Magical", "Physical", "Resource", "Utility"];
+
+/** The game's group set of a placed card (kernel xgroups): what Jupiter/Pluto count and the Stat/Shiny gates read. */
+export function cardGameGroups(c: TaggedPlaced, isShiny: boolean): Set<string> {
+  if (c.t === CardType.DEAD) return new Set();
+  const g = new Set<string>(c.groups);
+  if (c.t === CardType.WILD) { for (const x of WILD_GROUPS) g.add(x); return g; }
+  const nonstat = c.groups.some((x) => NONSTAT.includes(x));
+  if (POSITIONAL.has(c.t)) {
+    if (isShiny) { g.add("Shiny"); g.add("Stat"); } else g.add("Evolution");
+  } else if (c.t === CardType.DELUXE) {
+    g.add("Deluxe");
+    if (!nonstat) g.add("Stat");
+  } else if (c.t === CardType.TYPELESS) {
+    if (!nonstat) g.add("Stat");
+  } else if (GREEDS.has(c.t)) {
+    g.add("Greed");
+  } else if (c.t === CardType.ARCANE) {
+    g.add("Arcane");
+  }
+  return g;
+}
+
+/** First group (alphabetical) with the highest (`most`) or lowest positive count, Stat excluded. */
+function dominantGroup(counts: Map<string, number>, most: boolean): string | null {
+  let best: string | null = null;
+  let bn = 0;
+  for (const g of [...counts.keys()].sort()) {
+    if (g === "Stat") continue;
+    const n = counts.get(g) ?? 0;
+    if (n === 0) continue;
+    if (best === null || (most ? n > bn : n < bn)) { best = g; bn = n; }
+  }
+  return best;
+}
+
 export function simulateTaggedBreakdown(
   deck:      Deck,
   cards:     readonly TaggedPlaced[],     // parallel to deck.slots
@@ -98,6 +137,16 @@ export function simulateTaggedBreakdown(
     return mc === c ? undefined : slotIndex.get(key(r, mc));
   });
   const mirrorSelf: boolean[] = deck.slots.map(([, c]) => colMax - (c - colMin) === c);
+
+  // Star-cross cells (AdjacencyBonus STARCROSS) and Nitwit slots (the deck's arcane slots under a Nitwit core).
+  const STAR: [number, number][] = [[-1, 0], [1, 0], [0, -1], [0, 1], [-2, 0], [2, 0], [0, -2], [0, 2],
+                                    [-1, -1], [-1, 1], [1, -1], [1, 1]];
+  const starcross: number[][] = deck.slots.map(([r, c]) =>
+    STAR.map(([dr, dc]) => slotIndex.get(key(r + dr, c + dc))).filter((q): q is number => q !== undefined));
+  const isShiny = cardClass === CardClass.SHINY;
+  const nitwitOn = cores.some((s) => s.core_type === CoreType.NITWIT);
+  const nitwitSlot = new Set<number>(nitwitOn ? deck.arcaneSlotIndices : []);
+  const gameGroupCount = new Map<string, number>();
 
   // ── Pass 1: classify + counts ─────────────────────────────────────────
   const rowColor = new Map<string, number>();   // `${r}|${color}`
@@ -131,6 +180,7 @@ export function simulateTaggedBreakdown(
       colorsPresent.add(c.color);
     }
     for (const g of c.groups) groupsUnion.add(g);
+    for (const g of cardGameGroups(c, isShiny)) gameGroupCount.set(g, (gameGroupCount.get(g) ?? 0) + 1);
     if (!c.groups.includes("Foil")) nNonFoil++;
     if (c.t === CardType.DELUXE) nDeluxe++;
     else if (c.t === CardType.ARCANE) nArcane++;
@@ -144,8 +194,12 @@ export function simulateTaggedBreakdown(
   const nColors = colorsPresent.size;
 
   // ── Cores (identical math to classifyCores / kernel) ──────────────────
-  const { baseline, colorComp, deluxeComp, voidComp, archiveComp, classExcluded } =
+  const { baseline, statComps, sparkComp, colorComp, deluxeComp, voidComp, archiveComp, classExcluded } =
     classifyCores(cores, cardClass, nNs, nDeluxe, nDead, nArcane, nColors, cfg);
+  const jupiterGroup = dominantGroup(gameGroupCount, true);
+  const plutoGroup = dominantGroup(gameGroupCount, false);
+  const addonCores = cores.filter((s) => ADDON_CORES.has(s.core_type))
+    .map((s) => ({ spec: s, value: kernelCoreValue(s, cfg), label: coreLabel({ coreType: s.core_type, color: null }) }));
   const archiveMult = archiveComp !== null ? archiveComp.value : 1.0;
   const archiveSpec = cores.find((s) => s.core_type === CoreType.ARCHIVE_CORE) ?? null;
   const archiveBase = archiveSpec === null
@@ -262,12 +316,12 @@ export function simulateTaggedBreakdown(
       perSlot.set(k, zero(i, explain));
       continue;
     }
-    // Non-stat card (Resource/Temporal): provides no player stats → 0 NDM
+    // Non-stat card (Resource/Temporal/Knack): provides no player stats → 0 NDM
     // itself; still fills its slot and feeds implicits that read it.
-    if (c.groups.includes("Resource") || c.groups.includes("Temporal")) {
+    if (c.groups.some((g) => NONSTAT.includes(g))) {
       perSlot.set(k, zero(i,
-        "non-stat card (Resource/Temporal) — gives no stats, 0 NDM; still " +
-        "counts as a neighbor, in n_ns, and for implicits that read it"));
+        "non-stat card (Resource/Temporal/Knack) — gives no stats, 0 NDM; still " +
+        "counts as a neighbor, in n_ns, and for implicits and cores that read it"));
       continue;
     }
 
@@ -317,6 +371,15 @@ export function simulateTaggedBreakdown(
     // Cores.
     const applied: CoreComponent[] = [...baseline];
     const excluded: ExcludedCore[] = [...classExcluded];
+    const gg = cardGameGroups(c, isShiny);
+    for (const sc of statComps) {
+      if (gg.has("Stat")) applied.push(sc);
+      else excluded.push({ core_type: sc.core_type, color: null, reason: "boosts Stat cards only (evolution cards carry no Stat)" });
+    }
+    if (sparkComp !== null) {
+      if (gg.has("Shiny")) applied.push(sparkComp);
+      else excluded.push({ core_type: CoreType.SPARKLING, color: null, reason: "boosts Shiny cards only (deluxe and plain stat cards are not Shiny)" });
+    }
     if (colorComp !== null) {
       const applies = !flags.colorsReal
         || (colorComp.color !== null
@@ -325,12 +388,9 @@ export function simulateTaggedBreakdown(
       else excluded.push({ core_type: CoreType.COLOR, color: colorComp.color,
         reason: `card color is ${c.color ?? "—"} (color core is ${colorComp.color ?? "?"})` });
     }
-    if (deluxeComp !== null) {
-      if (c.t === CardType.DELUXE) {
-        excluded.push({ core_type: CoreType.DELUXE_CORE, color: null,
-          reason: "deluxe core never boosts deluxe cards (they fuel it)" });
-      } else applied.push(deluxeComp);
-    }
+    // Premium boosts every card, Deluxe included: in 0.34.1 its boostGroups list is empty, so the game's
+    // GroupSynergyDeckModifier does not enforce the "non-Deluxe" tooltip.
+    if (deluxeComp !== null) applied.push(deluxeComp);
     if (voidComp !== null) applied.push(voidComp);
     // Archive (live semantics): additive stack term like every other core;
     // its value is base^n_arcane (see cores.archiveCoreMult). No per-card gate.
@@ -392,6 +452,46 @@ export function simulateTaggedBreakdown(
           }
           break;
         }
+      }
+    }
+    // 0.34.1 addon cores (kernel core_implicits, same order as the cores).
+    const hasPeer = (peers: number[], group: string) => peers.some((q) => {
+      const qc = cards[q];
+      return qc.t !== CardType.DEAD && !GREEDS.has(qc.t)
+        && (qc.t === CardType.WILD || qc.groups.includes(group as GroupTag));
+    });
+    for (const { spec, value, label } of addonCores) {
+      const tag = TAG_CORE_GROUP[spec.core_type];
+      if (tag !== undefined) {
+        if (c.groups.includes(tag)) implicitParts.push({ label: `${label} +${(value - 1).toFixed(2)} (${tag})`, addend: value - 1 });
+        continue;
+      }
+      switch (spec.core_type) {
+        case CoreType.BAZAAR:
+          if (hasPeer(deck.surrPeers[i], "Resource")) implicitParts.push({ label: `${label} +${(value - 1).toFixed(2)} (Resource neighbour)`, addend: value - 1 });
+          break;
+        case CoreType.TALENT: {
+          let m = 0;
+          for (const q of deck.surrPeers[i]) {
+            const qc = cards[q];
+            if (qc.t === CardType.DEAD || GREEDS.has(qc.t)) continue;
+            if (qc.t === CardType.WILD || qc.groups.includes("Knack")) m++;
+          }
+          if (m > 0) implicitParts.push({ label: `${label} +${value} × ${m} Knack neighbours`, addend: value * m });
+          break;
+        }
+        case CoreType.TEMPORAL:
+          if (hasPeer(starcross[i], "Temporal")) implicitParts.push({ label: `${label} +${(value - 1).toFixed(2)} (Temporal in star-cross)`, addend: value - 1 });
+          break;
+        case CoreType.JUPITER:
+          if (jupiterGroup !== null && gg.has(jupiterGroup)) implicitParts.push({ label: `${label} +${(value - 1).toFixed(2)} (most common: ${jupiterGroup})`, addend: value - 1 });
+          break;
+        case CoreType.PLUTO:
+          if (plutoGroup !== null && gg.has(plutoGroup)) implicitParts.push({ label: `${label} +${(value - 1).toFixed(2)} (least common: ${plutoGroup})`, addend: value - 1 });
+          break;
+        case CoreType.NITWIT:
+          if (nitwitSlot.has(i)) implicitParts.push({ label: `${label} +${(value - 1).toFixed(2)} (arcane slot)`, addend: value - 1 });
+          break;
       }
     }
     if (emptyAddend > 0) {

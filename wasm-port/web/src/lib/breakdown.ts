@@ -111,8 +111,11 @@ export function simulateInventoryBreakdown(
 
   // Classic mirror is color-blind — EQUILIBRIUM at its blanket-best 4
   // colors, matching the classic kernels' convention.
-  const { baseline, colorComp, deluxeComp, voidComp, archiveComp, classExcluded } =
+  // The 1.x classic model applies Equilibrium / Steadfast / Sparkling to every card of shiny runs only.
+  const { baseline: base0, statComps, sparkComp, colorComp, deluxeComp, voidComp, archiveComp, classExcluded } =
     classifyCores(cores, card_class, n_ns, n_deluxe, n_dead, arcane.size, 4, cfg);
+  const baseline = card_class === CardClass.SHINY
+    ? [...base0, ...statComps, ...(sparkComp ? [sparkComp] : [])] : base0;
   // Archive (live semantics, wv aa5e7b39): additive stack term inside the
   // per-card core_mult like every other core. Value = base ^ n_arcane_placed.
   const archiveMult = archiveComp !== null ? archiveComp.value : 1.0;

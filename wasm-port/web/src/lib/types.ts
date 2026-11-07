@@ -72,6 +72,28 @@ export const CoreType = {
   //                       Synergizes with ARCHIVE_CORE via raised n_arcane_placed.
   CONSTRUCTION_CORE: "construction_core",
   ARCANE_CORE:       "arcane_core",
+  // ── 0.34.1 addon cores (woldsvaults ModDeckCoresProvider) ─────────────────
+  // Tag cores: +value to cards carrying one category group.
+  ARSENAL:  "arsenal",
+  AEGIS:    "aegis",
+  TOOL:     "tool",
+  NATURAL:  "natural",
+  FAE:      "fae",
+  // Adjacency cores: Bazaar (any Resource among the 8 neighbours), Talent (per Knack neighbour),
+  // Temporal (any Temporal card in the 12-cell star-cross).
+  BAZAAR:   "bazaar",
+  TALENT:   "talent",
+  TEMPORAL: "temporal",
+  // Dominance cores: cards carrying the deck's most (Jupiter) / least (Pluto) common group, Stat excluded.
+  JUPITER:  "jupiter",
+  PLUTO:    "pluto",
+  // Arcane slots take regular cards at +value; arcane cards are disabled.
+  NITWIT:   "nitwit",
+  // No stat effect (loot / levels only): never chosen by the optimizer, only reserved by the player.
+  HARVEST:  "harvest",
+  FORTUNE:  "fortune",
+  BOUNTY:   "bounty",
+  ADEPT:    "adept",
 } as const;
 export type CoreType = typeof CoreType[keyof typeof CoreType];
 
@@ -115,7 +137,8 @@ export type OptimizerMode = typeof OptimizerMode[keyof typeof OptimizerMode];
 export const Depth = { FAST: "fast", DEFAULT: "default", DEEP: "deep" } as const;
 export type Depth = typeof Depth[keyof typeof Depth];
 
-/** Depth slider → fixed SA params (spec §9.2). */
+/** Depth slider → fixed SA params (spec §9.2). nIter × restarts is the full run per surviving core set; the
+ *  core-set search budgets live in coreSearch.ts SEARCH_DEPTHS. */
 export const DEPTH_PARAMS: Record<Depth, { nIter: number; restarts: number }> = {
   fast:    { nIter:  50_000, restarts:  6 },
   default: { nIter:  75_000, restarts: 12 },
