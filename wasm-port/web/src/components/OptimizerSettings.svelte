@@ -4,7 +4,8 @@
   // Deep), Complex Cards toggle, min-stat floor, Run + snapshot buttons.
 
   import { app, clearRunResult } from "../lib/state.svelte";
-  import { OptimizerMode, Depth, DEPTH_PARAMS } from "../lib/types";
+  import { OptimizerMode, Depth } from "../lib/types";
+  import { SEARCH_DEPTHS } from "../lib/searchConfig";
   import StructuralOptimizer from "./StructuralOptimizer.svelte";
 
   interface Props {
@@ -46,7 +47,9 @@
     clearRunResult();
   }
 
-  const depthInfo = $derived(DEPTH_PARAMS[app.depth]);
+  // Full-search budget of the core search (lib/searchConfig.ts): the surviving core sets each get
+  // `restarts × nIter`. Screening and the phase-2 refinement come on top.
+  const depthInfo = $derived(SEARCH_DEPTHS[app.depth]);
 </script>
 
 <section class="card">
@@ -72,7 +75,7 @@
     {/each}
   </div>
   <div class="meta">
-    {depthInfo.nIter.toLocaleString()} iterations × {depthInfo.restarts} restarts
+    Up to {depthInfo.halve.keepMax} core sets × {depthInfo.full.restarts} restarts × {depthInfo.full.nIter.toLocaleString()} steps
   </div>
 
   <div class="row">
