@@ -4,25 +4,13 @@
  "panel": {
   "configs": [
    {
-    "name": "old_old9",
-    "strategy": "old",
-    "owned": "old9",
-    "depth": "default"
-   },
-   {
-    "name": "new_old9",
-    "strategy": "new",
-    "owned": "old9",
-    "depth": "default"
-   },
-   {
     "name": "new_all_fast",
     "strategy": "new",
     "owned": "all",
     "depth": "fast"
    },
    {
-    "name": "new_all",
+    "name": "new_all_default",
     "strategy": "new",
     "owned": "all",
     "depth": "default"

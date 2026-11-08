@@ -3,7 +3,7 @@
 // uses `Promise.all` to fan out across the pool.
 //
 // The pool size defaults to `navigator.hardwareConcurrency` clamped to
-// [1, 12]. Workers are spawned on first use and live forever (closed on
+// [1, 32]. Workers are spawned on first use and live forever (closed on
 // page unload). Each worker has its own wasm instance.
 
 import OptimizeWorker from "../worker/optimize.worker?worker";
@@ -50,10 +50,11 @@ function ensurePool(): WorkerSlot[] {
   const hw = (typeof navigator !== "undefined" && navigator.hardwareConcurrency)
     ? navigator.hardwareConcurrency
     : 4;
-  // Cap at 12: pool sizes beyond that hit diminishing returns on the
-  // candidate counts we typically see (≤ 50 combos per run) and waste memory
-  // on cold-start wasm instances.
-  const size = Math.min(12, Math.max(1, hw));
+  // Cap at 32: the core search queues dozens to hundreds of independent
+  // anneals per stage, so every hardware thread does useful work; the cap only
+  // bounds memory (one wasm instance per worker). Search results do not
+  // depend on the pool size (coreSearch.ts chunks by preset, not by lanes).
+  const size = Math.min(32, Math.max(1, hw));
   _pool = Array.from({ length: size }, makeWorker);
   return _pool;
 }

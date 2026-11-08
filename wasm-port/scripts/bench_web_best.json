@@ -1,1 +1,626 @@
-{}
+{
+ "queen|evo|all": {
+  "score": 5512.5,
+  "combo": [
+   "arsenal||_",
+   "foil||_",
+   "pluto||_",
+   "void_core||_"
+  ]
+ },
+ "queen|shiny|all": {
+  "score": 5985,
+  "combo": [
+   "equilibrium||_",
+   "pluto||_",
+   "sparkling||_",
+   "void_core||_"
+  ]
+ },
+ "large|evo|all": {
+  "score": 1150,
+  "combo": [
+   "pluto||_",
+   "temporal||_"
+  ]
+ },
+ "large|shiny|all": {
+  "score": 1250,
+  "combo": [
+   "equilibrium||_",
+   "pluto||_"
+  ]
+ },
+ "merchant|evo|all": {
+  "score": 2358.2000000000003,
+  "combo": [
+   "deluxe_core||_",
+   "nitwit||_",
+   "pluto||_",
+   "temporal||_"
+  ]
+ },
+ "merchant|shiny|all": {
+  "score": 2515.5,
+  "combo": [
+   "equilibrium||_",
+   "nitwit||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "relic|evo|all": {
+  "score": 4092.6000000000004,
+  "combo": [
+   "fae||_",
+   "pluto||_",
+   "pure||_",
+   "tool||_"
+  ]
+ },
+ "relic|shiny|all": {
+  "score": 4360,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "champion|evo|all": {
+  "score": 4426.799999999999,
+  "combo": [
+   "natural||_",
+   "pluto||_",
+   "pure||_",
+   "tool||_"
+  ]
+ },
+ "champion|shiny|all": {
+  "score": 4845,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "bishop|evo|all": {
+  "score": 2047.68,
+  "combo": [
+   "arsenal||_",
+   "fae||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "bishop|shiny|all": {
+  "score": 2088,
+  "combo": [
+   "foil||_",
+   "pluto||_",
+   "sparkling||_",
+   "tool||_"
+  ]
+ },
+ "skull|evo|all": {
+  "score": 3733.6000000000004,
+  "combo": [
+   "arsenal||_",
+   "natural||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "skull|shiny|all": {
+  "score": 4072,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "cactus|evo|all": {
+  "score": 5149.760000000001,
+  "combo": [
+   "aegis||_",
+   "arsenal||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "cactus|shiny|all": {
+  "score": 5586,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "wold|evo|all": {
+  "score": 4522.05,
+  "combo": [
+   "aegis||_",
+   "arsenal||_",
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "wold|shiny|all": {
+  "score": 4885,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "nitwit||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "fairy|evo|all": {
+  "score": 3308.1000000000004,
+  "combo": [
+   "deluxe_core||_",
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "fairy|shiny|all": {
+  "score": 3448.1946304,
+  "combo": [
+   "archive_core||_",
+   "equilibrium||_",
+   "foil||_",
+   "pluto||_"
+  ]
+ },
+ "fives|evo|all": {
+  "score": 5770.2,
+  "combo": [
+   "fae||_",
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "fives|shiny|all": {
+  "score": 5868,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "nitwit||_",
+   "pluto||_"
+  ]
+ },
+ "starter|evo|all": {
+  "score": 1048,
+  "combo": [
+   "nitwit||_",
+   "pluto||_"
+  ]
+ },
+ "starter|shiny|all": {
+  "score": 1048,
+  "combo": [
+   "nitwit||_",
+   "pluto||_"
+  ]
+ },
+ "double|evo|all": {
+  "score": 750,
+  "combo": [
+   "aegis||_",
+   "foil||_"
+  ]
+ },
+ "double|shiny|all": {
+  "score": 900,
+  "combo": [
+   "equilibrium||_",
+   "sparkling||_"
+  ]
+ },
+ "expanded|evo|all": {
+  "score": 2925,
+  "combo": [
+   "arsenal||_",
+   "foil||_",
+   "temporal||_"
+  ]
+ },
+ "expanded|shiny|all": {
+  "score": 3510,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "sparkling||_"
+  ]
+ },
+ "extended|evo|all": {
+  "score": 3656.25,
+  "combo": [
+   "aegis||_",
+   "arsenal||_",
+   "foil||_",
+   "tool||_"
+  ]
+ },
+ "extended|shiny|all": {
+  "score": 4241.25,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "natural||_",
+   "sparkling||_"
+  ]
+ },
+ "gilded|evo|all": {
+  "score": 4390,
+  "combo": [
+   "foil||_",
+   "nitwit||_",
+   "pluto||_"
+  ]
+ },
+ "gilded|shiny|all": {
+  "score": 4567.5,
+  "combo": [
+   "equilibrium||_",
+   "nitwit||_",
+   "pluto||_"
+  ]
+ },
+ "living|evo|all": {
+  "score": 3730,
+  "combo": [
+   "foil||_",
+   "nitwit||_",
+   "pluto||_"
+  ]
+ },
+ "living|shiny|all": {
+  "score": 3888,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "sparkling||_"
+  ]
+ },
+ "anvil|evo|all": {
+  "score": 5464.240000000001,
+  "combo": [
+   "arsenal||_",
+   "pluto||_",
+   "pure||_",
+   "tool||_"
+  ]
+ },
+ "anvil|shiny|all": {
+  "score": 5805,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "treasure|evo|all": {
+  "score": 3750.6000000000004,
+  "combo": [
+   "aegis||_",
+   "pure||_",
+   "temporal||_",
+   "tool||_"
+  ]
+ },
+ "treasure|shiny|all": {
+  "score": 4755,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "sparkling||_",
+   "temporal||_"
+  ]
+ },
+ "black|evo|all": {
+  "score": 3544.2000000000003,
+  "combo": [
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "black|shiny|all": {
+  "score": 4020,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "sparkling||_"
+  ]
+ },
+ "shadow|evo|all": {
+  "score": 3717,
+  "combo": [
+   "nitwit||_",
+   "pluto||_",
+   "void_core||_"
+  ]
+ },
+ "shadow|shiny|all": {
+  "score": 4020,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "sparkling||_"
+  ]
+ },
+ "runic|evo|all": {
+  "score": 4346.6,
+  "combo": [
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "runic|shiny|all": {
+  "score": 4680,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "sparkling||_"
+  ]
+ },
+ "belt|evo|all": {
+  "score": 4339.2,
+  "combo": [
+   "arsenal||_",
+   "pluto||_",
+   "pure||_",
+   "tool||_"
+  ]
+ },
+ "belt|shiny|all": {
+  "score": 4650,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "idona|evo|all": {
+  "score": 4647.410000000001,
+  "combo": [
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "idona|shiny|all": {
+  "score": 4555,
+  "combo": [
+   "equilibrium||_",
+   "nitwit||_",
+   "pluto||_"
+  ]
+ },
+ "velara|evo|all": {
+  "score": 4902,
+  "combo": [
+   "arsenal||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "velara|shiny|all": {
+  "score": 5037.5,
+  "combo": [
+   "equilibrium||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "wendarr|evo|all": {
+  "score": 3343.5999999999995,
+  "combo": [
+   "aegis||_",
+   "arsenal||_",
+   "pure||_"
+  ]
+ },
+ "wendarr|shiny|all": {
+  "score": 3770,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "sparkling||_"
+  ]
+ },
+ "tenos|evo|all": {
+  "score": 3889.8600000000006,
+  "combo": [
+   "arsenal||_",
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "tenos|shiny|all": {
+  "score": 4207.5,
+  "combo": [
+   "aegis||_",
+   "equilibrium||_",
+   "foil||_",
+   "sparkling||_"
+  ]
+ },
+ "cake|evo|all": {
+  "score": 5171.12,
+  "combo": [
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "cake|shiny|all": {
+  "score": 5370,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "sparkling||_"
+  ]
+ },
+ "pillager|evo|all": {
+  "score": 5055.599999999999,
+  "combo": [
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "pillager|shiny|all": {
+  "score": 5339,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "temporal||_"
+  ]
+ },
+ "arcane|evo|all": {
+  "score": 1614.75,
+  "combo": [
+   "arsenal||_",
+   "foil||_",
+   "nitwit||_",
+   "pluto||_"
+  ]
+ },
+ "arcane|shiny|all": {
+  "score": 1760,
+  "combo": [
+   "foil||_",
+   "nitwit||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "mutant|evo|all": {
+  "score": 3296.97,
+  "combo": [
+   "natural||_",
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "mutant|shiny|all": {
+  "score": 4875,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "nitwit||_",
+   "sparkling||_"
+  ]
+ },
+ "puzzle|evo|all": {
+  "score": 4213,
+  "combo": [
+   "natural||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "puzzle|shiny|all": {
+  "score": 4463,
+  "combo": [
+   "equilibrium||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "ornate|evo|all": {
+  "score": 4412.5,
+  "combo": [
+   "arsenal||_",
+   "foil||_",
+   "nitwit||_",
+   "pluto||_"
+  ]
+ },
+ "ornate|shiny|all": {
+  "score": 4810,
+  "combo": [
+   "equilibrium||_",
+   "nitwit||_",
+   "pluto||_",
+   "sparkling||_"
+  ]
+ },
+ "villager|evo|all": {
+  "score": 2907.5,
+  "combo": [
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "villager|shiny|all": {
+  "score": 3094,
+  "combo": [
+   "equilibrium||_",
+   "sparkling||_",
+   "temporal||_"
+  ]
+ },
+ "snake|evo|all": {
+  "score": 5773.95,
+  "combo": [
+   "natural||_",
+   "pure||_",
+   "tool||_"
+  ]
+ },
+ "snake|shiny|all": {
+  "score": 5610.15,
+  "combo": [
+   "foil||_",
+   "pure||_",
+   "sparkling||_"
+  ]
+ },
+ "crate|evo|all": {
+  "score": 4801.6,
+  "combo": [
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "crate|shiny|all": {
+  "score": 4888.000000000001,
+  "combo": [
+   "equilibrium||_",
+   "pure||_",
+   "sparkling||_"
+  ]
+ },
+ "wall|evo|all": {
+  "score": 6120,
+  "combo": [
+   "nitwit||_",
+   "pluto||_",
+   "pure||_"
+  ]
+ },
+ "wall|shiny|all": {
+  "score": 6120,
+  "combo": [
+   "equilibrium||_",
+   "foil||_",
+   "sparkling||_"
+  ]
+ }
+}

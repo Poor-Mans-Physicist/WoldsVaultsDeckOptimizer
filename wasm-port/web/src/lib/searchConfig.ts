@@ -50,32 +50,31 @@ export interface SearchDepth {
   full: { restarts: number; nIter: number; topK: number; p2Iter: number };
 }
 
-// Presets tuned on bench_web.mjs (panel: 37 decks x evo/shiny x 2 reps, every core owned, 12 lanes, 2026-11-07,
-// tuning run): fast 1.55% mean gap to best-known at 0.81 s/run, default 1.26% at 1.28 s, deep 0.84% at 2.63 s;
-// confirmation run (3 reps): 1.74% / 1.40% / 0.87%, old core list at default 0.18% at 0.51 s vs the pre-port site's
-// 0.53% at 1.74 s. Beam
-// diversity + warm screens + many short phase-1 restarts beat the first presets (default 1.86-2.01% at 0.7 s) and
-// the plain deep preset (1.67% at 1.87 s). Tuning steps and tables: wasm-port/scripts/BENCH_WEB.md.
+// Presets tuned on bench_web.ts (wasm-port/scripts/BENCH_WEB.md). 2026-11-08 shift: fast = the first port's default,
+// default = its deep, deep = a ~4x heavier search (deeper core-set screening, 96 x 60k full restarts). Full panel
+// (37 decks x evo/shiny x 2 reps, every core owned, 24 lanes): fast 1.44% mean gap to best-known at 0.98 s/run,
+// default 1.17% at 2.01 s, deep 0.38% at 6.16 s. Partial rounds showed extra effort pays in long full-run walks
+// backed by a deeper screen; spending it on core-set selection alone or on a lighter screen did worse.
 export const SEARCH_DEPTHS: Record<Depth, SearchDepth> = {
   fast: {
-    screen: { restarts: 2, nIter: 20_000, warm: true },
-    beam: 6,
-    diverse: true,
-    halve: { pool: 8, restarts: 4, nIter: 30_000, margin: 0.05, keepMin: 3, keepMax: 4 },
-    full: { restarts: 24, nIter: 30_000, topK: 4, p2Iter: 120_000 },
-  },
-  default: {
     screen: { restarts: 2, nIter: 30_000, warm: true },
     beam: 8,
     diverse: true,
     halve: { pool: 10, restarts: 4, nIter: 40_000, margin: 0.05, keepMin: 3, keepMax: 4 },
     full: { restarts: 32, nIter: 30_000, topK: 6, p2Iter: 150_000 },
   },
-  deep: {
+  default: {
     screen: { restarts: 3, nIter: 40_000, warm: true },
     beam: 10,
     diverse: true,
     halve: { pool: 14, restarts: 6, nIter: 50_000, margin: 0.05, keepMin: 3, keepMax: 6 },
     full: { restarts: 48, nIter: 30_000, topK: 8, p2Iter: 150_000 },
+  },
+  deep: {
+    screen: { restarts: 4, nIter: 80_000, warm: true },
+    beam: 12,
+    diverse: true,
+    halve: { pool: 18, restarts: 8, nIter: 80_000, margin: 0.05, keepMin: 3, keepMax: 8 },
+    full: { restarts: 96, nIter: 60_000, topK: 12, p2Iter: 300_000 },
   },
 };

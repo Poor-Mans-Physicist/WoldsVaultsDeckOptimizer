@@ -169,6 +169,9 @@ export function jobSeed(base: number, key: string): number {
   return hi * 4294967296 + h;
 }
 
+/** Phase-1 restarts per full-run job: each job returns its best end, and phase 2 re-anneals the best `topK` ends. */
+const FULL_CHUNK_RESTARTS = 6;
+
 /** Run jobs on `lanes` concurrent lanes pulling from one queue; results in job order. */
 async function runQueue<T>(
   jobs: (() => Promise<T>)[], lanes: number, onDone?: (done: number) => void,
@@ -282,9 +285,10 @@ export async function searchCores(
     survivors = keep.slice(0, depth.halve.keepMax).map((i) => pick[i]);
   }
 
-  // Full runs: phase-1 chunks across lanes, then phase-2 starts.
+  // Full runs: phase-1 chunks, then phase-2 starts. The chunking depends only on the preset (never on the lane
+  // count), so a seed gives the same result on any number of workers; more workers only finish sooner.
   const f = depth.full;
-  const perSet = Math.max(f.topK, Math.floor(lanes / Math.max(1, survivors.length)));
+  const perSet = Math.max(f.topK, Math.ceil(f.restarts / FULL_CHUNK_RESTARTS));
   const chunk = Math.max(1, Math.ceil(f.restarts / perSet));
   const p1: { set: number; run: () => Promise<KernelOut> }[] = [];
   survivors.forEach((combo, si) => {

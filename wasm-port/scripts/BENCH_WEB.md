@@ -63,3 +63,34 @@ and 0.9% at deep.
 
 Greed stacking moved to the live 3.21.6 raw sum and the DIAG lone-card floor was removed. Both change
 scores, so `bench_web_best.json` was reset; the tables above were measured under the old scoring.
+
+## Deeper presets and lane-independent search (2026-11-08)
+
+Old deep took ~1 s in the browser on typical decks, so the presets moved down one level and deep was retuned
+at ~4x the old deep's work. Partial rounds (10 decks: the 8 with the largest run-to-run spread plus queen and large,
+x evo/shiny x 2 reps, 12 lanes; gap to the best score of the round):
+
+| candidate (vs old deep) | mean gap | p90 | max | wall s |
+|---|---|---|---|---|
+| old deep | 1.53% | 3.92% | 7.21% | 3.40 |
+| sel: screen 6x60k, beam 16, halve 24 x 10x80k, full 96x30k | 1.11% | 3.84% | 10.35% | 12.14 |
+| full: screen 4x60k, beam 12, halve 16 x 8x60k, full 192x40k top 16 | 0.76% | 2.71% | 6.91% | 9.24 |
+| **long: screen 4x80k, beam 12, halve 18 x 8x80k, full 96x60k top 12, p2 300k** | **0.56%** | 2.63% | 3.48% | 10.54 |
+| longfull: old deep screen, full 144x60k top 16 | 0.96% | 2.72% | 6.91% | 5.72 |
+| longer: lighter screen, full 96x90k, p2 450k | 1.48% | 5.00% | 10.35% | 7.24 |
+
+A rerun of "long" reproduced its first-round scores exactly. Extra work pays in long full-run walks backed by a
+deeper screen; a lighter screen misses core sets.
+
+Lane independence: the full stage used to split restarts into `max(topK, lanes / survivors)` jobs, so the result
+depended on the worker count. Jobs are now `max(topK, ceil(restarts / 6))` per set. Same seeds at 12 and 24
+lanes: 18/18 runs identical (score and core set). The site's worker cap went from 12 to 32. On the 24-core
+Ultra 9 275HX (8 P + 16 E cores) 24 lanes run the 4x deep 1.5x faster than 12.
+
+Full panel, new presets (37 decks x evo/shiny x 2 reps, every core, 24 lanes):
+
+| preset | mean gap | median | p90 | max | hits | wall s/run | CPU s/run |
+|---|---|---|---|---|---|---|---|
+| fast (= old default) | 1.437% | 0 | 4.846% | 10.345% | 51% | 0.98 | 19.0 |
+| default (= old deep) | 1.166% | 0 | 3.886% | 15.799% | 63% | 2.01 | 41.7 |
+| deep (new) | 0.377% | 0 | 0.955% | 7.779% | 77% | 6.16 | 133.0 |
