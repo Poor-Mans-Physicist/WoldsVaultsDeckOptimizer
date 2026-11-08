@@ -6,8 +6,10 @@
 // Pipeline (all kernel work in the worker pool, see construction.rs):
 //   1. enumerate  — every reachable layout for the roll's k range, grouped
 //                   into reflection classes with exact per-roll probabilities
-//   2. screen     — every class scored once with a cheap cold SA
-//   3. search     — outer layout-space SA chains (whole chain in wasm)
+//   2. screen     — every class scored once with a cheap SA: classes in cell order, each
+//                   warm-started from its job neighbour's best layout
+//   3. search     — outer layout-space SA chains (whole chain in wasm), half of
+//                   them started from the best screened classes
 //   4. refine     — finalists re-scored deep; best rendered as a full result
 //   5. rarity     — P(one roll beats the player's layout): classes the
 //                   screen already proves better + the band just below the
@@ -19,9 +21,11 @@
 // scoring input changes (fingerprint); moving construction slots keeps it.
 //
 // Every anneal uses the core search's target schedules (searchConfig.ts):
-// cold walks phase 1, deep scores phase 1 then phase 2 from their best ends,
-// chain steps re-anneal the parent layout's best cards (phase 2), and band /
-// resolve re-scores start from the class's best screened layout. Job counts
+// screen walks and warm re-scores phase 1, deep scores phase 1 then phase 2
+// from their best ends; chain steps re-anneal the parent layout's best cards
+// (phase 2); band and resolve re-scores start from the class's best kept
+// layout; finalists also get a walk from the best layout's cards moved onto
+// their cells. Job counts
 // and seeds never depend on the worker count, so a seed gives the same
 // report on any machine; jobs go through one queue to whichever worker is free.
 
@@ -37,10 +41,20 @@ import { SCHEDULE_PHASE1, SCHEDULE_PHASE2, type Schedule } from "./searchConfig"
 export type StructEffort = "standard" | "deep";
 
 interface EffortParams {
+  /** Screen classes in cell order, each warm-started from its job neighbour's best layout (else cold, in
+   *  class order). */
+  warmScreen:      boolean;
+  /** Even-numbered chains start from the best screened classes in rank order (else every chain starts from
+   *  a random roll), and every finalist also gets a walk from the best layout's cards moved onto its cells. */
+  seeded:          boolean;
   /** Outer layout chains (fixed count: the report must not depend on the worker count). */
   chains:          number;
+  /** The first `hotChains` chains run like the pre-2026-11-08 chains: random start, every step a cold walk of
+   *  `chainIter` on the legacy hot schedule (T 100 → 0.5). They keep the search wide where warm chains settle
+   *  into one card arrangement (bench_struct convergence test: bishop k=3). */
+  hotChains:       number;
   chainSteps:      number;
-  /** Cold budget of a chain's first layout. */
+  /** Cold budget of a random-start chain's first layout. */
   chainIter:       number;
   /** Warm budget of every later chain step (re-anneals the parent layout's best cards). */
   chainWarmIter:   number;
@@ -66,17 +80,27 @@ interface EffortParams {
 /** Search depths. The first presets came from the native lab study (scratch, 2026-09-24: Standard found the
  *  exhaustive optimum on 4/4 test decks; the 10k×1 screen gave 13–60 % median relative error on P(better), the
  *  30k×2 Deep screen 0–22 %). 2026-11-08: target schedules, phase 2 inside deep scores at the same step total
- *  (12×150k → 12×100k + 3×200k), warm chain steps and warm band / resolve re-scores at half the old steps. */
+ *  (12×150k → 12×100k + 3×200k), warm chain steps and warm band / resolve re-scores at half the old steps.
+ *  Later 2026-11-08, Standard only: the screen warm-starts each class from its job neighbour (classes sorted by
+ *  cells), half the warm chains start from the best screened classes, finalists get a walk from the best
+ *  layout's cards, and 12 of the 24 chains run hot (pre-port style). 5-seed convergence test on 4 hard problems
+ *  vs the pre-port Standard: mean ideal gap 0.75 % vs 0.76 %, worst 2.1 % vs 2.6 %, exact best 8/20 vs 10/20
+ *  (bishop k=3), player score 1.8 % vs 4.5 % low, rarity error 0.056 vs 0.096, 17.8 s vs 25.4 s. Deep keeps
+ *  the cold screen and warm random chains (better at Deep in the single-seed bench).
+ *  Successive halving in place of the chains was tried and lost (bench_struct: 6/12 best layouts at Standard vs
+ *  9/12): per-layout re-scores cannot find the card arrangements the chains carry from layout to layout. */
 export const STRUCT_EFFORT: Record<StructEffort, EffortParams> = {
   standard: {
-    chains: 24, chainSteps: 300, chainIter: 20_000, chainWarmIter: 8_000,
+    warmScreen: true, seeded: true,
+    chains: 24, hotChains: 12, chainSteps: 300, chainIter: 20_000, chainWarmIter: 8_000,
     screenIter: 10_000, screenRestarts: 1,
     refineTop: 10, refineIter: 100_000, refineRestarts: 12, refineP2Top: 3, refineP2Iter: 200_000,
     bandIter: 50_000, bandRestarts: 4, bandDet: 200, bandSamples: 400,
     resolveIter: 100_000, resolveMargin: 0.02,
   },
   deep: {
-    chains: 48, chainSteps: 500, chainIter: 30_000, chainWarmIter: 12_000,
+    warmScreen: false, seeded: false,
+    chains: 48, hotChains: 0, chainSteps: 500, chainIter: 30_000, chainWarmIter: 12_000,
     screenIter: 30_000, screenRestarts: 2,
     refineTop: 16, refineIter: 200_000, refineRestarts: 24, refineP2Top: 6, refineP2Iter: 400_000,
     bandIter: 50_000, bandRestarts: 4, bandDet: 300, bandSamples: 600,
@@ -154,6 +178,17 @@ type Start = unknown[];
 interface PlacedOutRaw { t: string; color: string; scale_color: string; groups: string[]; stack: number }
 const startOf = (a: PlacedOutRaw[]): Start => a.map((x) => [x.t, x.color, x.scale_color, x.groups, x.stack]);
 interface EvalOut { scores: number[]; layouts: (PlacedOutRaw[] | null)[] }
+
+/** A layout of added cells `from` carried onto `to` (same size, cells ascending; base slots first): shared
+ *  cells keep their cards, vacated cells' cards fill the new cells in order (= construction_wasm.rs remap). */
+function remapStart(nb: number, from: number[], layout: Start, to: number[]): Start | null {
+  if (from.length !== to.length || layout.length !== nb + from.length) return null;
+  const at = new Map(from.map((c, j) => [c, layout[nb + j]]));
+  const toSet = new Set(to);
+  const spare = from.filter((c) => !toSet.has(c)).map((c) => at.get(c));
+  let s = 0;
+  return [...layout.slice(0, nb), ...to.map((c) => (at.has(c) ? at.get(c) : spare[s++]))];
+}
 
 interface Cache {
   fingerprint: string;
@@ -253,6 +288,8 @@ export async function runStructural(
   const template = buildTaggedPayload({ ...inp.run, deck: inp.baseDeck }, inp.combo, 1,
     { nIter: P.screenIter, schedule: SCHEDULE_PHASE1 });
   const warmBudget = (nIter: number, schedule: Schedule) => ({ n_iter: nIter, schedule });
+  /** Same run without a schedule: the kernel's legacy hot geometric schedule (hot chains). */
+  const legacyTemplate = buildTaggedPayload({ ...inp.run, deck: inp.baseDeck }, inp.combo, 1);
   const common = { base, ks: tier.ks, k_probs: kProbs, allow_x: allowX, allow_y: allowY };
   const userCells = inp.userAdded.map(idx);
   const userKey = keyOf(userCells);
@@ -286,14 +323,21 @@ export async function runStructural(
    *  layouts scoring at least `keepAbove` come back with their best cards. */
   const evalSets = async (sets: number[][], nIter: number, restarts: number, seed: number,
                           opt: { starts?: (Start | null)[]; warm?: { n_iter: number; schedule: Schedule };
-                                 keepAbove?: number } = {}) => {
-    const parts = chunks(sets.map((s, i) => ({ s, i })), Math.min(sets.length, EVAL_JOBS));
+                                 keepAbove?: number; chainWarm?: boolean } = {}) => {
+    const items = sets.map((s, i) => ({ s, i }));
+    const nJobs = Math.min(sets.length, EVAL_JOBS);
+    const parts = opt.chainWarm
+      ? Array.from({ length: nJobs }, (_, j) => items.slice(Math.floor(j * items.length / nJobs),
+          Math.floor((j + 1) * items.length / nJobs))).filter((c) => c.length > 0)
+      : chunks(items, nJobs);
     const scores = new Array<number>(sets.length);
     const layouts = new Array<Start | null>(sets.length).fill(null);
     await runQueue(parts.map((part, w) => () =>
       dispatchConstruction<EvalOut>(w, "cc_eval", {
         template, base, sets: part.map((x) => x.s), n_iter: nIter, restarts, seed: seed + w * 7919,
-        ...(opt.starts ? { starts: part.map((x) => opt.starts![x.i] ?? null), warm: opt.warm } : {}),
+        ...(opt.starts ? { starts: part.map((x) => opt.starts![x.i] ?? null) } : {}),
+        ...(opt.warm ? { warm: opt.warm } : {}),
+        ...(opt.chainWarm ? { chain_warm: true } : {}),
         ...(opt.keepAbove !== undefined ? { keep_above: opt.keepAbove } : {}),
       }).then((r) => part.forEach((x, j) => {
         scores[x.i] = r.scores[j];
@@ -304,7 +348,8 @@ export async function runStructural(
   };
   /** Deep scores for several sets through one queue: DEEP_CHUNK-restart cold jobs (phase 1), then the best
    *  refineP2Top ends of each set re-annealed on the phase-2 schedule. */
-  const deepScores = async (cellsList: number[][], seed: number): Promise<number[]> => {
+  const deepScores = async (cellsList: number[][], seed: number, extra: (Start | null)[] = [],
+  ): Promise<{ score: number; layout: Start | null }[]> => {
     const p1: { set: number; c: number }[] = [];
     cellsList.forEach((_, set) => {
       for (let c = 0; c * DEEP_CHUNK < P.refineRestarts; c++) p1.push({ set, c });
@@ -319,13 +364,14 @@ export async function runStructural(
     const p2: { set: number; start: Start; j: number }[] = [];
     ends.forEach((list, set) => [...list].sort((a, b) => b.score - a.score).slice(0, P.refineP2Top)
       .forEach((e, j) => { if (e.layout) p2.push({ set, start: e.layout, j }); }));
+    extra.forEach((s, set) => { if (s) p2.push({ set, start: s, j: P.refineP2Top }); });
     const p2Out = await runQueue(p2.map((j) => () => dispatchConstruction<EvalOut>(0, "cc_eval", {
       template, base, sets: [cellsList[j.set]], n_iter: P.refineP2Iter, restarts: 1,
       seed: seed + 0x51ED + j.set * 104729 + j.j * 7919,
-      starts: [j.start], warm: warmBudget(P.refineP2Iter, SCHEDULE_PHASE2),
+      starts: [j.start], warm: warmBudget(P.refineP2Iter, SCHEDULE_PHASE2), keep_above: KEEP_ALL,
     })), pool);
-    p2Out.forEach((r, i) => ends[p2[i].set].push({ score: r.scores[0], layout: null }));
-    return ends.map((list) => Math.max(...list.map((e) => e.score)));
+    p2Out.forEach((r, i) => ends[p2[i].set].push({ score: r.scores[0], layout: r.layouts[0] ? startOf(r.layouts[0]!) : null }));
+    return ends.map((list) => list.reduce((a, b) => (b.score > a.score ? b : a)));
   };
   const noteSet = (cells: number[], v: number) => {
     const key = keyOf(cells);
@@ -334,42 +380,95 @@ export async function runStructural(
 
   // 2. the player's own score (deep) — the rarity threshold
   onProgress("Scoring your layout deeply…");
-  const [userDeep] = await deepScores([userCells], 11);
+  const [userDeepRes] = await deepScores([userCells], 11);
+  const userDeep = userDeepRes.score;
   noteSet(userCells, Math.max(userDeep, inp.userScore));
   const T = cache.sets.get(userKey)!;
+  if (T >= cache.best[userLoc.user_class] && userDeepRes.layout && userDeep >= T) {
+    cache.layouts.set(userLoc.user_class, remapStart(base.length, userCells.slice().sort((a, b) => a - b),
+      userDeepRes.layout, cache.classes[userLoc.user_class].rep) ?? userDeepRes.layout);
+  }
   cache.best[userLoc.user_class] = Math.max(cache.best[userLoc.user_class], T);
 
   // 3. screen every class once (cached per budget)
   const screenBudget = P.screenIter * P.screenRestarts;
   if (cache.screened < screenBudget) {
-    const reps = cache.classes.map((c) => c.rep);
-    onProgress(`Screening ${reps.length.toLocaleString()} layouts…`);
-    const sc = await evalSets(reps, P.screenIter, P.screenRestarts, 101 + screenBudget,
-      { keepAbove: T * (1 - BAND_MARGIN) });
-    sc.scores.forEach((v, i) => {
+    const order = cache.classes.map((_, i) => i);
+    if (P.warmScreen) order.sort((a, b) => {
+      const x = cache.classes[a].rep, y = cache.classes[b].rep;
+      if (x.length !== y.length) return x.length - y.length;
+      for (let j = 0; j < x.length; j++) if (x[j] !== y[j]) return x[j] - y[j];
+      return 0;
+    });
+    onProgress(`Screening ${order.length.toLocaleString()} layouts…`);
+    const sc = await evalSets(order.map((i) => cache.classes[i].rep), P.screenIter, P.screenRestarts,
+      101 + screenBudget, P.warmScreen
+        ? { keepAbove: T * (1 - BAND_MARGIN), chainWarm: true, warm: warmBudget(P.screenIter, SCHEDULE_PHASE1) }
+        : { keepAbove: T * (1 - BAND_MARGIN) });
+    sc.scores.forEach((v, j) => {
+      const i = order[j];
       if (v > cache.best[i]) {
         cache.best[i] = v;
-        const l = sc.layouts[i];
+        const l = sc.layouts[j];
         if (l) cache.layouts.set(i, l);
       }
     });
     cache.screened = screenBudget;
   }
 
+  /** Warm re-score of classes from their best kept layout. A class without one (its screen score fell below
+   *  the kept-layout threshold, e.g. when the player's layout beats every class by a wide margin, or an earlier
+   *  pass of this cache used a higher threshold) falls back to a cold re-score at twice the warm steps. */
+  const rescore = async (ids: number[], nIter: number, restarts: number, seed: number, what: string) => {
+    if (!ids.length) return;
+    const starts = ids.map((i) => cache.layouts.get(i) ?? null);
+    const cold = starts.filter((s) => s === null).length;
+    if (cold) console.warn(`[structural] ${what}: ${cold}/${ids.length} re-scores have no kept layout, cold fallback`);
+    const sc = await evalSets(ids.map((i) => cache.classes[i].rep), nIter * 2, restarts, seed, {
+      starts, warm: warmBudget(nIter, SCHEDULE_PHASE1), keepAbove: KEEP_ALL,
+    });
+    sc.scores.forEach((v, j) => {
+      const i = ids[j];
+      if (v > cache.best[i]) {
+        cache.best[i] = v;
+        const l = sc.layouts[j];
+        if (l) cache.layouts.set(i, l);
+      }
+    });
+  };
+  /** The best class with a kept layout: its cards seed other classes (a good card arrangement carries over
+   *  between layouts that share most cells, which is what the old outer chains exploited). */
+  const bestSource = (): { cells: number[]; layout: Start } | null => {
+    let bi = -1;
+    for (const i of cache.layouts.keys()) if (bi < 0 || cache.best[i] > cache.best[bi]) bi = i;
+    return bi < 0 ? null : { cells: cache.classes[bi].rep, layout: cache.layouts.get(bi)! };
+  };
+  const ranked = () => cache.classes.map((_, i) => i).sort((a, b) => cache.best[b] - cache.best[a] || a - b);
+
   // 4. outer layout-space SA + deep refine of the finalists (cached per effort)
   const searched = cache.searchedAt === "deep" || cache.searchedAt === effort;
   if (!searched || !cache.idealResult) {
     onProgress(`Searching layouts (${P.chains} chains)…`);
-    const chainRes = await runQueue(Array.from({ length: P.chains }, (_, c) => () =>
-      dispatchConstruction<{ set: number[]; score: number }[]>(c, "cc_chain", {
-        template, base, k: tier.ks[c % tier.ks.length], steps: P.chainSteps,
-        n_iter: P.chainIter, seed: 7000 + c * 31, keep: 8,
+    const seeds = ranked().filter((i) => tier.ks.includes(cache.classes[i].k));
+    const chainRes = await runQueue(Array.from({ length: P.chains }, (_, c) => () => {
+      if (c < P.hotChains) {
+        return dispatchConstruction<{ set: number[]; score: number }[]>(c, "cc_chain", {
+          template: legacyTemplate, base, k: tier.ks[c % tier.ks.length], steps: P.chainSteps,
+          n_iter: P.chainIter, seed: 7000 + c * 31, keep: 8,
+        });
+      }
+      const w = c - P.hotChains;
+      const from = P.seeded && w % 2 === 0 ? seeds[w / 2] : undefined;
+      const k = from !== undefined ? cache.classes[from].k : tier.ks[c % tier.ks.length];
+      return dispatchConstruction<{ set: number[]; score: number }[]>(c, "cc_chain", {
+        template, base, k, steps: P.chainSteps, n_iter: P.chainIter, seed: 7000 + c * 31, keep: 8,
         warm: warmBudget(P.chainWarmIter, SCHEDULE_PHASE2),
-      })), pool);
+        ...(from !== undefined ? { start: cache.classes[from].rep } : {}),
+      });
+    }), pool);
     for (const list of chainRes) for (const v of list) noteSet(v.set, v.score);
 
-    const byClass = cache.classes.map((c, i) => ({ set: c.rep, score: cache.best[i] }))
-      .sort((a, b) => b.score - a.score).slice(0, P.refineTop);
+    const byClass = ranked().slice(0, P.refineTop).map((i) => ({ set: cache.classes[i].rep }));
     const byChain = [...cache.sets.entries()].map(([key, score]) => ({
       set: key ? key.split(",").map(Number) : [], score,
     })).sort((a, b) => b.score - a.score).slice(0, P.refineTop);
@@ -378,8 +477,10 @@ export async function runStructural(
     finalists.set(userKey, userCells);
     onProgress(`Refining ${finalists.size} finalists…`);
     const toRefine = [...finalists].filter(([key]) => key !== userKey).map(([, cells]) => cells);
-    const refined = await deepScores(toRefine, 3);
-    toRefine.forEach((cells, i) => noteSet(cells, refined[i]));
+    const src = P.seeded ? bestSource() : null;
+    const refined = await deepScores(toRefine, 3,
+      toRefine.map((cells) => (src ? remapStart(base.length, src.cells, src.layout, cells) : null)));
+    toRefine.forEach((cells, i) => noteSet(cells, refined[i].score));
     let bestKey = userKey;
     for (const key of finalists.keys()) {
       if ((cache.sets.get(key) ?? -Infinity) > (cache.sets.get(bestKey) ?? -Infinity)) bestKey = key;
@@ -427,28 +528,10 @@ export async function runStructural(
   onProgress("Estimating roll rarity…");
   const better = (v: number) => v > T * (1 + 1e-9);
   const uc = userLoc.user_class;
-  /** Warm re-score of classes from their best kept layout; a class without one (screened in an earlier pass
-   *  of this cache under a higher threshold) falls back to a cold re-score at twice the warm steps. */
-  const rescore = async (ids: number[], nIter: number, seed: number) => {
-    const starts = ids.map((i) => cache.layouts.get(i) ?? null);
-    const cold = starts.filter((s) => s === null).length;
-    if (cold) console.warn(`[structural] ${cold}/${ids.length} band re-scores have no kept layout: cold fallback`);
-    const sc = await evalSets(ids.map((i) => cache.classes[i].rep), nIter * 2, P.bandRestarts, seed, {
-      starts, warm: warmBudget(nIter, SCHEDULE_PHASE1), keepAbove: KEEP_ALL,
-    });
-    sc.scores.forEach((v, j) => {
-      const i = ids[j];
-      if (v > cache.best[i]) {
-        cache.best[i] = v;
-        const l = sc.layouts[j];
-        if (l) cache.layouts.set(i, l);
-      }
-    });
-  };
   const refine = async (ids: number[], seed: number) => {
     const todo = ids.filter((i) => !cache.bandDone[i]);
     if (!todo.length) return;
-    await rescore(todo, P.bandIter, seed);
+    await rescore(todo, P.bandIter, P.bandRestarts, seed, "band");
     todo.forEach((i) => { cache.bandDone[i] = 1; });
   };
   const band: number[] = [];
@@ -498,7 +581,7 @@ export async function runStructural(
   const toResolve = evaluated.filter((i) => firstMargin(cache.best[i]) && cache.resolved[i] < P.resolveIter);
   if (toResolve.length) {
     onProgress(`Resolving ${toResolve.length} close calls…`);
-    await rescore(toResolve, P.resolveIter, 707);
+    await rescore(toResolve, P.resolveIter, P.bandRestarts, 707, "resolve");
     toResolve.forEach((i) => { cache.resolved[i] = P.resolveIter; });
   }
 

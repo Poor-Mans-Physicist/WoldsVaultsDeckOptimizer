@@ -7,7 +7,9 @@
 //          exhaustive per-set reference score (every reachable set, no mirror merging, cold 6 x 100k target
 //          walks + phase 2 top 2 x 200k).
 //   run:   bench_struct.mjs <repo> run <problems.json> <rows.json> [--efforts standard,deep] [--label x]
-//          one cold runStructural per (problem, effort); appends rows to rows.json.
+//          [--only deck:k,deck:k] [--salt n]
+//          one cold runStructural per (problem, effort); appends rows to rows.json. --salt n (or STRUCT_SALT)
+//          remaps every job seed in the shim for repeat runs on fresh random numbers.
 //
 // Build (from the commit under test; struct_shim.ts replaces every workerPool import):
 //   node wasm-port/scripts/build_bench_struct.mjs <repo> <out.mjs>
@@ -132,8 +134,12 @@ async function run(path: string, rowsPath: string) {
   const problems: Problem[] = JSON.parse(readFileSync(path, "utf8"));
   const efforts = opt("--efforts", "standard,deep").split(",") as StructEffort[];
   const label = opt("--label", "run");
+  const only = opt("--only", "");
+  const salt = opt("--salt", process.env.STRUCT_SALT ?? "0");
+  process.env.STRUCT_SALT = salt;
   const rows: unknown[] = existsSync(rowsPath) ? JSON.parse(readFileSync(rowsPath, "utf8")) : [];
   for (const p of problems) {
+    if (only && !only.split(",").includes(`${p.deck}:${p.k}`)) continue;
     const raw = raws.find((r) => r.key === p.deck)!;
     const base = buildDeck(raw, cfg.deckmod ?? 0);
     const structural = { ...emptyStructural(), constructionEnabled: true, greaterStructural: p.k > 3 };
@@ -147,7 +153,7 @@ async function run(path: string, rowsPath: string) {
         userAdded: p.userAdded, userScore: 0, fingerprint: `${p.deck}|${p.k}`,
       }, effort, () => {});
       const row = {
-        label, deck: p.deck, k: p.k, effort, wall: performance.now() - t, cpu: cpuMs - cpu0,
+        label, salt: Number(salt), deck: p.deck, k: p.k, effort, wall: performance.now() - t, cpu: cpuMs - cpu0,
         T: rep.user.score, ideal: rep.ideal.score, idealAdded: rep.ideal.added,
         pBetter: rep.pBetter, lo: rep.pBetterLo, hi: rep.pBetterHi, classes: rep.classes,
       };

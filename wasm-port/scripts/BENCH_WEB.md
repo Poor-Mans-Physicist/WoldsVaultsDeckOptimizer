@@ -118,3 +118,27 @@ Both efforts are about a third faster. Deep is better everywhere. The old Deep s
 16.6% low and reported P(better) 0.74 against a true 0.23. Standard's rarity error is dominated by the 10k x 1
 screen in both versions (merchant k=3: 0.33 vs 0.68 true); its ideal misses moved between problems (old: wold k=5
 2.9%, merchant k=5 0.6%; new: wold k=5 1.5%, bishop k=5 2.0%, bishop k=3 1.4%). One run per cell, 12 problems.
+
+### Structural follow-ups (2026-11-08)
+
+Single-seed rows (12 problems) for successive halving in place of the chains: Standard 6.9 s, 6/12 exact best,
+0.60% mean gap even with arrangement transfer; Deep 24.8 s, 9/12. Per-layout re-scores do not find the card
+arrangements the chains carry between layouts, so halving was dropped. The warm screen alone cut Standard's
+rarity error from 0.094 to ~0.06.
+
+Single seeds could not separate Standard variants (8 of 12 problems are solved by every version; bishop k=3 has
+three discrete outcomes), so `bench_struct.ts` gained `--salt` (remaps every job seed in the shim) and `--only`.
+5-seed convergence test, Standard, bishop/wold k=3/5 (20 runs per version):
+
+| version | mean gap | worst | exact best | player score low | k=3 rarity err | wall s |
+|---|---|---|---|---|---|---|
+| pre-port (live) | 0.762% | 2.63% | 10/20 | 4.53% | 0.096 | 25.4 |
+| mix 1x (warm screen + seeded warm chains) | 1.447% | 10.27% | 5/20 | 1.81% | 0.056 | 14.1 |
+| mix 1.5x | 2.250% | 10.27% | 5/20 | 1.91% | 0.062 | 22.9 |
+| mix + 8 hot chains | 0.889% | 2.13% | 7/20 | 1.81% | 0.056 | 17.9 |
+| **mix + 12 hot chains (shipped Standard)** | **0.745%** | **2.13%** | 8/20 | **1.81%** | **0.056** | **17.8** |
+
+Bishop k=3 exact best: live 5/5, mix 1x 1/5, 1.5x 0/5, hot 8 2/5, hot 12 3/5. Warm chains settle into one card
+arrangement and longer anneals settle harder; hot chains (random start, a fresh legacy-schedule walk every step)
+restore the wide search. Deep keeps the cold screen and warm random chains; its switch-gated build reproduced the
+earlier Deep rows exactly (12/12).

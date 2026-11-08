@@ -209,6 +209,10 @@ struct EvalIn {
     /// Return the best layout of every set scoring at least this much (None = scores only).
     #[serde(default)]
     keep_above: Option<f64>,
+    /// Sets without a given start re-anneal (with `warm`) from the previous set's best layout remapped onto
+    /// their cells; the job's first set is scored cold. Callers order `sets` so neighbours share most cells.
+    #[serde(default)]
+    chain_warm: bool,
 }
 
 #[derive(Serialize)]
@@ -221,9 +225,11 @@ struct EvalOut {
 pub fn construction_eval(input: JsValue) -> Result<JsValue, JsValue> {
     let inp: EvalIn = serde_wasm_bindgen::from_value(input).map_err(err("eval input"))?;
     check_template(&inp.template)?;
-    if inp.starts.iter().any(|s| s.is_some()) && inp.warm.is_none() {
+    if (inp.chain_warm || inp.starts.iter().any(|s| s.is_some())) && inp.warm.is_none() {
         return Err(JsValue::from_str("eval: warm starts given without a warm budget"));
     }
+    let nb_cells = parse_base(&inp.base.base)?.cells.len();
+    let mut prev: Option<(u64, Vec<SlotCard>)> = None;
     let base = parse_base(&inp.base.base)?;
     let n_stacks = inp.template.stacks.len();
     let mut scores = Vec::with_capacity(inp.sets.len());
@@ -233,11 +239,13 @@ pub fn construction_eval(input: JsValue) -> Result<JsValue, JsValue> {
         let set = set_from(s);
         let start = match inp.starts.get(i).and_then(|x| x.as_ref()) {
             Some(cards) => Some(parse_layout(cards, base.cells.len() + s.len(), n_stacks)?),
+            None if inp.chain_warm => prev.as_ref().and_then(|(ps, pl)| remap(nb_cells, *ps, pl, set)),
             None => None,
         };
         let warm = inp.warm.as_ref();
         let (asgn, v) = score_layout(&inp.template, &base, set, inp.n_iter, inp.restarts, seed,
                                      start.as_deref().zip(warm));
+        if inp.chain_warm { prev = Some((set, asgn.clone())); }
         scores.push(v);
         layouts.push(match inp.keep_above { Some(t) if v >= t => Some(placed_out(&asgn)), _ => None });
     }
@@ -270,14 +278,19 @@ fn default_keep() -> usize { 24 }
 #[derive(Serialize)]
 struct Visited { set: Vec<u32>, score: f64 }
 
-/// The parent's best layout moved onto `next`: base slots unchanged, added cells in ascending order, the
-/// vacated cell's card on the newly filled cell (stack counts stay the same).
-fn moved_layout(nb: usize, parent: u64, layout: &[SlotCard], next: u64, out: u32, inn: u32) -> Vec<SlotCard> {
-    let pcells = bits(parent);
-    let at = |cell: u32| layout[nb + pcells.iter().position(|&c| c == cell).expect("cell in parent")];
+/// A layout of set `from` carried onto set `to` (same size): base slots unchanged, shared added cells keep
+/// their cards, and the cards of vacated cells fill the new cells in ascending order (stack counts stay the
+/// same). None when the sizes differ.
+fn remap(nb: usize, from: u64, layout: &[SlotCard], to: u64) -> Option<Vec<SlotCard>> {
+    if from.count_ones() != to.count_ones() || layout.len() != nb + from.count_ones() as usize { return None; }
+    let fcells = bits(from);
+    let at = |cell: u32| layout[nb + fcells.iter().position(|&c| c == cell).expect("cell in from")];
+    let mut spare = bits(from & !to).into_iter().map(at);
     let mut v: Vec<SlotCard> = layout[..nb].to_vec();
-    for c in bits(next) { v.push(if c == inn { at(out) } else { at(c) }); }
-    v
+    for c in bits(to) {
+        v.push(if from >> c & 1 == 1 { at(c) } else { spare.next().expect("equal sizes") });
+    }
+    Some(v)
 }
 
 #[wasm_bindgen(js_name = constructionChain)]
@@ -290,8 +303,8 @@ pub fn construction_chain(input: JsValue) -> Result<JsValue, JsValue> {
     let mut best: HashMap<u64, (f64, Vec<SlotCard>)> = HashMap::new();
     let visited = outer_chain(base.mask, inp.k, inp.steps, inp.seed, start, |set, from, salt| {
         let warm_start = match (&inp.warm, from) {
-            (Some(w), Some((parent, out, inn))) => best.get(&parent)
-                .map(|(_, l)| (moved_layout(nb, parent, l, set, out, inn), w)),
+            (Some(w), Some((parent, _, _))) => best.get(&parent)
+                .and_then(|(_, l)| remap(nb, parent, l, set)).map(|l| (l, w)),
             _ => None,
         };
         let (asgn, v) = match &warm_start {

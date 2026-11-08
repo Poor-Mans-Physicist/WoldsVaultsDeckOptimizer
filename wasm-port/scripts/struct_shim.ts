@@ -30,7 +30,17 @@ function ensure(): Slot[] {
   return pool;
 }
 
-function send<T>(type: string, payload: Record<string, unknown>): Promise<T> {
+/** STRUCT_SALT (read per call) remaps every job seed, so a deterministic pipeline can be re-run on fresh
+ *  random numbers without touching its source (seed repeats for convergence tests). 0 = unchanged. */
+function salted(payload: Record<string, unknown>): Record<string, unknown> {
+  const salt = Number(process.env.STRUCT_SALT ?? "0");
+  if (!salt || typeof payload.seed !== "number") return payload;
+  const s = (Math.imul(payload.seed >>> 0, 0x9E3779B1) ^ Math.imul(salt, 0x85EBCA6B)) >>> 0;
+  return { ...payload, seed: s };
+}
+
+function send<T>(type: string, raw: Record<string, unknown>): Promise<T> {
+  const payload = salted(raw);
   const p = ensure();
   let slot = p[0];
   for (const s of p) if (s.busy < slot.busy) slot = s;
