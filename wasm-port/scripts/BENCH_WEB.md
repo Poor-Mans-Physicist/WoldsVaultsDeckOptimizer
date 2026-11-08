@@ -142,3 +142,8 @@ Bishop k=3 exact best: live 5/5, mix 1x 1/5, 1.5x 0/5, hot 8 2/5, hot 12 3/5. Wa
 arrangement and longer anneals settle harder; hot chains (random start, a fresh legacy-schedule walk every step)
 restore the wide search. Deep keeps the cold screen and warm random chains; its switch-gated build reproduced the
 earlier Deep rows exactly (12/12).
+
+Deep, same 5-seed test (20 runs per version): the cold-screen / warm-chain Deep 0.903% mean gap, 6.85% worst,
+8/20 exact best (bishop k=3 2/5), rarity err 0.042, 58.9 s; with warm screen + seeded chains + 24 of 48 hot
+chains (shipped) 0.320%, 1.07%, 12/20 (bishop k=3 5/5), 0.028, 63.4 s; the same at 350 steps / 20k cold walks /
+150k + 300k finalists 0.504%, 1.56%, 10/20, 0.034, 56.8 s.

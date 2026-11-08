@@ -85,8 +85,9 @@ interface EffortParams {
  *  cells), half the warm chains start from the best screened classes, finalists get a walk from the best
  *  layout's cards, and 12 of the 24 chains run hot (pre-port style). 5-seed convergence test on 4 hard problems
  *  vs the pre-port Standard: mean ideal gap 0.75 % vs 0.76 %, worst 2.1 % vs 2.6 %, exact best 8/20 vs 10/20
- *  (bishop k=3), player score 1.8 % vs 4.5 % low, rarity error 0.056 vs 0.096, 17.8 s vs 25.4 s. Deep keeps
- *  the cold screen and warm random chains (better at Deep in the single-seed bench).
+ *  (bishop k=3), player score 1.8 % vs 4.5 % low, rarity error 0.056 vs 0.096, 17.8 s vs 25.4 s. Deep got the
+ *  same (24 of 48 chains hot): same test vs the cold-screen / warm-chain Deep, mean gap 0.32 % vs 0.90 %, worst
+ *  1.07 % vs 6.85 %, exact best 12/20 vs 8/20, rarity error 0.028 vs 0.042, 63.4 s vs 58.9 s.
  *  Successive halving in place of the chains was tried and lost (bench_struct: 6/12 best layouts at Standard vs
  *  9/12): per-layout re-scores cannot find the card arrangements the chains carry from layout to layout. */
 export const STRUCT_EFFORT: Record<StructEffort, EffortParams> = {
@@ -99,8 +100,8 @@ export const STRUCT_EFFORT: Record<StructEffort, EffortParams> = {
     resolveIter: 100_000, resolveMargin: 0.02,
   },
   deep: {
-    warmScreen: false, seeded: false,
-    chains: 48, hotChains: 0, chainSteps: 500, chainIter: 30_000, chainWarmIter: 12_000,
+    warmScreen: true, seeded: true,
+    chains: 48, hotChains: 24, chainSteps: 500, chainIter: 30_000, chainWarmIter: 12_000,
     screenIter: 30_000, screenRestarts: 2,
     refineTop: 16, refineIter: 200_000, refineRestarts: 24, refineP2Top: 6, refineP2Iter: 400_000,
     bandIter: 50_000, bandRestarts: 4, bandDet: 300, bandSamples: 600,
