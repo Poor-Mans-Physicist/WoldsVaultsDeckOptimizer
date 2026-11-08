@@ -169,25 +169,29 @@ pub fn classes(base: u64, arcane: u64, ks: &[usize], k_probs: &[f64], allow_x: b
     (out, counts)
 }
 
+/// A chain step's origin: the set it moved from, the added cell it vacated
+/// and the frontier cell it filled (lets `eval` warm-start from the parent).
+pub type Move = (u64, u32, u32);
+
 /// Outer SA over layouts: relocate one added cell to a frontier cell, keep
 /// only reachable sets, score each visited set with `eval` (best-seen per
 /// set is cached). Returns visited sets with their best score.
 pub fn outer_chain(
     base: u64, k: usize, steps: usize, seed: u64, start: Option<u64>,
-    mut eval: impl FnMut(u64, u64) -> f64,
+    mut eval: impl FnMut(u64, Option<Move>, u64) -> f64,
 ) -> Vec<(u64, f64)> {
     let mut rng = SmallRng::seed_from_u64(seed);
     let mut cache: HashMap<u64, f64> = HashMap::new();
     let mut salt = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    let mut score = |s: u64, cache: &mut HashMap<u64, f64>, salt: u64| -> f64 {
-        let v = eval(s, salt);
+    let mut score = |s: u64, from: Option<Move>, cache: &mut HashMap<u64, f64>, salt: u64| -> f64 {
+        let v = eval(s, from, salt);
         let e = cache.entry(s).or_insert(f64::MIN);
         if v > *e { *e = v; }
         *e
     };
     let mut cur = start.filter(|&s| is_reachable(base, s) && s.count_ones() as usize == k)
         .unwrap_or_else(|| sample_roll(base, k, &mut rng));
-    let mut cs = score(cur, &mut cache, salt);
+    let mut cs = score(cur, None, &mut cache, salt);
     for step in 0..steps {
         let temp = 0.03 * cs.abs().max(1e-9) * (0.01f64).powf(step as f64 / steps.max(1) as f64);
         let added = bits(cur);
@@ -199,7 +203,7 @@ pub fn outer_chain(
         let next = (cur & !(1u64 << out)) | (1u64 << inn);
         if !is_reachable(base, next) { continue; }
         salt = salt.wrapping_add(0x6A09_E667_F3BC_C909);
-        let ns = score(next, &mut cache, salt);
+        let ns = score(next, Some((cur, out, inn)), &mut cache, salt);
         if ns >= cs || rng.gen::<f64>() < ((ns - cs) / temp).exp() { cur = next; cs = ns; }
     }
     let mut v: Vec<(u64, f64)> = cache.into_iter().collect();

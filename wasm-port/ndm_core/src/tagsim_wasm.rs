@@ -208,7 +208,7 @@ fn schedule(s: &ScheduleIn) -> R<SaSchedule> {
     }
 }
 
-fn card(t: &str, c: &str, sc: &str, gs: &[String], stack: i32) -> R<SlotCard> {
+pub(crate) fn card(t: &str, c: &str, sc: &str, gs: &[String], stack: i32) -> R<SlotCard> {
     let col = color(c)?;
     Ok(SlotCard {
         t: card_type(t)?,

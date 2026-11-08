@@ -4,9 +4,11 @@
 //!     range, grouped into score-equivalent reflection classes, with exact
 //!     per-roll probabilities (plus the player's own layout's).
 //!   * `constructionEval`      — score a batch of layouts with the tagged SA
-//!     (cold restarts) under one fixed run template.
+//!     under one fixed run template: cold restarts, or warm walks from given
+//!     layouts; optionally returns the best layouts above a threshold.
 //!   * `constructionChain`     — one outer layout-space SA chain, whole
-//!     chain inside wasm; returns the best-scored visited layouts.
+//!     chain inside wasm (warm steps start from the parent layout's best
+//!     cards); returns the best-scored visited layouts.
 //!
 //! Layouts cross the boundary as lists of bitboard cell indices
 //! (`row * 9 + col`); the base deck as `[row, col, arcane]` triples.
@@ -14,11 +16,13 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use std::collections::HashMap;
+
 use crate::construction::{
     bits, cell_index, cell_rc, classes, is_reachable, outer_chain, roll_prob,
 };
-use crate::tagsim::run_sa_tagged as run_core;
-use crate::tagsim_wasm::{build_run, TagRunInput};
+use crate::tagsim::{run_sa_from, run_sa_tagged as run_core, SlotCard};
+use crate::tagsim_wasm::{build_run, card, placed_out, PlacedIn, PlacedOut, ScheduleIn, TagRunInput};
 
 #[derive(Deserialize)]
 struct BaseIn {
@@ -150,9 +154,42 @@ fn check_template(tpl: &TagRunInput) -> Result<(), JsValue> {
     build_run(tpl).map(|_| ()).map_err(|e| JsValue::from_str(&format!("tagsim: {e}")))
 }
 
-fn score_layout(tpl: &TagRunInput, base: &Base, set: u64, n_iter: usize, restarts: usize, seed: u64) -> f64 {
-    let inp = layout_input(tpl, base, set, n_iter, restarts, seed);
-    run_core(build_run(&inp).expect("template validated by check_template")).1
+/// Re-anneal budget for walks that start from a known layout (`schedule` replaces the template's, no phase 2).
+#[derive(Deserialize, Clone)]
+struct WarmIn {
+    n_iter: usize,
+    schedule: ScheduleIn,
+}
+
+/// Score one layout: cold restarts under the template, or, given `start`, `restarts` warm walks from it.
+fn score_layout(tpl: &TagRunInput, base: &Base, set: u64, n_iter: usize, restarts: usize, seed: u64,
+                start: Option<(&[SlotCard], &WarmIn)>) -> (Vec<SlotCard>, f64) {
+    match start {
+        None => {
+            let inp = layout_input(tpl, base, set, n_iter, restarts, seed);
+            run_core(build_run(&inp).expect("template validated by check_template"))
+        }
+        Some((s, w)) => {
+            let mut inp = layout_input(tpl, base, set, w.n_iter, 1, seed);
+            inp.schedule = Some(w.schedule.clone());
+            inp.phase2 = None;
+            let starts: Vec<Vec<SlotCard>> = (0..restarts.max(1)).map(|_| s.to_vec()).collect();
+            run_sa_from(build_run(&inp).expect("template validated by check_template"), &starts)
+        }
+    }
+}
+
+fn parse_layout(cards: &[PlacedIn], n: usize, n_stacks: usize) -> Result<Vec<SlotCard>, JsValue> {
+    if cards.len() != n {
+        return Err(JsValue::from_str(&format!("start layout has {} cards for {n} slots", cards.len())));
+    }
+    cards.iter().map(|(t, c, sc, gs, stack)| {
+        let k = card(t, c, sc, gs, *stack).map_err(|e| JsValue::from_str(&format!("start card: {e}")))?;
+        if k.stack != u16::MAX && k.stack as usize >= n_stacks {
+            return Err(JsValue::from_str(&format!("start card stack {} out of range", k.stack)));
+        }
+        Ok(k)
+    }).collect()
 }
 
 #[derive(Deserialize)]
@@ -164,18 +201,47 @@ struct EvalIn {
     n_iter: usize,
     restarts: usize,
     seed: u64,
+    /// Per set (parallel to `sets`, may be shorter): a layout to warm-start from, re-annealed with `warm`.
+    #[serde(default)]
+    starts: Vec<Option<Vec<PlacedIn>>>,
+    #[serde(default)]
+    warm: Option<WarmIn>,
+    /// Return the best layout of every set scoring at least this much (None = scores only).
+    #[serde(default)]
+    keep_above: Option<f64>,
+}
+
+#[derive(Serialize)]
+struct EvalOut {
+    scores: Vec<f64>,
+    layouts: Vec<Option<Vec<PlacedOut>>>,
 }
 
 #[wasm_bindgen(js_name = constructionEval)]
 pub fn construction_eval(input: JsValue) -> Result<JsValue, JsValue> {
     let inp: EvalIn = serde_wasm_bindgen::from_value(input).map_err(err("eval input"))?;
     check_template(&inp.template)?;
+    if inp.starts.iter().any(|s| s.is_some()) && inp.warm.is_none() {
+        return Err(JsValue::from_str("eval: warm starts given without a warm budget"));
+    }
     let base = parse_base(&inp.base.base)?;
-    let scores: Vec<f64> = inp.sets.iter().enumerate().map(|(i, s)| {
+    let n_stacks = inp.template.stacks.len();
+    let mut scores = Vec::with_capacity(inp.sets.len());
+    let mut layouts = Vec::with_capacity(inp.sets.len());
+    for (i, s) in inp.sets.iter().enumerate() {
         let seed = inp.seed ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        score_layout(&inp.template, &base, set_from(s), inp.n_iter, inp.restarts, seed)
-    }).collect();
-    serde_wasm_bindgen::to_value(&scores).map_err(err("eval output"))
+        let set = set_from(s);
+        let start = match inp.starts.get(i).and_then(|x| x.as_ref()) {
+            Some(cards) => Some(parse_layout(cards, base.cells.len() + s.len(), n_stacks)?),
+            None => None,
+        };
+        let warm = inp.warm.as_ref();
+        let (asgn, v) = score_layout(&inp.template, &base, set, inp.n_iter, inp.restarts, seed,
+                                     start.as_deref().zip(warm));
+        scores.push(v);
+        layouts.push(match inp.keep_above { Some(t) if v >= t => Some(placed_out(&asgn)), _ => None });
+    }
+    serde_wasm_bindgen::to_value(&EvalOut { scores, layouts }).map_err(err("eval output"))
 }
 
 // ── outer chain ──────────────────────────────────────────────────────────────
@@ -193,6 +259,10 @@ struct ChainIn {
     start: Option<Vec<u32>>,
     #[serde(default = "default_keep")]
     keep: usize,
+    /// Warm steps: a moved-to layout re-anneals from its parent's best layout (the vacated cell's card moves to
+    /// the new cell) with this budget; the chain's first layout is scored cold with `n_iter`.
+    #[serde(default)]
+    warm: Option<WarmIn>,
 }
 
 fn default_keep() -> usize { 24 }
@@ -200,14 +270,36 @@ fn default_keep() -> usize { 24 }
 #[derive(Serialize)]
 struct Visited { set: Vec<u32>, score: f64 }
 
+/// The parent's best layout moved onto `next`: base slots unchanged, added cells in ascending order, the
+/// vacated cell's card on the newly filled cell (stack counts stay the same).
+fn moved_layout(nb: usize, parent: u64, layout: &[SlotCard], next: u64, out: u32, inn: u32) -> Vec<SlotCard> {
+    let pcells = bits(parent);
+    let at = |cell: u32| layout[nb + pcells.iter().position(|&c| c == cell).expect("cell in parent")];
+    let mut v: Vec<SlotCard> = layout[..nb].to_vec();
+    for c in bits(next) { v.push(if c == inn { at(out) } else { at(c) }); }
+    v
+}
+
 #[wasm_bindgen(js_name = constructionChain)]
 pub fn construction_chain(input: JsValue) -> Result<JsValue, JsValue> {
     let inp: ChainIn = serde_wasm_bindgen::from_value(input).map_err(err("chain input"))?;
     check_template(&inp.template)?;
     let base = parse_base(&inp.base.base)?;
+    let nb = base.cells.len();
     let start = inp.start.as_ref().map(|s| set_from(s));
-    let visited = outer_chain(base.mask, inp.k, inp.steps, inp.seed, start, |set, salt| {
-        score_layout(&inp.template, &base, set, inp.n_iter, 1, salt)
+    let mut best: HashMap<u64, (f64, Vec<SlotCard>)> = HashMap::new();
+    let visited = outer_chain(base.mask, inp.k, inp.steps, inp.seed, start, |set, from, salt| {
+        let warm_start = match (&inp.warm, from) {
+            (Some(w), Some((parent, out, inn))) => best.get(&parent)
+                .map(|(_, l)| (moved_layout(nb, parent, l, set, out, inn), w)),
+            _ => None,
+        };
+        let (asgn, v) = match &warm_start {
+            Some((l, w)) => score_layout(&inp.template, &base, set, 0, 1, salt, Some((l.as_slice(), *w))),
+            None => score_layout(&inp.template, &base, set, inp.n_iter, 1, salt, None),
+        };
+        if best.get(&set).map_or(true, |b| v > b.0) { best.insert(set, (v, asgn)); }
+        v
     });
     let out: Vec<Visited> = visited.into_iter().take(inp.keep)
         .map(|(s, v)| Visited { set: bits(s), score: v }).collect();

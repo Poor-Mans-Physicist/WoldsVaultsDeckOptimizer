@@ -59,18 +59,28 @@ function ensurePool(): WorkerSlot[] {
   return _pool;
 }
 
+/** The worker with the fewest jobs in flight (lowest index on ties). Jobs carry their own seeds, so which
+ *  worker runs one never changes its result; picking by load keeps every worker busy when job lengths vary
+ *  (the old round-robin by caller index could stack two jobs on one worker while another sat idle). The
+ *  callers' worker index is kept in the signatures as a hint only. */
+function leastLoaded(pool: WorkerSlot[]): WorkerSlot {
+  let best = pool[0];
+  for (const s of pool) if (s.pending.size < best.pending.size) best = s;
+  return best;
+}
+
 export function workerPoolSize(): number {
   return ensurePool().length;
 }
 
 /** Send one slice to a specific worker. Returns the slice's best result. */
 export function dispatchSlice(
-  workerIdx:        number,
+  _workerIdx:       number,
   input:            OptimizeInput,
   candidatesSlice:  CoreSpec[][],
 ): Promise<SliceResult> {
   const pool = ensurePool();
-  const slot = pool[workerIdx % pool.length];
+  const slot = leastLoaded(pool);
   const id = _nextId++;
   return new Promise<SliceResult>((resolve, reject) => {
     slot.pending.set(id, { resolve, reject });
@@ -83,11 +93,11 @@ export function dispatchSlice(
 /** Optimizer 2.0: send one pre-built tagged payload (candidate × restart
  *  chunk) to a specific worker. */
 export function dispatchTagged<T>(
-  workerIdx: number,
+  _workerIdx: number,
   payload:   Record<string, unknown>,
 ): Promise<T> {
   const pool = ensurePool();
-  const slot = pool[workerIdx % pool.length];
+  const slot = leastLoaded(pool);
   const id = _nextId++;
   return new Promise<T>((resolve, reject) => {
     slot.pending.set(id, {
@@ -101,12 +111,12 @@ export function dispatchTagged<T>(
 /** Structural optimizer: send one construction-kernel request (enumerate,
  *  batch-score, or outer chain) to a specific worker. */
 export function dispatchConstruction<T>(
-  workerIdx: number,
+  _workerIdx: number,
   type:      "cc_enum" | "cc_eval" | "cc_chain",
   payload:   Record<string, unknown>,
 ): Promise<T> {
   const pool = ensurePool();
-  const slot = pool[workerIdx % pool.length];
+  const slot = leastLoaded(pool);
   const id = _nextId++;
   return new Promise<T>((resolve, reject) => {
     slot.pending.set(id, {

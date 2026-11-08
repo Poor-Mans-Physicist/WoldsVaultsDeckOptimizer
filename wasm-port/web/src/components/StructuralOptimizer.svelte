@@ -74,7 +74,7 @@
         {/each}
       </div>
       <div class="meta">
-        {eff.chainsPerWorker}×pool chains · {eff.chainSteps} steps · screen {eff.screenIter / 1000}k×{eff.screenRestarts}
+        {eff.chains} chains · {eff.chainSteps} steps · screen {eff.screenIter / 1000}k×{eff.screenRestarts}
       </div>
 
       <button class="run" type="button" onclick={onRun} disabled={busy || status !== "ready"}>

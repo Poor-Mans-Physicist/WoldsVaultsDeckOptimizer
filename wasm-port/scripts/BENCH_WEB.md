@@ -94,3 +94,27 @@ Full panel, new presets (37 decks x evo/shiny x 2 reps, every core, 24 lanes):
 | fast (= old default) | 1.437% | 0 | 4.846% | 10.345% | 51% | 0.98 | 19.0 |
 | default (= old deep) | 1.166% | 0 | 3.886% | 15.799% | 63% | 2.01 | 41.7 |
 | deep (new) | 0.377% | 0 | 0.955% | 7.779% | 77% | 6.16 | 133.0 |
+
+## Structural optimizer (2026-11-08)
+
+Changes: target schedules everywhere (cold walks phase 1; deep scores 12x100k + top 3 x 200k phase 2 at the old
+step total), chain steps warm-started from the parent layout's best cards (8k Standard / 12k Deep, phase-2
+schedule), band and resolve re-scores warm from the class's best kept layout at half the old steps, fixed job
+counts (results independent of the worker count), one shared queue and least-loaded worker dispatch.
+
+Bench: `bench_struct.ts` (see its header) on 6 decks (queen, wold, bishop, merchant, fairy, large), evo, a seeded
+random roll per k = 3 and 5, combo from the core search, 24 lanes, one run each. k = 3 has exhaustive truth:
+every reachable set scored cold 6 x 100k + phase 2. "Ideal gap" is to the best ideal from any run or the truth;
+"T short" is how far the player's layout score falls below the best known; rarity error is |P(better) - truth|.
+
+| config | wall s | ideal gap | ideal hits | k=3 T short | k=3 err at own T | k=3 err vs truth T |
+|---|---|---|---|---|---|---|
+| old Standard | 15.5 | 0.291% | 10/12 | 0.477% | 0.119 | 0.088 |
+| new Standard | 10.1 | 0.411% | 9/12 | 0.020% | 0.096 | 0.094 |
+| old Deep | 57.9 | 0.004% | 11/12 | 3.063% | 0.069 | 0.106 |
+| new Deep | 39.0 | 0.000% | 12/12 | 0.085% | 0.030 | 0.024 |
+
+Both efforts are about a third faster. Deep is better everywhere. The old Deep scored one player layout (wold k=3)
+16.6% low and reported P(better) 0.74 against a true 0.23. Standard's rarity error is dominated by the 10k x 1
+screen in both versions (merchant k=3: 0.33 vs 0.68 true); its ideal misses moved between problems (old: wold k=5
+2.9%, merchant k=5 0.6%; new: wold k=5 1.5%, bishop k=5 2.0%, bishop k=3 1.4%). One run per cell, 12 problems.
